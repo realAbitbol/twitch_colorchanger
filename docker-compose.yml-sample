@@ -1,0 +1,17 @@
+services:
+  twitch-colorchanger:
+    build: .
+    container_name: twitch-colorchanger
+    environment:
+      - TWITCH_USERNAME=your_twitch_username
+      - TWITCH_ACCESS_TOKEN=your_access_token
+      - TWITCH_REFRESH_TOKEN=your_refresh_token
+      - TWITCH_CLIENT_ID=your_client_id
+      - TWITCH_CLIENT_SECRET=your_client_secret
+      - TWITCH_CHANNELS=channel1,channel2,channel3  # Optional, comma-separated
+      - TWITCH_USE_RANDOM_COLORS=true  # Optional, true or false
+      - FORCE_COLOR=true  # Optional, to force ANSI colors in logs
+      - PYTHONUNBUFFERED=1  # Ensure unbuffered output for real-time logs
+    volumes:
+      - .:/app  # Mounts the current directory to /app to persist the conf file
+    restart: unless-stopped
