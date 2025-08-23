@@ -1,6 +1,14 @@
 services:
   twitch-colorchanger:
+    # Option 1: Build locally
     build: .
+    
+    # Option 2: Use prebuilt image from Docker Hub
+    # image: damastah/twitch-colorchanger:latest
+    
+    # Option 3: Use prebuilt image from GitHub Container Registry
+    # image: ghcr.io/realabitbol/twitch-colorchanger:latest
+    
     container_name: twitch-colorchanger
     environment:
       - TWITCH_USERNAME=your_twitch_username

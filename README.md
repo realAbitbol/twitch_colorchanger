@@ -87,8 +87,9 @@ docker run -it --rm \
 
 #### Using Prebuilt Image
 
-Multi-platform images (x86_64 and ARM64) are automatically built and published on every release.
+Multi-platform images (x86_64 and ARM64) are automatically built and published on every release to both Docker Hub and GitHub Container Registry.
 
+**From Docker Hub:**
 ```bash
 docker run -it --rm \
     -e TWITCH_USERNAME=your_twitch_username \
@@ -100,6 +101,18 @@ docker run -it --rm \
     damastah/twitch-colorchanger:latest
 ```
 
+**From GitHub Container Registry:**
+```bash
+docker run -it --rm \
+    -e TWITCH_USERNAME=your_twitch_username \
+    -e TWITCH_ACCESS_TOKEN=your_access_token \
+    -e TWITCH_REFRESH_TOKEN=your_refresh_token \
+    -e TWITCH_CLIENT_ID=your_client_id \
+    -e TWITCH_CLIENT_SECRET=your_client_secret \
+    -e TWITCH_CHANNELS=channel1,channel2 \
+    ghcr.io/realabitbol/twitch-colorchanger:latest
+```
+
 #### Using Docker Compose
 
 See `docker-compose.yml-sample` for a template. Example:
@@ -107,7 +120,9 @@ See `docker-compose.yml-sample` for a template. Example:
 ```yaml
 services:
     twitch-colorchanger:
-        image: damastah/twitch-colorchanger:2
+        # Use either Docker Hub or GitHub Container Registry
+        image: damastah/twitch-colorchanger:latest
+        # image: ghcr.io/realabitbol/twitch-colorchanger:latest
         environment:
             - TWITCH_USERNAME=your_twitch_username
             - TWITCH_ACCESS_TOKEN=your_access_token
