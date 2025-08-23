@@ -1,6 +1,8 @@
 
 # Twitch ColorChanger
 
+[![Build and Push Docker Images](https://github.com/realAbitbol/twitch_colorchanger/actions/workflows/docker-build.yml/badge.svg)](https://github.com/realAbitbol/twitch_colorchanger/actions/workflows/docker-build.yml)
+
 Automatically change your Twitch username color after each message you send in chat. Supports both preset Twitch colors and random hex colors (for Prime/Turbo users).
 
 ---
@@ -84,6 +86,8 @@ docker run -it --rm \
 ```
 
 #### Using Prebuilt Image
+
+Multi-platform images (x86_64 and ARM64) are automatically built and published on every release.
 
 ```bash
 docker run -it --rm \
