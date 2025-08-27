@@ -381,6 +381,39 @@ services:
 
 ```
 
+### 5. Permission & User Mapping Controls (Docker)
+
+The container supports dynamic user remapping plus controlled fallback for restrictive NAS environments:
+
+| Variable | Behavior | Default |
+|----------|----------|---------|
+| `PUID` | Target user ID inside container | unset |
+| `PGID` | Target group ID inside container | unset |
+| `AUTO_ROOT_FALLBACK` | If config file not writable after remap, stay root | `1` |
+| `RUN_AS_ROOT` | Force run entirely as root, skip remap | `0` |
+
+Flow:
+ 
+1. Start as root, attempt remap to PUID/PGID
+2. Create/verify `/app/config` and config file ownership
+3. If writable -> drop privileges via `su-exec`
+4. If not writable and `AUTO_ROOT_FALLBACK=1` -> continue as root (warn)
+5. If not writable and `AUTO_ROOT_FALLBACK=0` -> still drop, writes may fail (secure strict mode)
+ 
+
+Examples:
+
+```bash
+# Standard non-root remap
+docker run -e PUID=1000 -e PGID=1000 -v ./config:/app/config image
+
+# Disable automatic root fallback (security stricter)
+docker run -e PUID=1000 -e PGID=1000 -e AUTO_ROOT_FALLBACK=0 -v ./config:/app/config image
+
+# Force root (last resort on locked-down NAS)
+docker run -e RUN_AS_ROOT=1 -v ./config:/app/config image
+```
+
 ## API Integration
 
 ### Twitch Helix API Endpoints

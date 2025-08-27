@@ -22,6 +22,12 @@ RUN addgroup -g 1001 -S appgroup && \
     '' \
     'set -e' \
     '' \
+    '# Optional forced root mode before any remap' \
+    'if [ "${RUN_AS_ROOT:-0}" = "1" ]; then' \
+    '  echo "[INFO] RUN_AS_ROOT=1 - running as root without dropping privileges"' \
+    '  exec "$@"' \
+    'fi' \
+    '' \
     '# Dynamic user remap (runs as root here)' \
     'TARGET_UID="${PUID:-1001}"' \
     'TARGET_GID="${PGID:-1001}"' \
@@ -33,7 +39,11 @@ RUN addgroup -g 1001 -S appgroup && \
     '  deluser appuser 2>/dev/null || true' \
     '  delgroup appgroup 2>/dev/null || true' \
     '  # Try to find existing group with TARGET_GID' \
-    '  EXISTING_GROUP=$(getent group "$TARGET_GID" | cut -d: -f1 || true)' \
+    '  # Lookup existing group by GID (portable, avoid awk extensions)' \
+    '  EXISTING_GROUP=""' \
+    '  while IFS=: read -r NAME _ GID _; do' \
+    '    if [ "$GID" = "$TARGET_GID" ]; then EXISTING_GROUP="$NAME"; break; fi' \
+    '  done < /etc/group' \
     '  if [ -n "$EXISTING_GROUP" ]; then' \
     '    adduser -u "$TARGET_UID" -S appuser -G "$EXISTING_GROUP"' \
     '  else' \
@@ -46,6 +56,25 @@ RUN addgroup -g 1001 -S appgroup && \
     'mkdir -p /app/config' \
     'sleep 0.2' \
     'chown -R appuser:appgroup /app/config 2>/dev/null || true' \
+    'chmod 755 /app/config 2>/dev/null || true' \
+    '' \
+    '# Pre-create config file as root if missing to avoid later write failure after privilege drop' \
+    'CONF_FILE="${TWITCH_CONF_FILE:-/app/config/twitch_colorchanger.conf}"' \
+    'if [ ! -f "$CONF_FILE" ]; then' \
+    '  echo "{\"users\": []}" > "$CONF_FILE" 2>/dev/null || true' \
+    'fi' \
+    '# Ensure ownership & perms (ignore failures on restrictive NAS)' \
+    'chown appuser:appgroup "$CONF_FILE" 2>/dev/null || true' \
+    'chmod 644 "$CONF_FILE" 2>/dev/null || true' \
+    '' \
+    '# If file still not writable by target user, warn' \
+    'if ! su-exec appuser:appgroup sh -c "[ -w \"$CONF_FILE\" ]"; then' \
+    '  echo "[WARN] Config file not writable by remapped user (UID=$TARGET_UID GID=$TARGET_GID). Check NAS share permissions." >&2' \
+    '  if [ "${AUTO_ROOT_FALLBACK:-1}" = "1" ]; then' \
+    '    echo "[WARN] AUTO_ROOT_FALLBACK=1 - continuing as root to allow writes" >&2' \
+    '    exec "$@"' \
+    '  fi' \
+    'fi' \
     '' \
     '# Drop privileges and exec' \
     'exec su-exec appuser:appgroup "$@"' \

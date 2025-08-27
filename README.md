@@ -336,6 +336,53 @@ services:
 
 **Note**: Replace `1000` with your actual user and group IDs from the `id` command.
 
+#### Synology / NAS Edge Cases
+
+Some NAS platforms (Synology, TrueNAS, certain CIFS mounts) restrict ownership changes inside containers which can still cause write failures. The image now includes two fallback controls:
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `AUTO_ROOT_FALLBACK` | If config file not writable after remap, keep running as root to allow saves | `1` |
+| `RUN_AS_ROOT` | Force always run as root (skips UID/GID remap) | `0` |
+
+Example (allow automatic fallback):
+
+```bash
+docker run -e PUID=1031 -e PGID=65536 -v /path/config:/app/config damastah/twitch-colorchanger:latest
+```
+
+Disable fallback (will drop privileges even if unwritable, for strict security):
+
+```bash
+docker run -e PUID=1031 -e PGID=65536 -e AUTO_ROOT_FALLBACK=0 -v /path/config:/app/config damastah/twitch-colorchanger:latest
+```
+
+Force root explicitly (last resort):
+
+```bash
+docker run -e RUN_AS_ROOT=1 -v /path/config:/app/config damastah/twitch-colorchanger:latest
+```
+
+Security guidance:
+
+- Prefer remapped non-root (PUID/PGID only) when possible
+- Keep `AUTO_ROOT_FALLBACK=1` only if NAS prevents non-root writes
+- Use `RUN_AS_ROOT=1` only on trusted hosts / private networks
+- Always mount only the config directory, not broader paths
+
+To fix permissions on NAS manually (SSH):
+
+```bash
+chown -R <uid>:<gid> /volume1/docker/twitch-colorchanger/config
+chmod 755 /volume1/docker/twitch-colorchanger/config
+```
+
+If ACLs interfere (Synology):
+
+```bash
+synoacltool -add /volume1/docker/twitch-colorchanger/config "user:<uid>:allow:rwxpdDaARWcCo:fd"
+```
+
 ### Debug Mode
 
 Enable detailed logging for troubleshooting:
