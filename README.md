@@ -240,8 +240,7 @@ Repeat with `_2`, `_3`, etc. for additional users.
 | `LOG_FILE` | Path to log file | None |
 | `FORCE_COLOR` | Force colored logs | `true` |
 | `PYTHONUNBUFFERED` | Disable output buffering | `1` |
-| `PUID` | User ID for file permissions (Docker) | None |
-| `PGID` | Group ID for file permissions (Docker) | None |
+| (Removed) | Previously user/group remap options have been removed. Container now runs as root always. | - |
 
 ### Configuration File
 
@@ -263,125 +262,23 @@ The bot automatically saves settings to `twitch_colorchanger.conf`:
 }
 ```
 
-**Features:**
+Features:
 
 - **Automatic token refresh**: Tokens are refreshed and saved automatically
 - **Multi-user support**: Add multiple users to the same config file
 - **Interactive management**: Choose to use existing config, add users, or create new
 - **Environment override**: Use `TWITCH_CONF_FILE` to specify custom config file path
-
----
-
-## Troubleshooting
-
-### Common Issues
-
-#### Authentication Problems
-
-- **Missing scopes**: Ensure your token has `chat:read` and `user:manage:chat_color`
-- **Invalid tokens**: Regenerate tokens using [twitchtokengenerator.com](https://twitchtokengenerator.com)
-- **Client credentials**: Verify your Client ID and Client Secret are correct
-
-#### Color Change Issues
-
-- **Color not changing**: Prime/Turbo users can use hex colors; others use preset Twitch colors
-- **Rate limits**: Twitch API allows color changes every ~1.5 seconds
-- **Channel permissions**: Ensure the bot has permission to change colors in the channel
-
-#### Docker Issues
-
-- **Environment variables**: Ensure all required environment variables are set
-- **Volume mounting**: Mount a volume for config persistence: `-v $PWD/config:/app/config`
-- **Permissions**: Check that the container has write access to mounted volumes
-
-### Multi-User Specific Issues
-
-- **Only some users working**: Check that all numbered environment variables are set correctly
-- **Users not detected**: Environment variable names must be exact - use `_1`, `_2`, `_3` etc.
-- **Config file conflicts**: Multi-user configs use `{"users": [...]}` format
 - **Mixed environment and config**: Environment variables take precedence over config file
 
-### Performance Issues
+### Docker Permission Notes
 
-- **Memory leaks**: The bot includes automatic memory leak detection
-- **Connection issues**: HTTP connection pooling optimizes API performance
-- **High CPU usage**: Disable debug logging in production (`DEBUG=false`)
-- **API failures**: Automatic retry logic handles transient failures
-
-### Docker Permission Issues
-
-If you encounter permission denied errors when the container tries to save configuration files, you can fix this by matching the container's user ID to your host user:
+The container now always runs as root for simplicity and maximum compatibility with NAS / mounted volumes. Mount only the config directory for persistence:
 
 ```bash
-# Get your user and group IDs
-id -u  # Your user ID (e.g., 1000)
-id -g  # Your group ID (e.g., 1000)
-
-# Run with matching IDs
-docker run -e PUID=1000 -e PGID=1000 damastah/twitch-colorchanger:latest
+docker run -v $PWD/config:/app/config damastah/twitch-colorchanger:latest
 ```
 
-Or in docker-compose.yml:
-
-```yaml
-services:
-  twitch-colorchanger:
-    image: damastah/twitch-colorchanger:latest
-    environment:
-      - PUID=1000
-      - PGID=1000
-    volumes:
-      - ./config:/app/config
-```
-
-**Note**: Replace `1000` with your actual user and group IDs from the `id` command.
-
-#### Synology / NAS Edge Cases
-
-Some NAS platforms (Synology, TrueNAS, certain CIFS mounts) restrict ownership changes inside containers which can still cause write failures. The image now includes two fallback controls:
-
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `AUTO_ROOT_FALLBACK` | If config file not writable after remap, keep running as root to allow saves | `1` |
-| `RUN_AS_ROOT` | Force always run as root (skips UID/GID remap) | `0` |
-
-Example (allow automatic fallback):
-
-```bash
-docker run -e PUID=1031 -e PGID=65536 -v /path/config:/app/config damastah/twitch-colorchanger:latest
-```
-
-Disable fallback (will drop privileges even if unwritable, for strict security):
-
-```bash
-docker run -e PUID=1031 -e PGID=65536 -e AUTO_ROOT_FALLBACK=0 -v /path/config:/app/config damastah/twitch-colorchanger:latest
-```
-
-Force root explicitly (last resort):
-
-```bash
-docker run -e RUN_AS_ROOT=1 -v /path/config:/app/config damastah/twitch-colorchanger:latest
-```
-
-Security guidance:
-
-- Prefer remapped non-root (PUID/PGID only) when possible
-- Keep `AUTO_ROOT_FALLBACK=1` only if NAS prevents non-root writes
-- Use `RUN_AS_ROOT=1` only on trusted hosts / private networks
-- Always mount only the config directory, not broader paths
-
-To fix permissions on NAS manually (SSH):
-
-```bash
-chown -R <uid>:<gid> /volume1/docker/twitch-colorchanger/config
-chmod 755 /volume1/docker/twitch-colorchanger/config
-```
-
-If ACLs interfere (Synology):
-
-```bash
-synoacltool -add /volume1/docker/twitch-colorchanger/config "user:<uid>:allow:rwxpdDaARWcCo:fd"
-```
+If you still encounter write issues on a NAS, ensure the mounted path is writable by root inside the container (most setups allow this by default). No user remapping variables are required or supported anymore. To fix rare NAS permission issues manually (SSH), ensure the directory is writable by root.
 
 ### Debug Mode
 
@@ -397,6 +294,34 @@ docker run -e DEBUG=true -e LOG_FORMAT=json damastah/twitch-colorchanger:latest
 # File logging
 docker run -e LOG_FILE=/app/logs/bot.log -v $PWD/logs:/app/logs damastah/twitch-colorchanger:latest
 ```
+
+---
+
+## Troubleshooting
+
+### Authentication
+
+- Missing scopes: ensure tokens include `chat:read` and `user:manage:chat_color` (and optionally `chat:edit`).
+- Invalid / expired tokens: regenerate tokens at [twitchtokengenerator.com](https://twitchtokengenerator.com).
+- Client credentials mismatch: verify Client ID and Secret match the generated tokens.
+
+### Docker
+
+- Config not persisting: confirm volume mount `-v $PWD/config:/app/config` exists and directory is writable.
+- No users loaded: ensure environment variables use numbered suffixes (`_1`, `_2`, ...).
+- Color not changing: non‑Prime/Turbo accounts can only use preset colors.
+
+### Rate / API Issues
+
+- Too many requests: Twitch may temporarily limit rapid color changes; the bot already spaces them—avoid manual spamming.
+- Network errors: transient failures are retried automatically; persistent 401 means token refresh failed (recreate tokens).
+
+### Logging & Debugging
+
+- Set `DEBUG=true` for verbose logs.
+- Use `LOG_FORMAT=json` for structured output in aggregators.
+
+If issues persist, open an issue with: platform, Python/Docker version, relevant log snippet (exclude tokens).
 
 ---
 

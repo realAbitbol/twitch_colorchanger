@@ -60,6 +60,9 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 
+### Docker Runtime Permissions (Simplified)
+
+
 ```
 
 #### B. Color Generation System (`src/colors.py`)
@@ -429,44 +432,15 @@ class BotManager:
 
 ```
 
-### Docker Runtime User Remapping & Root Fallback
+### Docker Runtime Permissions (Simplified)
 
-The container startup script supports controlled privilege handling to cope with restrictive NAS mounts:
+The image now always runs as root; prior UID/GID remapping and fallback logic has been removed to reduce complexity and resolve persistent permission issues on certain NAS mounts. Only mount `/app/config` for persistence.
 
-Flow:
-
-1. Start as root inside container
-2. If `RUN_AS_ROOT=1` -> execute app directly (no remap)
-3. Else recreate `appuser` / `appgroup` with `PUID` / `PGID`
-4. Ensure `/app/config` exists; pre-create config file if missing
-5. Test writability as remapped user
-6. If writable -> drop to user via `su-exec`
-7. If not writable and `AUTO_ROOT_FALLBACK=1` -> stay root (warn)
-8. If not writable and `AUTO_ROOT_FALLBACK=0` -> still drop (writes may fail)
-
-Environment variables:
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PUID` | Desired runtime UID (host user id) | unset |
-| `PGID` | Desired runtime GID (host group id) | unset |
-| `RUN_AS_ROOT` | Force skip remap & run as root | `0` |
-| `AUTO_ROOT_FALLBACK` | Allow automatic root continuation if config not writable | `1` |
-
-Examples:
+Example:
 
 ```bash
-# Standard remap (recommended)
-docker run -e PUID=1000 -e PGID=1000 -v ./config:/app/config image
-
-# Hardened: forbid root fallback
-docker run -e PUID=1000 -e PGID=1000 -e AUTO_ROOT_FALLBACK=0 -v ./config:/app/config image
-
-# Forced root (last resort for locked-down NAS shares)
-docker run -e RUN_AS_ROOT=1 -v ./config:/app/config image
+docker run -v ./config:/app/config damastah/twitch-colorchanger:latest
 ```
-
-Security guidance: prefer remap; fallback only when unavoidable; forced root only on trusted hosts.
 
 ## Enhanced Implementation Features (2024 Improvements)
 
