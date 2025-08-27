@@ -3,9 +3,9 @@
 .gitignore
 .github/
 
-# Documentation
-README.md
-LICENSE
+# Documentation (keep README.md and LICENSE for image documentation)
+FUNCTIONAL_DOCUMENTATION.md
+IMPLEMENTATION_GUIDE.md
 
 # Configuration files
 docker-compose.yml

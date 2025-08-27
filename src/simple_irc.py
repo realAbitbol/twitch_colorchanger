@@ -72,8 +72,8 @@ class SimpleTwitchIRC:
             self.joined_channels.add(channel)
             print_log(f"📺 Joined #{channel}", bcolors.OKBLUE)
     
-    def parse_message(self, raw_message: str) -> Optional[dict]:
-        """Parse IRC message - based on working implementation"""
+    def _parse_message(self, raw_message: str) -> Optional[dict]:
+        """Parse IRC message into components"""
         try:
             if raw_message.startswith('@'):
                 parts = raw_message.split(' ', 3)
@@ -155,7 +155,7 @@ class SimpleTwitchIRC:
             return
         
         # Parse message
-        parsed = self.parse_message(line)
+        parsed = self._parse_message(line)
         if parsed and parsed.get('command') == 'PRIVMSG':
             self._handle_privmsg(parsed)
     

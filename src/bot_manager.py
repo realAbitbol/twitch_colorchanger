@@ -4,7 +4,7 @@ Bot manager for handling multiple Twitch bots
 
 import asyncio
 import signal
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 from .bot import TwitchColorBot
 from .colors import bcolors
@@ -21,13 +21,13 @@ class BotManager:
         self.tasks = []
         self.running = False
         
-    async def start_all_bots(self):
-        """Start all bots for configured users"""
+    async def _start_all_bots(self):
+        """Start all bots and return success status"""
         print_log(f"🚀 Starting {len(self.users_config)} bot(s)...", bcolors.HEADER)
         
         for i, user_config in enumerate(self.users_config, 1):
             try:
-                bot = self.create_bot(user_config)
+                bot = self._create_bot(user_config)
                 if bot:
                     self.bots.append(bot)
                     
@@ -53,8 +53,8 @@ class BotManager:
         print_log("✅ All bots started successfully!", bcolors.OKGREEN)
         return True
     
-    def create_bot(self, user_config: Dict[str, Any]) -> TwitchColorBot:
-        """Create a TwitchColorBot instance for a user"""
+    def _create_bot(self, user_config: Dict[str, Any]) -> TwitchColorBot:
+        """Create a bot instance from user configuration"""
         username = user_config['username']
         token = user_config['access_token']
         
@@ -78,7 +78,7 @@ class BotManager:
             print_log(f"❌ Failed to create bot for {username}: {e}", bcolors.FAIL)
             raise
     
-    async def wait_for_completion(self):
+    async def _wait_for_completion(self):
         """Wait for all bot tasks to complete or keep running if they fail"""
         if not self.tasks:
             return
@@ -105,7 +105,7 @@ class BotManager:
         finally:
             self.running = False
     
-    async def stop_all_bots(self):
+    async def _stop_all_bots(self):
         """Stop all running bots"""
         if not self.running:
             return
@@ -125,7 +125,7 @@ class BotManager:
         for i, bot in enumerate(self.bots):
             try:
                 if bot:
-                    await bot.close()
+                    bot.close()
                     print_log(f"✅ Closed bot {i+1}", bcolors.OKGREEN)
             except Exception as e:
                 print_log(f"⚠️ Error closing bot {i+1}: {e}", bcolors.WARNING)
@@ -165,7 +165,7 @@ class BotManager:
         def signal_handler(signum, frame):
             print_log(f"\n🔔 Received signal {signum}, initiating graceful shutdown...", bcolors.WARNING)
             # Save the task to prevent garbage collection (intentionally not awaited in signal handler)
-            _ = asyncio.create_task(self.stop_all_bots())
+            _ = asyncio.create_task(self._stop_all_bots())
         
         # Handle SIGINT (Ctrl+C) and SIGTERM
         signal.signal(signal.SIGINT, signal_handler)
@@ -181,7 +181,7 @@ async def run_bots(users_config: List[Dict[str, Any]], config_file: str = None):
     
     try:
         # Start all bots
-        success = await manager.start_all_bots()
+        success = await manager._start_all_bots()
         if not success:
             return
         
@@ -210,7 +210,7 @@ async def run_bots(users_config: List[Dict[str, Any]], config_file: str = None):
         
     finally:
         # Ensure cleanup
-        await manager.stop_all_bots()
+        await manager._stop_all_bots()
         
         # Print final statistics
         manager.print_statistics()
