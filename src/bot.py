@@ -5,15 +5,20 @@ Main bot class for Twitch color changing functionality
 import asyncio
 import random
 from datetime import datetime, timedelta
-from typing import List
-
-import aiohttp
+from typing import List, Optional
 
 from .colors import bcolors, generate_random_hex_color, get_different_twitch_color
 from .utils import print_log
+from .logger import logger
 from .simple_irc import SimpleTwitchIRC
 from .config import update_user_in_config
 from .rate_limiter import get_rate_limiter
+from .http_client import get_http_client
+from .error_handling import (
+    with_error_handling, ErrorCategory, ErrorSeverity, 
+    AuthenticationError, APIError, NetworkError, RateLimitError
+)
+from .memory_monitor import check_memory_leaks
 
 
 class TwitchColorBot:
@@ -51,7 +56,34 @@ class TwitchColorBot:
         
         # Rate limiter for API requests
         self.rate_limiter = get_rate_limiter(self.client_id, self.username)
+        
+        # Memory monitoring
+        self.last_memory_check = datetime.now()
+        self.memory_check_interval = timedelta(minutes=5)  # Check every 5 minutes
     
+    def _should_check_memory(self) -> bool:
+        """Check if it's time to run memory leak detection"""
+        return datetime.now() - self.last_memory_check > self.memory_check_interval
+    
+    def _check_memory_leaks(self):
+        """Check for memory leaks and log results"""
+        try:
+            leak_report = check_memory_leaks()
+            self.last_memory_check = datetime.now()
+            
+            if leak_report.get('potential_leaks'):
+                logger.warning("Memory leaks detected", extra={
+                    'username': self.username,
+                    'leak_report': leak_report
+                })
+            else:
+                logger.debug("Memory check completed - no leaks detected", extra={
+                    'username': self.username,
+                    'object_count': leak_report.get('total_objects', 0)
+                })
+        except Exception as e:
+            logger.error(f"Error during memory leak check: {e}")
+
     async def start(self):
         """Start the bot"""
         print_log(f"🚀 Starting bot for {self.username}", bcolors.OKBLUE)
@@ -192,66 +224,74 @@ class TwitchColorBot:
         
         return success
     
+    @with_error_handling(category=ErrorCategory.API, severity=ErrorSeverity.MEDIUM)
     async def _get_user_info(self):
         """Retrieve user information from Twitch API"""
         # Wait for rate limiting before making request
         await self.rate_limiter.wait_if_needed('get_user_info', is_user_request=True)
         
-        headers = {
-            'Authorization': f'Bearer {self.access_token}',
-            'Client-Id': self.client_id
-        }
-        
         try:
-            timeout = aiohttp.ClientTimeout(total=10)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get('https://api.twitch.tv/helix/users', headers=headers) as response:
-                    # Update rate limiting info from response headers
-                    self.rate_limiter.update_from_headers(dict(response.headers), is_user_request=True)
-                    
-                    if response.status == 200:
-                        data = await response.json()
-                        if data.get('data'):
-                            return data['data'][0]
-                    elif response.status == 429:
-                        self.rate_limiter.handle_429_error(dict(response.headers), is_user_request=True)
-                    return None
+            http_client = get_http_client()
+            data, status_code, headers = await http_client.twitch_api_request(
+                'GET', 'users', self.access_token, self.client_id
+            )
+            
+            # Update rate limiting info from response headers
+            self.rate_limiter.update_from_headers(headers, is_user_request=True)
+            
+            if status_code == 200 and data and data.get('data'):
+                return data['data'][0]
+            elif status_code == 429:
+                self.rate_limiter.handle_429_error(headers, is_user_request=True)
+                return None
+            else:
+                logger.error(f"Failed to get user info: {status_code}", user=self.username, status_code=status_code)
+                return None
+                
+        except APIError as e:
+            if e.context and e.context.additional_info and e.context.additional_info.get('status_code') == 401:
+                logger.warning("Token expired, attempting refresh", user=self.username)
+                if await self._check_and_refresh_token():
+                    # Retry with new token
+                    return await self._get_user_info()
+                else:
+                    raise AuthenticationError("Token refresh failed", user=self.username)
+            raise
         except Exception as e:
-            print_log(f'⚠️ Error getting user info: {e}', bcolors.WARNING)
+            logger.error(f"Error getting user info: {e}", exc_info=True, user=self.username)
             return None
     
+    @with_error_handling(category=ErrorCategory.API, severity=ErrorSeverity.LOW)
     async def _get_current_color(self):
         """Get the user's current color from Twitch API"""
         # Wait for rate limiting before making request
         await self.rate_limiter.wait_if_needed('get_current_color', is_user_request=True)
         
-        headers = {
-            'Authorization': f'Bearer {self.access_token}',
-            'Client-Id': self.client_id
-        }
-        
         try:
-            timeout = aiohttp.ClientTimeout(total=10)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                url = f'https://api.twitch.tv/helix/chat/color?user_id={self.user_id}'
-                async with session.get(url, headers=headers) as response:
-                    # Update rate limiting info from response headers
-                    self.rate_limiter.update_from_headers(dict(response.headers), is_user_request=True)
-                    
-                    if response.status == 200:
-                        data = await response.json()
-                        if data.get('data') and len(data['data']) > 0:
-                            color = data['data'][0].get('color')
-                            if color:
-                                print_log(f"🎨 {self.username}: Current color is {color}", bcolors.OKBLUE)
-                                return color
-                    elif response.status == 429:
-                        self.rate_limiter.handle_429_error(dict(response.headers), is_user_request=True)
-                    # If no color set or API call fails, return None
-                    print_log(f"🎨 {self.username}: No current color set (using default)", bcolors.OKBLUE)
-                    return None
+            http_client = get_http_client()
+            params = {'user_id': self.user_id}
+            data, status_code, headers = await http_client.twitch_api_request(
+                'GET', 'chat/color', self.access_token, self.client_id, params=params
+            )
+            
+            # Update rate limiting info from response headers
+            self.rate_limiter.update_from_headers(headers, is_user_request=True)
+            
+            if status_code == 200 and data and data.get('data') and len(data['data']) > 0:
+                color = data['data'][0].get('color')
+                if color:
+                    logger.info(f"Current color is {color}", user=self.username)
+                    return color
+            elif status_code == 429:
+                self.rate_limiter.handle_429_error(headers, is_user_request=True)
+                return None
+            
+            # If no color set or API call fails, return None
+            logger.info("No current color set (using default)", user=self.username)
+            return None
+            
         except Exception as e:
-            print_log(f'⚠️ Error getting current color: {e}', bcolors.WARNING)
+            logger.warning(f"Error getting current color: {e}", user=self.username)
             return None
     
     def _persist_token_changes(self):
@@ -273,6 +313,10 @@ class TwitchColorBot:
     
     async def _change_color(self):
         """Change the username color via Twitch API"""
+        # Check for memory leaks periodically
+        if self._should_check_memory():
+            self._check_memory_leaks()
+        
         # Wait for rate limiting before making request  
         await self.rate_limiter.wait_if_needed('change_color', is_user_request=True)
         
@@ -285,39 +329,33 @@ class TwitchColorBot:
         
         # Get current rate limit status for display
         rate_status = self._get_rate_limit_display()
-        print_log(f"🎨 {self.username}: Changing color to {color}{rate_status}", bcolors.OKBLUE)
-        
-        # URL encode the color for hex colors (# becomes %23)
-        from urllib.parse import quote
-        encoded_color = quote(color, safe='')
-        
-        url = f'https://api.twitch.tv/helix/chat/color?user_id={self.user_id}&color={encoded_color}'
-        headers = {
-            'Authorization': f'Bearer {self.access_token}',
-            'Client-Id': self.client_id
-        }
+        logger.info(f"Changing color to {color}{rate_status}", user=self.username)
         
         try:
-            timeout = aiohttp.ClientTimeout(total=10)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.put(url, headers=headers) as response:
-                    # Update rate limiting info from response headers
-                    response_headers = dict(response.headers)
-                    self.rate_limiter.update_from_headers(response_headers, is_user_request=True)
-                    
-                    if response.status == 204:
-                        self.colors_changed += 1
-                        self.last_color = color  # Store the successfully applied color
-                        rate_status = self._get_rate_limit_display()
-                        print_log(f"✅ {self.username}: Color changed to {color}{rate_status}", bcolors.OKGREEN)
-                    elif response.status == 429:
-                        self.rate_limiter.handle_429_error(dict(response.headers), is_user_request=True)
-                        print_log(f"⚠️ {self.username}: Rate limited, will retry automatically", bcolors.WARNING)
-                    else:
-                        error_text = await response.text()
-                        print_log(f"❌ {self.username}: Failed to change color. Status: {response.status}, Response: {error_text}", bcolors.FAIL)
+            http_client = get_http_client()
+            # Don't URL encode the color - aiohttp will handle URL encoding automatically
+            # Twitch API expects colors like "#ff0000" or "red", not "%23ff0000"
+            params = {'user_id': self.user_id, 'color': color}
+            _, status_code, headers = await http_client.twitch_api_request(
+                'PUT', 'chat/color', self.access_token, self.client_id, params=params
+            )
+            
+            # Update rate limiting info from response headers
+            self.rate_limiter.update_from_headers(headers, is_user_request=True)
+            
+            if status_code == 204:
+                self.colors_changed += 1
+                self.last_color = color  # Store the successfully applied color
+                rate_status = self._get_rate_limit_display()
+                logger.info(f"Color changed to {color}{rate_status}", user=self.username)
+            elif status_code == 429:
+                self.rate_limiter.handle_429_error(headers, is_user_request=True)
+                logger.warning("Rate limited, will retry automatically", user=self.username)
+            else:
+                logger.error(f"Failed to change color. Status: {status_code}", user=self.username, status_code=status_code)
+                
         except Exception as e:
-            print_log(f"❌ {self.username}: Error changing color: {e}", bcolors.FAIL)
+            logger.error(f"Error changing color: {e}", exc_info=True, user=self.username)
 
     def _get_rate_limit_display(self):
         """Get rate limit information for display in messages"""
@@ -348,9 +386,10 @@ class TwitchColorBot:
             # Very low - highlight the critical status
             return f" [⚠️ {remaining}/{limit} reqs, reset in {reset_in:.0f}s]"
 
+    @with_error_handling(category=ErrorCategory.AUTH, severity=ErrorSeverity.HIGH)
     async def _refresh_access_token(self):
         """Refresh the access token using the refresh token"""
-        data = {
+        token_data = {
             'grant_type': 'refresh_token',
             'refresh_token': self.refresh_token,
             'client_id': self.client_id,
@@ -358,29 +397,30 @@ class TwitchColorBot:
         }
         
         try:
-            timeout = aiohttp.ClientTimeout(total=10)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post('https://id.twitch.tv/oauth2/token', data=data) as response:
-                    if response.status == 200:
-                        token_data = await response.json()
-                        self.access_token = token_data['access_token']
-                        
-                        # Update refresh token if provided
-                        if 'refresh_token' in token_data:
-                            self.refresh_token = token_data['refresh_token']
-                        
-                        # Set token expiry if provided
-                        if 'expires_in' in token_data:
-                            self.token_expiry = datetime.now() + timedelta(seconds=token_data['expires_in'])
-                            print_log(f"🔑 {self.username}: Token will expire at {self.token_expiry.strftime('%Y-%m-%d %H:%M:%S')}")
-                        
-                        return True
-                    else:
-                        error_text = await response.text()
-                        print_log(f"❌ {self.username}: Token refresh failed. Status: {response.status}, Response: {error_text}", bcolors.FAIL)
-                    return False
+            http_client = get_http_client()
+            async with http_client.request('POST', 'https://id.twitch.tv/oauth2/token', data=token_data) as response:
+                if response.status == 200:
+                    token_response = await response.json()
+                    self.access_token = token_response['access_token']
+                    
+                    # Update refresh token if provided
+                    if 'refresh_token' in token_response:
+                        self.refresh_token = token_response['refresh_token']
+                    
+                    # Set token expiry if provided
+                    if 'expires_in' in token_response:
+                        self.token_expiry = datetime.now() + timedelta(seconds=token_response['expires_in'])
+                        logger.info(f"Token will expire at {self.token_expiry.strftime('%Y-%m-%d %H:%M:%S')}", user=self.username)
+                    
+                    return True
+                else:
+                    error_text = await response.text()
+                    logger.error(f"Token refresh failed. Status: {response.status}, Response: {error_text}", 
+                               user=self.username, status_code=response.status)
+                return False
+                
         except Exception as e:
-            print_log(f"❌ {self.username}: Error refreshing token: {e}", bcolors.FAIL)
+            logger.error(f"Error refreshing token: {e}", exc_info=True, user=self.username)
             return False
 
     def close(self):

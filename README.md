@@ -9,6 +9,8 @@ Automatically change your Twitch username color after each message you send in c
 
 ## 🎯 Features
 
+### Core Features
+
 - Changes your Twitch chat color after every message you send
 - **Multi-user support** - run multiple bots for different Twitch accounts simultaneously
 - Supports both preset Twitch colors and random hex colors
@@ -17,15 +19,32 @@ Automatically change your Twitch username color after each message you send in c
 - **Docker unattended mode** with environment variables
 - Interactive setup with persistent configuration
 
+### Enhanced Features
+
+- **🏗️ Structured Logging**: JSON output for production, colored logs for development
+- **🛡️ Advanced Error Handling**: Automatic retries with exponential backoff
+- **⚡ HTTP Connection Pooling**: Optimized performance with resource management
+- **🔍 Memory Leak Prevention**: Automatic monitoring and cleanup
+- **✅ Configuration Validation**: Comprehensive validation with detailed error reporting
+- **📊 Enhanced Observability**: API performance monitoring and statistics
+
 ---
 
 ## 📦 Dependencies
 
 - Requires **Python 3.11+** (tested up to Python 3.13)
+
 - **Core Dependencies:**
-  - `requests` - HTTP requests and API communication
-  - `aiohttp` - Async HTTP client for better performance
-  - `twitchio` - Twitch IRC bot framework
+  - `requests>=2.31.0,<3.0.0` - HTTP requests and API communication
+  - `aiohttp>=3.9.0,<4.0.0` - Async HTTP client with connection pooling
+
+- **Enhanced Features:**
+  - Structured logging with JSON output support
+  - Advanced error handling with automatic retries
+  - HTTP connection pooling for better performance
+  - Memory leak monitoring and prevention
+  - Comprehensive configuration validation
+
 - For Docker usage, you need Docker installed
 - All dependencies are automatically installed via `requirements.txt`
 
@@ -244,6 +263,13 @@ You can configure the bot using environment variables (for Docker) or interactiv
 - `TWITCH_USE_RANDOM_COLORS`: `true` for random hex colors (Prime/Turbo only)
 - `FORCE_COLOR`: `true` to force colored logs
 
+### Enhanced Configuration Options
+
+- `DEBUG`: Set to `true` to enable debug-level logging
+- `LOG_FORMAT`: Set to `json` for structured JSON logging (default: `colored`)
+- `LOG_FILE`: Path to log file for persistent logging (optional)
+- `TWITCH_CONF_FILE`: Custom configuration file path (default: `twitch_colorchanger.conf`)
+
 Tokens and settings are saved in `twitch_colorchanger.conf` for future runs.
 
 ### Configuration File Format
@@ -286,12 +312,40 @@ The bot saves your settings in `twitch_colorchanger.conf` (JSON format) for auto
 - **Rate limits**: Twitch API allows color changes every ~1.5 seconds.
 - **Docker issues**: Ensure environment variables are set and volume is mounted for config persistence.
 
+### Enhanced Debugging Features
+
+- **Debug Logging**: Set `DEBUG=true` to enable detailed debug information
+- **JSON Logging**: Set `LOG_FORMAT=json` for structured logs suitable for log aggregation
+- **Memory Monitoring**: The bot automatically monitors for memory leaks every 5 minutes
+- **Error Tracking**: Comprehensive error categorization with automatic retry logic
+- **Performance Monitoring**: API response times and connection pool statistics
+
+#### Debug Mode Examples
+
+```bash
+# Local debugging
+DEBUG=true python main.py
+
+# Docker with debug logging
+docker run -e DEBUG=true -e LOG_FORMAT=json damastah/twitch-colorchanger:latest
+
+# File logging
+docker run -e LOG_FILE=/app/logs/bot.log -v ./logs:/app/logs damastah/twitch-colorchanger:latest
+```
+
 ### Multi-User Specific Issues
 
 - **Only some users working**: Check that all numbered environment variables are set correctly for each user (e.g., `TWITCH_USERNAME_1`, `TWITCH_ACCESS_TOKEN_1`, etc.).
 - **Users not detected**: Environment variable names must be exact - use `_1`, `_2`, `_3` etc. with no gaps in numbering.
 - **Config file conflicts**: The multi-user config format uses `{"users": [...]}`. Legacy single-user configs are automatically converted.
 - **Mixed environment and config**: Environment variables take precedence over config file settings.
+
+### Performance and Memory Issues
+
+- **Memory leaks**: The bot includes automatic memory leak detection and prevention
+- **Connection issues**: HTTP connection pooling optimizes API performance
+- **High CPU usage**: Check debug logging is disabled in production (`DEBUG=false`)
+- **API failures**: Automatic retry logic handles transient failures with exponential backoff
 
 ### How Multi-User Detection Works
 
@@ -309,34 +363,60 @@ This project uses a **modular architecture** for better maintainability and exte
 
 ```text
 twitch_colorchanger/
-├── main.py                 # Entry point for the application
-├── src/                    # Core application modules
-│   ├── __init__.py        # Package initialization
-│   ├── colors.py          # Color definitions and utilities
-│   ├── config.py          # Configuration management (env vars & interactive)
-│   ├── utils.py           # Utility functions and logging
-│   ├── bot.py             # TwitchColorBot class (core bot logic)
-│   └── bot_manager.py     # Multi-bot management and orchestration
-├── requirements.txt        # Python dependencies
-├── Dockerfile             # Container definition
-└── docker-compose.yml-sample  # Docker Compose example
+├── main.py                     # Entry point for the application
+├── src/                        # Core application modules
+│   ├── __init__.py            # Package initialization
+│   ├── bot.py                 # TwitchColorBot class (core bot logic)
+│   ├── bot_manager.py         # Multi-bot management and orchestration
+│   ├── config.py              # Configuration management (env vars & interactive)
+│   ├── config_validator.py    # Enhanced configuration validation
+│   ├── simple_irc.py          # Custom IRC client implementation
+│   ├── colors.py              # Color definitions and utilities
+│   ├── utils.py               # Utility functions and logging
+│   ├── logger.py              # Structured logging system
+│   ├── error_handling.py      # Advanced error handling with retries
+│   ├── http_client.py         # HTTP connection pooling and API client
+│   ├── rate_limiter.py        # Rate limiting for API requests
+│   └── memory_monitor.py      # Memory leak detection and prevention
+├── requirements.txt            # Python dependencies
+├── Dockerfile                 # Container definition
+├── docker-compose.yml-sample  # Docker Compose example
+├── FUNCTIONAL_DOCUMENTATION.md # Feature specifications and capabilities
+└── IMPLEMENTATION_GUIDE.md    # Technical implementation details
 ```
 
 ### Key Components
 
-- **`main.py`**: Async entry point that coordinates configuration and bot execution
+#### Core System
+
+- **`main.py`**: Enhanced entry point with error handling and graceful shutdown
 - **`src/config.py`**: Handles both environment variables (Docker mode) and interactive setup
 - **`src/bot.py`**: Individual bot instance with color changing logic and token management
 - **`src/bot_manager.py`**: Manages multiple bots, handles graceful shutdown, and aggregate statistics
+- **`src/simple_irc.py`**: Custom Twitch IRC client implementation
+
+#### Enhanced Features (2024)
+
+- **`src/logger.py`**: Structured logging with JSON/colored output and contextual information
+- **`src/config_validator.py`**: Comprehensive configuration validation with security checks
+- **`src/error_handling.py`**: Custom exception hierarchy with automatic retry logic
+- **`src/http_client.py`**: HTTP connection pooling with memory leak prevention
+- **`src/rate_limiter.py`**: Intelligent rate limiting for Twitch API requests
+- **`src/memory_monitor.py`**: Memory leak detection and prevention system
+
+#### Utilities
+
 - **`src/utils.py`**: Shared utilities for logging, user input, and channel processing
 - **`src/colors.py`**: Color definitions, ANSI codes, and color generation functions
 
 ### Benefits
 
-- **Maintainability**: Smaller, focused modules (50-150 lines each vs 726 lines monolith)
+- **Maintainability**: Smaller, focused modules with clear separation of concerns
+- **Reliability**: Advanced error handling, memory leak prevention, and automatic retries
+- **Performance**: HTTP connection pooling and optimized resource management
+- **Observability**: Structured logging and comprehensive monitoring
 - **Extensibility**: Easy to add features without affecting other components
 - **Testability**: Individual modules can be tested in isolation
-- **Readability**: Clear separation of concerns and focused functionality
 
 ---
 

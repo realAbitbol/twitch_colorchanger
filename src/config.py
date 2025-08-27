@@ -7,6 +7,8 @@ import sys
 import json
 from .colors import bcolors
 from .utils import print_log, process_channels
+from .logger import logger
+from .config_validator import ConfigValidator, validate_config_file
 
 # Constants for repeated messages
 INVALID_CONFIG_MSG = "❌ Invalid configuration provided!"
@@ -111,40 +113,42 @@ def get_docker_config():
 
 
 def validate_user_config(user_config):
-    """Validate that user configuration has required fields"""
-    required_fields = ['username', 'access_token', 'channels']
-    missing_fields = []
+    """Validate that user configuration has required fields - Enhanced version"""
+    is_valid, errors = ConfigValidator.validate_user_config(user_config)
     
-    for field in required_fields:
-        if not user_config.get(field):
-            missing_fields.append(field)
+    if errors:
+        # Print validation report
+        ConfigValidator.print_validation_report(errors)
     
-    if missing_fields:
-        print_log(f"❌ Missing required fields for user {user_config.get('username', 'Unknown')}: {', '.join(missing_fields)}", bcolors.FAIL)
-        return False
-    
-    if not user_config['channels']:
-        print_log(f"❌ No channels specified for user {user_config['username']}", bcolors.FAIL)
-        return False
-    
-    return True
+    return is_valid
 
 
 def _validate_docker_users(users):
     """Validate Docker mode users and return valid ones"""
-    valid_users = []
-    for user_config in users:
-        if validate_user_config(user_config):
-            valid_users.append(user_config)
-        else:
-            print_log(f"⚠️ Skipping invalid configuration for user {user_config.get('username', 'Unknown')}", bcolors.WARNING)
+    # Use enhanced validation
+    all_valid, errors = ConfigValidator.validate_all_configs(users)
     
-    if not valid_users:
-        print_log("❌ No valid user configurations found!", bcolors.FAIL)
-        sys.exit(1)
+    if errors:
+        ConfigValidator.print_validation_report(errors)
     
-    print_log(f"✅ Found {len(valid_users)} valid user configuration(s)", bcolors.OKGREEN)
-    return valid_users
+    if not all_valid:
+        # Filter out users with critical errors
+        valid_users = []
+        for i, user_config in enumerate(users):
+            is_valid, _ = ConfigValidator.validate_user_config(user_config, i + 1)
+            if is_valid:
+                valid_users.append(user_config)
+            else:
+                logger.warning(f"Skipping invalid configuration for user {user_config.get('username', 'Unknown')}")
+        
+        if not valid_users:
+            logger.error("No valid user configurations found!")
+            sys.exit(1)
+        
+        users = valid_users
+    
+    logger.info(f"✅ Found {len(users)} valid user configuration(s)")
+    return users
 
 
 def _persist_docker_config(users, config_file):

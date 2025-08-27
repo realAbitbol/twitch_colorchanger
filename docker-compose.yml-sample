@@ -48,9 +48,15 @@ services:
       # Global settings
       - FORCE_COLOR=true  # Optional, to force ANSI colors in logs
       - PYTHONUNBUFFERED=1  # Ensure unbuffered output for real-time logs
+      
+      # Enhanced logging and debugging options (2024 improvements)
+      # - DEBUG=true  # Enable debug-level logging (verbose output)
+      # - LOG_FORMAT=json  # Use JSON format for structured logging
+      # - LOG_FILE=/app/logs/bot.log  # Enable file logging (requires volume mount)
     
     # Volume for token persistence (optional but recommended)
     volumes:
       - ./config:/app/config  # Mount local ./config directory to persist config file only
+      # - ./logs:/app/logs  # Optional: Mount for log file persistence (if LOG_FILE is set)
     
     restart: unless-stopped  # Automatically restart unless manually stopped
