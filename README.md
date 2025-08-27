@@ -215,7 +215,7 @@ Use numbered environment variables for multiple users:
 | `TWITCH_CLIENT_ID_1` | Twitch app client ID | `client_id_1` |
 | `TWITCH_CLIENT_SECRET_1` | Twitch app client secret | `client_secret_1` |
 | `TWITCH_CHANNELS_1` | Channels to join (comma-separated) | `channel1,channel2` |
-| `TWITCH_USE_RANDOM_COLORS_1` | Use random hex colors | `true`/`false` |
+| `TWITCH_USE_RANDOM_COLORS_1` | Use random hex colors (legacy: `USE_RANDOM_COLORS_1`) | `true`/`false` |
 
 Repeat with `_2`, `_3`, etc. for additional users.
 

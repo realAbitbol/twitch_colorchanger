@@ -120,7 +120,11 @@ def get_docker_config():
         client_secret = os.environ.get(f'TWITCH_CLIENT_SECRET_{user_num}', '')
         channels_str = os.environ.get(f'TWITCH_CHANNELS_{user_num}', username)
         channels = process_channels(channels_str)
-        use_random_colors_str = os.environ.get(f'USE_RANDOM_COLORS_{user_num}', 'true')
+        # Support documented VAR name TWITCH_USE_RANDOM_COLORS_{n} and legacy USE_RANDOM_COLORS_{n}
+        use_random_colors_str = os.environ.get(
+            f'TWITCH_USE_RANDOM_COLORS_{user_num}',
+            os.environ.get(f'USE_RANDOM_COLORS_{user_num}', 'true')
+        )
         use_random_colors = use_random_colors_str.lower() in ['true', '1', 'yes']
         
         user_config = {

@@ -20,7 +20,7 @@ services:
       - TWITCH_CLIENT_ID_1=your_client_id_1
       - TWITCH_CLIENT_SECRET_1=your_client_secret_1
       - TWITCH_CHANNELS_1=channel1,channel2,channel3  # Optional, comma-separated
-      - USE_RANDOM_COLORS_1=true  # Optional, true or false
+  - TWITCH_USE_RANDOM_COLORS_1=true  # Optional, true or false
       
       # User 2 (optional - add more users as needed)
       # - TWITCH_USERNAME_2=your_twitch_username_2
@@ -29,7 +29,7 @@ services:
       # - TWITCH_CLIENT_ID_2=your_client_id_2
       # - TWITCH_CLIENT_SECRET_2=your_client_secret_2
       # - TWITCH_CHANNELS_2=channel4,channel5  # Optional, comma-separated
-      # - USE_RANDOM_COLORS_2=false  # Optional, true or false
+  # - TWITCH_USE_RANDOM_COLORS_2=false  # Optional, true or false
       
       # User 3 (optional)
       # - TWITCH_USERNAME_3=your_twitch_username_3
@@ -43,7 +43,7 @@ services:
       # - TWITCH_CLIENT_ID=your_single_client_id
       # - TWITCH_CLIENT_SECRET=your_single_client_secret
       # - TWITCH_CHANNELS=channel1,channel2,channel3  # Optional, comma-separated
-      # - USE_RANDOM_COLORS=true  # Optional, true or false
+  # - TWITCH_USE_RANDOM_COLORS=true  # Optional, true or false (legacy USE_RANDOM_COLORS also accepted)
       
       # Global settings
       - FORCE_COLOR=true  # Optional, to force ANSI colors in logs
