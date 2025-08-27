@@ -28,7 +28,6 @@ class SimpleTwitchIRC:
         self.connected = False
 
         # Message tracking
-        self.message_count = 0
         self.joined_channels = set()
         self.confirmed_channels = set()
         self.pending_joins = {}
@@ -123,7 +122,6 @@ class SimpleTwitchIRC:
     
     def _handle_privmsg(self, parsed: dict):
         """Handle PRIVMSG messages"""
-        self.message_count += 1
         sender = parsed['sender']
         channel = parsed['channel']
         message = parsed['message']

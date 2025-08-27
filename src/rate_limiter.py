@@ -34,9 +34,6 @@ class TwitchRateLimiter:
         self.app_bucket: Optional[RateLimitInfo] = None
         self.user_bucket: Optional[RateLimitInfo] = None
         
-        # Track per-endpoint usage (some endpoints may have different costs)
-        self.endpoint_costs: Dict[str, int] = {}
-        
         # Lock to prevent race conditions
         self._lock = asyncio.Lock()
         
@@ -246,33 +243,6 @@ class TwitchRateLimiter:
                 )
         else:
             print_log(f"❌ {bucket_key}: Rate limit exceeded (429), no reset time provided", bcolors.FAIL)
-    
-    def get_status(self) -> Dict[str, any]:
-        """Get current rate limiting status for debugging"""
-        current_time = time.time()
-        
-        status = {
-            'client_id': self.client_id,
-            'username': self.username
-        }
-        
-        if self.user_bucket:
-            status['user_bucket'] = {
-                'remaining': self.user_bucket.remaining,
-                'limit': self.user_bucket.limit,
-                'reset_in': max(0, self.user_bucket.reset_timestamp - current_time),
-                'last_updated_ago': current_time - self.user_bucket.last_updated
-            }
-        
-        if self.app_bucket:
-            status['app_bucket'] = {
-                'remaining': self.app_bucket.remaining,
-                'limit': self.app_bucket.limit,
-                'reset_in': max(0, self.app_bucket.reset_timestamp - current_time),
-                'last_updated_ago': current_time - self.app_bucket.last_updated
-            }
-        
-        return status
 
 
 # Global rate limiter instances (one per client_id/username combination)

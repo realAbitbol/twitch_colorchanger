@@ -28,7 +28,6 @@ class ErrorCategory(Enum):
     CONFIG = "configuration"
     IRC = "irc"
     SYSTEM = "system"
-    USER_INPUT = "user_input"
     RATE_LIMIT = "rate_limit"
 
 
@@ -106,31 +105,6 @@ class RateLimitError(BotError):
             severity=ErrorSeverity.MEDIUM,
             user=user,
             additional_info={'reset_time': reset_time} if reset_time else None
-        )
-        super().__init__(message, context)
-
-
-class ConfigurationError(BotError):
-    """Configuration-related errors"""
-    
-    def __init__(self, message: str, field: Optional[str] = None):
-        context = ErrorContext(
-            category=ErrorCategory.CONFIG,
-            severity=ErrorSeverity.HIGH,
-            additional_info={'field': field} if field else None
-        )
-        super().__init__(message, context)
-
-
-class IRCError(BotError):
-    """IRC connection and communication errors"""
-    
-    def __init__(self, message: str, channel: Optional[str] = None, user: Optional[str] = None):
-        context = ErrorContext(
-            category=ErrorCategory.IRC,
-            severity=ErrorSeverity.MEDIUM,
-            user=user,
-            channel=channel
         )
         super().__init__(message, context)
 
@@ -304,14 +278,6 @@ class ErrorHandler:
     def _should_retry_status_code(self, status_code: int) -> bool:
         """Determine if we should retry based on HTTP status code"""
         return 500 <= status_code < 600  # Retry on server errors
-    
-    def get_error_stats(self) -> Dict[str, int]:
-        """Get error statistics for monitoring"""
-        return self.error_counts.copy()
-    
-    def reset_error_stats(self):
-        """Reset error statistics"""
-        self.error_counts.clear()
 
 
 # Global error handler instance

@@ -7,7 +7,6 @@ import json
 import os
 import sys
 from datetime import datetime
-from typing import Optional
 from pathlib import Path
 
 from .colors import bcolors
@@ -178,74 +177,6 @@ class BotLogger:
         
         self.logger.log(level, message, exc_info=exc_info, extra=extra)
     
-    def log_api_request(self, endpoint: str, method: str = "GET", user: Optional[str] = None, 
-                       response_time: Optional[float] = None, status_code: Optional[int] = None):
-        """Log API request with structured data"""
-        message = f"API {method} {endpoint}"
-        if status_code:
-            message += f" -> {status_code}"
-        
-        extra = {
-            'api_endpoint': endpoint,
-            'method': method
-        }
-        
-        if user:
-            extra['user'] = user
-        if response_time:
-            extra['response_time'] = round(response_time, 3)
-        if status_code:
-            extra['status_code'] = status_code
-        
-        # Log as INFO for successful requests, WARNING for client errors, ERROR for server errors
-        if status_code:
-            if 200 <= status_code < 300:
-                level = logging.INFO
-            elif 400 <= status_code < 500:
-                level = logging.WARNING
-            else:
-                level = logging.ERROR
-        else:
-            level = logging.INFO
-        
-        self._log(level, message, **extra)
-    
-    def log_rate_limit(self, remaining: int, reset_time: float, user: Optional[str] = None):
-        """Log rate limit status"""
-        message = f"Rate limit: {remaining} requests remaining, resets at {reset_time}"
-        extra = {
-            'rate_limit_remaining': remaining,
-            'rate_limit_reset': reset_time
-        }
-        if user:
-            extra['user'] = user
-        
-        # Warn when getting close to rate limits
-        level = logging.WARNING if remaining < 10 else logging.DEBUG
-        self._log(level, message, **extra)
-    
-    def log_irc_event(self, event_type: str, channel: Optional[str] = None, 
-                     user: Optional[str] = None, message: Optional[str] = None):
-        """Log IRC events with structured data"""
-        log_message = f"IRC {event_type}"
-        if channel:
-            log_message += f" in #{channel}"
-        if message:
-            log_message += f": {message[:100]}{'...' if len(message) > 100 else ''}"
-        
-        extra = {
-            'event_type': event_type
-        }
-        if channel:
-            extra['channel'] = channel
-        if user:
-            extra['user'] = user
-        if message:
-            extra['message_length'] = len(message)
-        
-        self._log(logging.INFO, log_message, **extra)
-
-
 # Global logger instance
 logger = BotLogger()
 

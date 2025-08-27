@@ -80,33 +80,6 @@ class BotManager:
             print_log(f"❌ Failed to create bot for {username}: {e}", bcolors.FAIL)
             raise
     
-    async def _wait_for_completion(self):
-        """Wait for all bot tasks to complete or keep running if they fail"""
-        if not self.tasks:
-            return
-        
-        try:
-            # Wait for all tasks to complete, but handle failures gracefully
-            results = await asyncio.gather(*self.tasks, return_exceptions=True)
-            
-            # Check if any tasks failed due to authentication issues
-            failed_tasks = 0
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    print_log(f"⚠️ Bot task {i+1} failed: {result}", bcolors.WARNING)
-                    failed_tasks += 1
-            
-            if failed_tasks > 0:
-                print_log(f"⚠️ {failed_tasks}/{len(self.tasks)} bot tasks failed", bcolors.WARNING)
-                print_log("💡 This is usually due to invalid/expired Twitch credentials", bcolors.OKCYAN)
-                print_log("🔧 Please update your tokens in the configuration", bcolors.OKCYAN)
-            
-        except Exception as e:
-            print_log(f"❌ Error in bot tasks: {e}", bcolors.FAIL)
-        
-        finally:
-            self.running = False
-    
     async def _stop_all_bots(self):
         """Stop all running bots"""
         if not self.running:

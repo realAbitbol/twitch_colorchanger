@@ -19,9 +19,6 @@ APPLICATION_JSON = 'application/json'
 @dataclass
 class SessionConfig:
     """Configuration for HTTP sessions"""
-    timeout_total: int = 30
-    timeout_connect: int = 10
-    timeout_sock_read: int = 10
     max_connections: int = 100
     max_connections_per_host: int = 10
     keepalive_timeout: int = 30
@@ -249,29 +246,7 @@ class HTTPClient:
             if response:
                 response.close()
     
-    async def get_json(self, url: str, headers: Optional[Dict[str, str]] = None, **kwargs) -> Tuple[Dict[str, Any], int]:
-        """
-        Make GET request and return JSON response
-        
-        Returns:
-            Tuple of (json_data, status_code)
-        """
-        async with self.request('GET', url, headers=headers, **kwargs) as response:
-            if response.status >= 400:
-                error_text = await response.text()
-                raise APIError(
-                    f"API request failed: {response.status} {error_text}",
-                    status_code=response.status
-                )
-            
-            try:
-                json_data = await response.json()
-                return json_data, response.status
-            except Exception as e:
-                raise APIError(
-                    f"Failed to parse JSON response: {e}",
-                    status_code=response.status
-                )
+
     
     async def twitch_api_request(self, method: str, endpoint: str, access_token: str, 
                                client_id: str, **kwargs) -> Tuple[Optional[Dict[str, Any]], int, Dict[str, str]]:
@@ -350,6 +325,3 @@ async def close_http_client():
             logger.debug("Global HTTP client reference cleared")
 
 
-async def cleanup_http_resources():
-    """Legacy function for backward compatibility"""
-    await close_http_client()

@@ -10,7 +10,9 @@ from .colors import bcolors, generate_random_hex_color, get_different_twitch_col
 from .utils import print_log
 from .logger import logger
 from .simple_irc import SimpleTwitchIRC
-from .config import update_user_in_config
+from .config import (
+    update_user_in_config, disable_random_colors_for_user
+)
 from .rate_limiter import get_rate_limiter
 from .http_client import get_http_client
 from .error_handling import (
@@ -18,6 +20,9 @@ from .error_handling import (
     AuthenticationError, APIError
 )
 from .memory_monitor import check_memory_leaks
+
+# Constants
+CHAT_COLOR_ENDPOINT = 'chat/color'
 
 
 class TwitchColorBot:
@@ -297,7 +302,7 @@ class TwitchColorBot:
             http_client = get_http_client()
             params = {'user_id': self.user_id}
             data, status_code, headers = await http_client.twitch_api_request(
-                'GET', 'chat/color', self.access_token, self.client_id, params=params
+                'GET', CHAT_COLOR_ENDPOINT, self.access_token, self.client_id, params=params
             )
             
             # Update rate limiting info from response headers
@@ -329,7 +334,8 @@ class TwitchColorBot:
                 'refresh_token': self.refresh_token,
                 'client_id': self.client_id,
                 'client_secret': self.client_secret,
-                'channels': getattr(self, 'channels', [self.username.lower()])
+                'channels': getattr(self, 'channels', [self.username.lower()]),
+                'use_random_colors': self.use_random_colors  # Preserve the current setting
             }
             try:
                 update_user_in_config(user_config, self.config_file)
@@ -346,45 +352,114 @@ class TwitchColorBot:
         # Wait for rate limiting before making request  
         await self.rate_limiter.wait_if_needed('change_color', is_user_request=True)
         
-        if self.use_random_colors:
-            # Use hex colors for Prime/Turbo users
-            color = generate_random_hex_color(exclude_color=self.last_color)
-        else:
-            # Use static Twitch preset colors for regular users
-            color = get_different_twitch_color(exclude_color=self.last_color)
+        color = self._select_color()
         
         try:
+            success = await self._attempt_color_change(color)
+            if not success and self.use_random_colors:
+                # Try fallback to preset colors if random colors failed due to Turbo/Prime requirement
+                await self._try_preset_color_fallback()
+        except Exception as e:
+            logger.error(f"Error changing color: {e}", exc_info=True, user=self.username)
+
+    def _select_color(self):
+        """Select the appropriate color based on user settings"""
+        if self.use_random_colors:
+            # Use hex colors for Prime/Turbo users
+            return generate_random_hex_color(exclude_color=self.last_color)
+        else:
+            # Use static Twitch preset colors for regular users
+            return get_different_twitch_color(exclude_color=self.last_color)
+
+    async def _attempt_color_change(self, color):
+        """Attempt to change color and handle the response"""
+        try:
             http_client = get_http_client()
-            # Don't URL encode the color - aiohttp will handle URL encoding automatically
-            # Twitch API expects colors like "#ff0000" or "red", not "%23ff0000"
             params = {'user_id': self.user_id, 'color': color}
+            
             try:
                 _, status_code, headers = await asyncio.wait_for(
                     http_client.twitch_api_request(
-                        'PUT', 'chat/color', self.access_token, self.client_id, params=params
+                        'PUT', CHAT_COLOR_ENDPOINT, self.access_token, self.client_id, params=params
                     ),
                     timeout=10
                 )
             except asyncio.TimeoutError:
                 logger.error("Failed to change color (timeout)", user=self.username)
-                return
+                return False
+            
+            # Update rate limiting info from response headers
+            self.rate_limiter.update_from_headers(headers, is_user_request=True)
+            
+            return self._handle_color_change_response(status_code, color)
+            
+        except APIError as e:
+            return self._handle_api_error(e)
+
+    def _handle_color_change_response(self, status_code, color):
+        """Handle the response from color change API call"""
+        if status_code == 204:
+            self.colors_changed += 1
+            self.last_color = color  # Store the successfully applied color
+            rate_status = self._get_rate_limit_display()
+            logger.info(f"Color changed to {color}{rate_status}", user=self.username)
+            return True
+        elif status_code == 429:
+            self.rate_limiter.handle_429_error({}, is_user_request=True)  # headers were already processed
+            logger.warning("Rate limited, will retry automatically", user=self.username)
+            return False
+        else:
+            logger.error(f"Failed to change color. Status: {status_code}", user=self.username, status_code=status_code)
+            return False
+
+    def _handle_api_error(self, e):
+        """Handle API errors, specifically the Turbo/Prime requirement error"""
+        error_text = str(e)
+        if ("Turbo or Prime user" in error_text or "Hex color code" in error_text) and self.use_random_colors:
+            logger.warning(f"User {self.username} requires Turbo/Prime for hex colors. Disabling random colors and using preset colors.", user=self.username)
+            
+            # Disable random colors for this user
+            self.use_random_colors = False
+            
+            # Persist the change to config file
+            if self.config_file:
+                if disable_random_colors_for_user(self.username, self.config_file):
+                    logger.info(f"Disabled random colors for {self.username} in configuration", user=self.username)
+                else:
+                    logger.warning(f"Failed to persist random color setting change for {self.username}", user=self.username)
+            
+            return False  # Indicate that fallback is needed
+        else:
+            logger.error(f"Error changing color: {e}", exc_info=True, user=self.username)
+            return False
+
+    async def _try_preset_color_fallback(self):
+        """Try changing color with preset colors as fallback"""
+        try:
+            color = get_different_twitch_color(exclude_color=self.last_color)
+            http_client = get_http_client()
+            params = {'user_id': self.user_id, 'color': color}
+            
+            _, status_code, headers = await asyncio.wait_for(
+                http_client.twitch_api_request(
+                    'PUT', CHAT_COLOR_ENDPOINT, self.access_token, self.client_id, params=params
+                ),
+                timeout=10
+            )
             
             # Update rate limiting info from response headers
             self.rate_limiter.update_from_headers(headers, is_user_request=True)
             
             if status_code == 204:
                 self.colors_changed += 1
-                self.last_color = color  # Store the successfully applied color
+                self.last_color = color
                 rate_status = self._get_rate_limit_display()
-                logger.info(f"Color changed to {color}{rate_status}", user=self.username)
-            elif status_code == 429:
-                self.rate_limiter.handle_429_error(headers, is_user_request=True)
-                logger.warning("Rate limited, will retry automatically", user=self.username)
+                logger.info(f"Color changed to {color} (using preset colors){rate_status}", user=self.username)
             else:
-                logger.error(f"Failed to change color. Status: {status_code}", user=self.username, status_code=status_code)
+                logger.error(f"Failed to change color with preset color. Status: {status_code}", user=self.username, status_code=status_code)
                 
-        except Exception as e:
-            logger.error(f"Error changing color: {e}", exc_info=True, user=self.username)
+        except Exception as fallback_e:
+            logger.error(f"Error changing color with preset color fallback: {fallback_e}", exc_info=True, user=self.username)
 
     def _get_rate_limit_display(self):
         """Get rate limit information for display in messages"""

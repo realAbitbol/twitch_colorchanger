@@ -36,47 +36,97 @@ def load_users_from_config(config_file):
         return []
 
 
+def _setup_config_directory(config_file):
+    """Set up config directory with proper permissions"""
+    config_dir = os.path.dirname(config_file)
+    if config_dir and not os.path.exists(config_dir):
+        os.makedirs(config_dir, exist_ok=True)
+        # Try to set directory permissions if possible
+        try:
+            os.chmod(config_dir, 0o755)
+        except PermissionError:
+            pass  # Ignore permission errors on directories
+
+
+def _fix_docker_ownership(config_dir, config_file):
+    """Fix ownership for Docker environments running as non-root"""
+    if os.path.exists(config_dir) and os.geteuid() != 0:
+        try:
+            # Try to change ownership of the config directory to current user
+            current_uid = os.getuid()
+            current_gid = os.getgid()
+            os.chown(config_dir, current_uid, current_gid)
+            # Also try to change ownership of existing config file
+            if os.path.exists(config_file):
+                os.chown(config_file, current_uid, current_gid)
+        except OSError:
+            pass  # Ignore if we can't change ownership (e.g., no permission)
+
+
+def _set_file_permissions(config_file):
+    """Set appropriate file permissions"""
+    if os.path.exists(config_file):
+        try:
+            os.chmod(config_file, 0o644)
+        except PermissionError:
+            pass  # Ignore permission errors on existing files
+
+
+def _log_save_operation(users, config_file):
+    """Log the save operation details"""
+    print_log(f"💾 Saving {len(users)} users to {config_file}", bcolors.OKBLUE, debug_only=True)
+    for i, user in enumerate(users, 1):
+        print_log(f"  User {i}: {user['username']} -> use_random_colors: {user.get('use_random_colors', 'MISSING_FIELD')}", bcolors.OKCYAN, debug_only=True)
+
+
+def _log_debug_data(save_data):
+    """Log debug information about the data being saved"""
+    print_log("🔍 DEBUG: Exact JSON being written:", bcolors.HEADER, debug_only=True)
+    print_log(json.dumps(save_data, indent=2), bcolors.OKCYAN, debug_only=True)
+
+
+def _verify_saved_data(config_file):
+    """Verify that the data was saved correctly"""
+    try:
+        with open(config_file, 'r') as f:
+            verification_data = json.load(f)
+        print_log(f"✅ VERIFICATION: File actually contains {len(verification_data.get('users', []))} users", bcolors.OKGREEN, debug_only=True)
+        for i, user in enumerate(verification_data.get('users', []), 1):
+            username = user.get('username', 'NO_USERNAME')
+            use_random_colors = user.get('use_random_colors', 'MISSING_FIELD')
+            print_log(f"  Verified User {i}: {username} -> use_random_colors: {use_random_colors}", bcolors.OKGREEN, debug_only=True)
+    except Exception as verify_error:
+        print_log(f"❌ VERIFICATION FAILED: {verify_error}", bcolors.FAIL, debug_only=True)
+
+
 def save_users_to_config(users, config_file):
     """Save users to config file"""
     try:
-        # Ensure the config directory exists and has correct permissions
+        # Ensure all users have use_random_colors field before saving
+        for user in users:
+            if 'use_random_colors' not in user:
+                user['use_random_colors'] = True  # Default value
+                print_log(f"🔧 Added missing use_random_colors field for {user.get('username', 'Unknown')}: {user['use_random_colors']}", bcolors.OKBLUE, debug_only=True)
+        
+        # Set up directory and permissions
+        _setup_config_directory(config_file)
         config_dir = os.path.dirname(config_file)
-        if config_dir and not os.path.exists(config_dir):
-            os.makedirs(config_dir, exist_ok=True)
-            # Try to set directory permissions if possible
-            try:
-                os.chmod(config_dir, 0o755)
-            except PermissionError:
-                pass  # Ignore permission errors on directories
-
-        # For Docker environments, try to fix ownership if running as non-root
-        if os.path.exists(config_dir) and os.geteuid() != 0:
-            try:
-                # Try to change ownership of the config directory to current user
-                import pwd
-                current_uid = os.getuid()
-                current_gid = os.getgid()
-                os.chown(config_dir, current_uid, current_gid)
-                # Also try to change ownership of existing config file
-                if os.path.exists(config_file):
-                    os.chown(config_file, current_uid, current_gid)
-            except OSError:
-                pass  # Ignore if we can't change ownership (e.g., no permission)
-
-        # Try to set file permissions if file exists
-        if os.path.exists(config_file):
-            try:
-                os.chmod(config_file, 0o644)
-            except PermissionError:
-                pass  # Ignore permission errors on existing files
-
-        print_log(f"💾 Saving {len(users)} users to {config_file}", bcolors.OKBLUE)
-        for i, user in enumerate(users, 1):
-            print_log(f"  User {i}: {user['username']} -> use_random_colors: {user.get('use_random_colors', True)}", bcolors.OKCYAN)
+        _fix_docker_ownership(config_dir, config_file)
+        _set_file_permissions(config_file)
+        
+        # Log operation
+        _log_save_operation(users, config_file)
+        
+        # Prepare and save data
+        save_data = {'users': users}
+        _log_debug_data(save_data)
         
         with open(config_file, 'w') as f:
-            json.dump({'users': users}, f, indent=2)
+            json.dump(save_data, f, indent=2)
         print_log("💾 Configuration saved successfully", bcolors.OKGREEN)
+        
+        # Verify the save
+        _verify_saved_data(config_file)
     except Exception as e:
         print_log(f"⚠️ Failed to save configuration: {e}", bcolors.FAIL)
 
@@ -87,10 +137,18 @@ def update_user_in_config(user_config, config_file):
         users = load_users_from_config(config_file)
         updated = False
         
+        # Ensure the user_config has use_random_colors field
+        if 'use_random_colors' not in user_config:
+            user_config['use_random_colors'] = True  # Default value
+            print_log(f"🔧 Added missing use_random_colors field for {user_config.get('username', 'Unknown')}: {user_config['use_random_colors']}", bcolors.OKBLUE, debug_only=True)
+        
         # Find and update existing user
         for i, user in enumerate(users):
             if user.get('username') == user_config['username']:
-                users[i] = user_config
+                # Merge new config with existing config to preserve all fields
+                merged_config = user.copy()  # Start with existing config
+                merged_config.update(user_config)  # Update with new values
+                users[i] = merged_config
                 updated = True
                 break
         
@@ -102,6 +160,29 @@ def update_user_in_config(user_config, config_file):
         return True
     except Exception as e:
         print_log(f"⚠️ Failed to update user configuration: {e}", bcolors.FAIL)
+        return False
+
+
+def disable_random_colors_for_user(username, config_file):
+    """Disable random colors for a specific user due to Turbo/Prime requirement"""
+    try:
+        users = load_users_from_config(config_file)
+        
+        # Find and update the user
+        for user in users:
+            if user.get('username') == username:
+                user['use_random_colors'] = False
+                print_log(f"🔧 Disabled random colors for {username} (requires Turbo/Prime)", bcolors.WARNING)
+                break
+        else:
+            # User not found in config - this shouldn't happen but handle gracefully
+            print_log(f"⚠️ User {username} not found in config when trying to disable random colors", bcolors.WARNING)
+            return False
+        
+        save_users_to_config(users, config_file)
+        return True
+    except Exception as e:
+        print_log(f"⚠️ Failed to disable random colors for {username}: {e}", bcolors.FAIL)
         return False
 
 
@@ -130,6 +211,8 @@ def get_docker_config():
             os.environ.get(f'USE_RANDOM_COLORS_{user_num}', 'true')
         )
         use_random_colors = use_random_colors_str.lower() in ['true', '1', 'yes']
+        
+        print_log(f"🔍 User {user_num} ({username}): TWITCH_USE_RANDOM_COLORS_{user_num}={os.environ.get(f'TWITCH_USE_RANDOM_COLORS_{user_num}', 'NOT_SET')} -> use_random_colors={use_random_colors}", bcolors.OKCYAN, debug_only=True)
         
         user_config = {
             'username': username,
@@ -193,12 +276,12 @@ def _validate_docker_users(users):
 def _persist_docker_config(users, config_file):
     """Try to persist Docker configuration for token refresh"""
     try:
-        print_log(f"🔄 Persisting Docker config with {len(users)} users", bcolors.OKBLUE)
+        print_log(f"🔄 Persisting Docker config with {len(users)} users", bcolors.OKBLUE, debug_only=True)
         for i, user in enumerate(users, 1):
-            print_log(f"  Persisting User {i}: {user['username']} -> use_random_colors: {user.get('use_random_colors', True)}", bcolors.OKCYAN)
+            print_log(f"  Persisting User {i}: {user['username']} -> use_random_colors: {user.get('use_random_colors', True)}", bcolors.OKCYAN, debug_only=True)
         
         save_users_to_config(users, config_file)
-        print_log(f"💾 Configuration backed up to {config_file} for token persistence", bcolors.OKBLUE)
+        print_log(f"💾 Configuration backed up to {config_file} for token persistence", bcolors.OKBLUE, debug_only=True)
     except Exception as e:
         print_log(f"⚠️ Cannot persist tokens in Docker mode: {e}", bcolors.WARNING)
         print_log("🔄 Tokens will be refreshed but not saved between container restarts", bcolors.WARNING)
@@ -233,13 +316,13 @@ def _merge_config_with_env(config_users, env_users):
                 'client_id': config_user.get('client_id', env_user.get('client_id', '')),
                 'client_secret': config_user.get('client_secret', env_user.get('client_secret', '')),
                 'channels': env_user.get('channels', config_user.get('channels', [username])),
-                # Always include use_random_colors in merged result
-                'use_random_colors': env_user['use_random_colors'] if env_has_flag else config_user.get('use_random_colors', True)
+                # Always use env value which includes proper defaults from get_docker_config
+                'use_random_colors': env_user['use_random_colors']
             }
             if env_has_flag:
-                print_log(f"🔄 Merged user {username}: using config file tokens, env channels/colors (env random_colors override: {env_user['use_random_colors']})", bcolors.OKBLUE)
+                print_log(f"🔄 Merged user {username}: env override use_random_colors={env_user['use_random_colors']}", bcolors.OKBLUE, debug_only=True)
             else:
-                print_log(f"🔄 Merged user {username}: using config file tokens, env channels/colors", bcolors.OKBLUE)
+                print_log(f"🔄 Merged user {username}: default use_random_colors={env_user['use_random_colors']} (no env var)", bcolors.OKBLUE, debug_only=True)
         else:
             merged_user = env_user.copy()
             print_log(f"➕ Added new user {username} from environment variables", bcolors.OKGREEN)

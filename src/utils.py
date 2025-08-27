@@ -28,9 +28,9 @@ def process_channels(channels_str):
 
 def print_instructions():
     """Display essential setup instructions"""
-    print_log("="*80, bcolors.PURPLE)
+    print_log("="*60, bcolors.PURPLE)
     print_log("🎨 TWITCH COLORCHANGER BOT - Multi-User Support", bcolors.PURPLE)
-    print_log("="*80, bcolors.PURPLE)
+    print_log("="*60, bcolors.PURPLE)
     
     print_log("\n🔧 Setup Instructions:")
     print_log("1. Create a Twitch application at: https://dev.twitch.tv/console/apps")
