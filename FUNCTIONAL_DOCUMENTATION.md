@@ -393,13 +393,12 @@ The container supports dynamic user remapping plus controlled fallback for restr
 | `RUN_AS_ROOT` | Force run entirely as root, skip remap | `0` |
 
 Flow:
- 
+
 1. Start as root, attempt remap to PUID/PGID
 2. Create/verify `/app/config` and config file ownership
 3. If writable -> drop privileges via `su-exec`
 4. If not writable and `AUTO_ROOT_FALLBACK=1` -> continue as root (warn)
 5. If not writable and `AUTO_ROOT_FALLBACK=0` -> still drop, writes may fail (secure strict mode)
- 
 
 Examples:
 
