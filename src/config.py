@@ -197,44 +197,42 @@ def _persist_docker_config(users, config_file):
 
 
 def _merge_config_with_env(config_users, env_users):
-    """Merge config file users with environment variable users, prioritizing config file values"""
+    """Merge config file users with env users.
+
+    Precedence rules:
+      - Auth fields (access_token, refresh_token, client_id, client_secret) prefer config file.
+      - Non-sensitive runtime fields (channels, use_random_colors) prefer environment variables.
+      - Users present only in one source are included as-is.
+    """
     merged_users = []
-    
-    # Create a mapping of usernames to config users for easy lookup
+
     config_user_map = {user['username']: user for user in config_users}
-    
+
     for env_user in env_users:
         username = env_user['username']
-        
         if username in config_user_map:
-            # User exists in both - merge, prioritizing config file values
             config_user = config_user_map[username]
             merged_user = {
-                # Prioritize config file values for sensitive data
                 'username': config_user.get('username', env_user.get('username')),
                 'access_token': config_user.get('access_token', env_user.get('access_token', '')),
                 'refresh_token': config_user.get('refresh_token', env_user.get('refresh_token', '')),
                 'client_id': config_user.get('client_id', env_user.get('client_id', '')),
                 'client_secret': config_user.get('client_secret', env_user.get('client_secret', '')),
-                # Use env values for less sensitive config, fallback to config
                 'channels': env_user.get('channels', config_user.get('channels', [username])),
                 'use_random_colors': env_user.get('use_random_colors', config_user.get('use_random_colors', True))
             }
             print_log(f"🔄 Merged user {username}: using config file tokens, env channels/colors", bcolors.OKBLUE)
         else:
-            # User only in env vars - use env config
             merged_user = env_user.copy()
             print_log(f"➕ Added new user {username} from environment variables", bcolors.OKGREEN)
-        
         merged_users.append(merged_user)
-    
-    # Check for users that exist in config but not in env vars
+
     env_usernames = {user['username'] for user in env_users}
     for config_user in config_users:
         if config_user['username'] not in env_usernames:
             merged_users.append(config_user)
             print_log(f"📁 Kept existing user {config_user['username']} from config file", bcolors.OKCYAN)
-    
+
     return merged_users
 
 
@@ -361,21 +359,20 @@ def get_configuration():
     
     # Always try to load from config file first (source of truth)
     users = load_users_from_config(config_file)
-    
-    if users:
-        print_log(f"📁 Loaded {len(users)} user(s) from {config_file}", bcolors.OKGREEN)
-        valid_users = _validate_loaded_users(users)
-        
-        if valid_users:
-            print_log("✅ Using configuration file as source of truth", bcolors.OKBLUE)
-            return valid_users
-    
-    # Fallback to environment variables if no valid config file
-    if os.environ.get('TWITCH_USERNAME_1') and os.environ.get('TWITCH_ACCESS_TOKEN_1'):
+    docker_env_present = os.environ.get('TWITCH_USERNAME_1') and os.environ.get('TWITCH_ACCESS_TOKEN_1')
+
+    if docker_env_present:
+        # In Docker mode we always merge so env can override non-sensitive fields
         return _get_docker_configuration(config_file)
-    
-    # If neither config file nor env vars, go interactive
-    return _get_interactive_configuration(config_file)
+    else:
+        if users:
+            print_log(f"📁 Loaded {len(users)} user(s) from {config_file}", bcolors.OKGREEN)
+            valid_users = _validate_loaded_users(users)
+            if valid_users:
+                print_log("✅ Using configuration file (no env overrides detected)", bcolors.OKBLUE)
+                return valid_users
+        # Interactive fallback
+        return _get_interactive_configuration(config_file)
 
 
 def print_config_summary(users):
