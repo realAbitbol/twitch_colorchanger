@@ -1,5 +1,13 @@
 # CI/CD Setup Guide
 
+## 🆕 Recent Updates (August 2025)
+
+- ✅ Updated to latest GitHub Actions versions
+- ✅ Optimized dependencies (removed unused `requests` library)
+- ✅ Enhanced security scanning with Trivy
+- ✅ Improved Docker build caching
+- ✅ Code quality audit completed
+
 ## Required Secrets
 
 To enable automatic Docker image builds and pushes, configure these secrets in your GitHub repository settings:

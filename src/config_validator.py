@@ -3,10 +3,8 @@ Enhanced configuration validation for the Twitch Color Changer bot
 """
 
 import re
-import json
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Tuple
 from dataclasses import dataclass
-from urllib.parse import urlparse
 
 from .logger import logger
 
@@ -449,43 +447,3 @@ class ConfigValidator:
             logger.warning("Configuration validation passed with warnings. Consider addressing the issues above.")
         else:
             logger.info("Configuration validation passed with recommendations.")
-
-
-def validate_config_file(config_file: str) -> Tuple[bool, List[ValidationError]]:
-    """
-    Validate a configuration file
-    
-    Args:
-        config_file: Path to the configuration file
-        
-    Returns:
-        Tuple of (is_valid, list_of_errors)
-    """
-    errors = []
-    
-    try:
-        with open(config_file, 'r') as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        errors.append(ValidationError("file", f"Configuration file '{config_file}' not found", "error"))
-        return False, errors
-    except json.JSONDecodeError as e:
-        errors.append(ValidationError("file", f"Invalid JSON in configuration file: {e}", "error"))
-        return False, errors
-    except Exception as e:
-        errors.append(ValidationError("file", f"Error reading configuration file: {e}", "error"))
-        return False, errors
-    
-    # Convert to list of users
-    if isinstance(data, dict) and 'users' in data:
-        users_config = data['users']
-    elif isinstance(data, list):
-        users_config = data
-    elif isinstance(data, dict) and 'username' in data:
-        users_config = [data]
-    else:
-        errors.append(ValidationError("format", "Configuration file format is invalid. Expected users array or single user object", "error"))
-        return False, errors
-    
-    # Validate all configurations
-    return ConfigValidator.validate_all_configs(users_config)

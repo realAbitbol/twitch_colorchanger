@@ -4,7 +4,7 @@ FROM python:3.13-alpine
 # Set metadata
 LABEL maintainer="Twitch ColorChanger Bot"
 LABEL description="Multi-user Twitch chat color changer bot"
-LABEL version="2.0"
+LABEL version="2.1"
 
 # Set working directory
 WORKDIR /app

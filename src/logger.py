@@ -7,7 +7,7 @@ import json
 import os
 import sys
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Optional
 from pathlib import Path
 
 from .colors import bcolors

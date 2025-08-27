@@ -3,7 +3,6 @@ Enhanced error handling system for the Twitch Color Changer bot
 """
 
 import asyncio
-import traceback
 import sys
 from typing import Optional, Callable, Any, Dict, Type
 from functools import wraps

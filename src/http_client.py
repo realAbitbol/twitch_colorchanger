@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from contextlib import asynccontextmanager
 
 from .logger import logger
-from .error_handling import NetworkError, APIError, ErrorCategory, ErrorSeverity
+from .error_handling import NetworkError, APIError
 
 # Constants
 APPLICATION_JSON = 'application/json'

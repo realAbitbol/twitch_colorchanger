@@ -10,8 +10,7 @@ import signal
 
 from src.config import get_configuration, print_config_summary
 from src.bot_manager import run_bots
-from src.utils import print_instructions, print_log
-from src.colors import bcolors
+from src.utils import print_instructions
 from src.logger import logger
 from src.error_handling import setup_error_handlers, handle_critical_error
 from src.http_client import close_http_client

@@ -2,8 +2,7 @@
 Memory leak monitoring for HTTP client
 """
 import gc
-import sys
-from typing import Dict, Any, List
+from typing import Dict, Any
 from src.logger import BotLogger
 
 logger = BotLogger(__name__)
@@ -89,39 +88,12 @@ class MemoryMonitor:
             object_counts[obj_type] = object_counts.get(obj_type, 0) + 1
         
         return object_counts
-    
-    def get_http_objects(self) -> List[Any]:
-        """Get all HTTP-related objects currently in memory"""
-        http_objects = []
-        
-        for obj in gc.get_objects():
-            obj_type = str(type(obj))
-            if any(keyword in obj_type.lower() for keyword in 
-                   ['session', 'connector', 'aiohttp', 'ssl', 'socket']):
-                http_objects.append({
-                    'type': type(obj).__name__,
-                    'module': getattr(type(obj), '__module__', 'unknown'),
-                    'id': id(obj),
-                    'closed': getattr(obj, 'closed', 'unknown') if hasattr(obj, 'closed') else 'no_closed_attr'
-                })
-        
-        return http_objects
 
 
 # Global memory monitor instance
 _memory_monitor = MemoryMonitor()
 
 
-def get_memory_monitor() -> MemoryMonitor:
-    """Get the global memory monitor instance"""
-    return _memory_monitor
-
-
 def check_memory_leaks() -> Dict[str, Any]:
     """Quick function to check for memory leaks"""
     return _memory_monitor.check_leaks()
-
-
-def set_memory_baseline():
-    """Quick function to set memory baseline"""
-    _memory_monitor.set_baseline()

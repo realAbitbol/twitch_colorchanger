@@ -35,7 +35,7 @@ Automatically change your Twitch username color after each message you send in c
 - Requires **Python 3.11+** (tested up to Python 3.13)
 
 - **Core Dependencies:**
-  - `requests>=2.31.0,<3.0.0` - HTTP requests and API communication
+  - `aiohttp>=3.9.0,<4.0.0` - Async HTTP client for API communication
   - `aiohttp>=3.9.0,<4.0.0` - Async HTTP client with connection pooling
 
 - **Enhanced Features:**

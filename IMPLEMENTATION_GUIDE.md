@@ -25,9 +25,7 @@ twitch_colorchanger/
 
 ```python
 
-# requirements.txt
-
-requests>=2.31.0,<3.0.0
+# Core dependencies for Twitch ColorChanger Bot
 aiohttp>=3.9.0,<4.0.0
 
 ```

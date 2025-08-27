@@ -558,7 +558,7 @@ Refresh if Needed → Update Config → Continue Operation
 
 - `aiohttp>=3.9.0`: Async HTTP client for Twitch API
 
-- `requests>=2.31.0`: Fallback HTTP client
+- `aiohttp>=3.9.0`: Async HTTP client for optimal performance
 
 ### System Requirements
 

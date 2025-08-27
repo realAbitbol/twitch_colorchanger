@@ -3,9 +3,8 @@ Main bot class for Twitch color changing functionality
 """
 
 import asyncio
-import random
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List
 
 from .colors import bcolors, generate_random_hex_color, get_different_twitch_color
 from .utils import print_log
@@ -16,7 +15,7 @@ from .rate_limiter import get_rate_limiter
 from .http_client import get_http_client
 from .error_handling import (
     with_error_handling, ErrorCategory, ErrorSeverity, 
-    AuthenticationError, APIError, NetworkError, RateLimitError
+    AuthenticationError, APIError
 )
 from .memory_monitor import check_memory_leaks
 

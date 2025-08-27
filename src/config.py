@@ -8,7 +8,7 @@ import json
 from .colors import bcolors
 from .utils import print_log, process_channels
 from .logger import logger
-from .config_validator import ConfigValidator, validate_config_file
+from .config_validator import ConfigValidator
 
 # Constants for repeated messages
 INVALID_CONFIG_MSG = "❌ Invalid configuration provided!"
