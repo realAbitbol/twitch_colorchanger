@@ -58,10 +58,6 @@ class BotManager:
         username = user_config['username']
         token = user_config['access_token']
         
-        # Ensure token has oauth prefix
-        if not token.startswith('oauth:'):
-            token = f"oauth:{token}"
-        
         try:
             bot = TwitchColorBot(
                 token=token,

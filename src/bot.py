@@ -4,13 +4,12 @@ Main bot class for Twitch color changing functionality
 
 import asyncio
 import random
-import time
 from datetime import datetime, timedelta
 from typing import List, Optional
 
 import aiohttp
 
-from .colors import bcolors
+from .colors import bcolors, generate_random_hex_color, get_twitch_colors
 from .utils import print_log
 from .simple_irc import SimpleTwitchIRC
 from .config import update_user_in_config
@@ -43,12 +42,9 @@ class TwitchColorBot:
         self.irc = None
         self.running = False
         
-        # Available colors for random selection
-        self.colors = [
-            '#FF0000', '#0000FF', '#00FF00', '#FFFF00', '#FF7F50',
-            '#9ACD32', '#FF4500', '#2E8B57', '#DAA520', '#D2691E',
-            '#5F9EA0', '#1E90FF', '#FF69B4', '#8A2BE2', '#00FF7F'
-        ]
+        # Statistics
+        self.messages_sent = 0
+        self.colors_changed = 0
     
     async def start(self):
         """Start the bot"""
@@ -60,14 +56,21 @@ class TwitchColorBot:
         
         # Create IRC connection
         self.irc = SimpleTwitchIRC()
-        await self.irc.connect(self.access_token, self.username, self.channels[0])
+        self.irc.connect(self.access_token, self.username, self.channels[0])
+        
+        # Join all configured channels
+        for channel in self.channels:
+            self.irc.join_channel(channel)
         
         # Set up message handler
         self.irc.set_message_handler(self.handle_irc_message)
         
         # Start background tasks
         token_task = asyncio.create_task(self._periodic_token_check())
-        irc_task = asyncio.create_task(self.irc.listen())
+        
+        # Run IRC listening in executor since it's not async
+        loop = asyncio.get_event_loop()
+        irc_task = loop.run_in_executor(None, self.irc.listen)
         
         try:
             # Wait for either task to complete
@@ -95,6 +98,7 @@ class TwitchColorBot:
         
         # Only react to our own messages
         if sender.lower() == self.username.lower():
+            self.messages_sent += 1
             print_log("🎯 My message detected - triggering color change", bcolors.OKGREEN)
             # Schedule color change in the event loop
             try:
@@ -217,10 +221,17 @@ class TwitchColorBot:
         if not self.session:
             self.session = aiohttp.ClientSession()
         
-        color = random.choice(self.colors) if self.use_random_colors else self.colors[0]
+        if self.use_random_colors:
+            # Use hex colors for Prime/Turbo users
+            color = generate_random_hex_color()
+        else:
+            # Use static Twitch preset colors for regular users
+            twitch_colors = get_twitch_colors()
+            color = random.choice(twitch_colors)
+            
         print_log(f"🎨 {self.username}: Changing color to {color}", bcolors.OKBLUE)
         
-        url = f'https://api.twitch.tv/helix/chat/color?user_id={self.user_id}&color={color.replace("#", "%23")}'
+        url = f'https://api.twitch.tv/helix/chat/color?user_id={self.user_id}&color={color}'
         headers = {
             'Authorization': f'Bearer {self.access_token}',
             'Client-Id': self.client_id
@@ -229,6 +240,7 @@ class TwitchColorBot:
         try:
             async with self.session.put(url, headers=headers) as response:
                 if response.status == 204:
+                    self.colors_changed += 1
                     print_log(f"✅ {self.username}: Color changed to {color}", bcolors.OKGREEN)
                 else:
                     error_text = await response.text()
@@ -301,4 +313,21 @@ class TwitchColorBot:
         except Exception as e:
             print_log(f"❌ {self.username}: Error refreshing token: {e}", bcolors.FAIL)
             return False
+
+    async def close(self):
+        """Close the bot and clean up resources"""
+        print_log(f"🛑 Closing bot for {self.username}", bcolors.WARNING, debug_only=False)
+        self.running = False
+        
+        if self.session:
+            await self.session.close()
+            self.session = None
+            
+        if self.irc:
+            self.irc.disconnect()
+            self.irc = None
+
+    def print_statistics(self):
+        """Print bot statistics"""
+        print_log(f"📊 {self.username}: Messages sent: {self.messages_sent}, Colors changed: {self.colors_changed}")
 

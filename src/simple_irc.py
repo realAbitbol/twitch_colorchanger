@@ -3,10 +3,7 @@ Simple IRC client for Twitch - based on working implementation
 """
 
 import socket
-import threading
-import time
-import asyncio
-from typing import List, Callable, Optional
+from typing import Optional
 
 from .colors import bcolors
 from .utils import print_log
