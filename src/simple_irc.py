@@ -52,6 +52,7 @@ class SimpleTwitchIRC:
             self.sock.send("CAP REQ :twitch.tv/commands\r\n".encode('utf-8'))
             
             self.connected = True
+            self.running = True  # Enable the listening loop
             print_log(f"✅ Connected to Twitch IRC as {self.username}", bcolors.OKGREEN)
             return True
             
@@ -143,8 +144,8 @@ class SimpleTwitchIRC:
         print_log(f"💬 #{self.message_count}: {sender} in #{channel}: {display_msg}", color, debug_only=debug_only)
         
         # Call message handler
-        if self.on_message:
-            self.on_message(sender, channel, message)
+        if self.message_handler:
+            self.message_handler(sender, channel, message)
     
     def _process_line(self, line: str):
         """Process a single IRC line"""
@@ -160,6 +161,7 @@ class SimpleTwitchIRC:
     def listen(self):
         """Main listening loop"""
         buffer = ""
+        print_log("🎧 IRC listening loop started", bcolors.OKBLUE, debug_only=True)
         
         while self.running and self.connected:
             try:
@@ -167,12 +169,14 @@ class SimpleTwitchIRC:
                 if not data:
                     print_log("❌ IRC connection lost", bcolors.FAIL)
                     break
-                    
+                
+                print_log(f"📡 IRC received data: {repr(data[:100])}{'...' if len(data) > 100 else ''}", bcolors.OKCYAN, debug_only=True)
                 buffer += data
                 
                 while '\r\n' in buffer:
                     line, buffer = buffer.split('\r\n', 1)
                     if line:
+                        print_log(f"📝 Processing IRC line: {repr(line)}", bcolors.OKGREEN, debug_only=True)
                         self._process_line(line)
                         
             except socket.timeout:

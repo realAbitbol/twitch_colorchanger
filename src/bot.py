@@ -36,7 +36,6 @@ class TwitchColorBot:
         self.channels = channels
         self.use_random_colors = use_random_colors
         self.config_file = config_file
-        self.session = None
         
         # IRC connection
         self.irc = None
@@ -53,6 +52,16 @@ class TwitchColorBot:
         
         # Check token validity first
         await self.check_and_refresh_token()
+        
+        # Fetch user_id if not set
+        if not self.user_id:
+            user_info = await self.get_user_info()
+            if user_info and 'id' in user_info:
+                self.user_id = user_info['id']
+                print_log(f"✅ {self.username}: Retrieved user_id: {self.user_id}", bcolors.OKGREEN)
+            else:
+                print_log(f"❌ {self.username}: Failed to retrieve user_id", bcolors.FAIL)
+                return
         
         # Create IRC connection
         self.irc = SimpleTwitchIRC()
@@ -87,9 +96,6 @@ class TwitchColorBot:
         
         if self.irc:
             await self.irc.disconnect()
-        
-        if self.session:
-            await self.session.close()
     
     def handle_irc_message(self, sender: str, channel: str, message: str):
         """Handle IRC messages from SimpleTwitchIRC"""
@@ -103,7 +109,8 @@ class TwitchColorBot:
             # Schedule color change in the event loop
             try:
                 loop = asyncio.get_event_loop()
-                asyncio.run_coroutine_threadsafe(self.delayed_color_change(), loop)
+                task = asyncio.run_coroutine_threadsafe(self.delayed_color_change(), loop)
+                # Don't wait for completion to avoid blocking the IRC thread
             except RuntimeError:
                 # Fallback: run in new thread
                 import threading
@@ -180,21 +187,20 @@ class TwitchColorBot:
     
     async def get_user_info(self):
         """Get user information from Twitch API"""
-        if not self.session:
-            self.session = aiohttp.ClientSession()
-        
         headers = {
             'Authorization': f'Bearer {self.access_token}',
             'Client-Id': self.client_id
         }
         
         try:
-            async with self.session.get('https://api.twitch.tv/helix/users', headers=headers) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    if data.get('data'):
-                        return data['data'][0]
-                return None
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get('https://api.twitch.tv/helix/users', headers=headers) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if data.get('data'):
+                            return data['data'][0]
+                    return None
         except Exception as e:
             print_log(f'⚠️ Error getting user info: {e}', bcolors.WARNING)
             return None
@@ -218,9 +224,6 @@ class TwitchColorBot:
     
     async def change_color(self):
         """Change the username color via Twitch API"""
-        if not self.session:
-            self.session = aiohttp.ClientSession()
-        
         if self.use_random_colors:
             # Use hex colors for Prime/Turbo users
             color = generate_random_hex_color()
@@ -231,58 +234,68 @@ class TwitchColorBot:
             
         print_log(f"🎨 {self.username}: Changing color to {color}", bcolors.OKBLUE)
         
-        url = f'https://api.twitch.tv/helix/chat/color?user_id={self.user_id}&color={color}'
+        # URL encode the color for hex colors (# becomes %23)
+        from urllib.parse import quote
+        encoded_color = quote(color, safe='')
+        
+        url = f'https://api.twitch.tv/helix/chat/color?user_id={self.user_id}&color={encoded_color}'
         headers = {
             'Authorization': f'Bearer {self.access_token}',
             'Client-Id': self.client_id
         }
         
+        # Debug: Log the API call details
+        print_log(f"🌐 API URL: {url}", bcolors.OKBLUE)
+        print_log(f"🔑 Headers: {headers}", bcolors.OKBLUE)
+        
         try:
-            async with self.session.put(url, headers=headers) as response:
-                if response.status == 204:
-                    self.colors_changed += 1
-                    print_log(f"✅ {self.username}: Color changed to {color}", bcolors.OKGREEN)
-                else:
-                    error_text = await response.text()
-                    print_log(f"❌ {self.username}: Failed to change color. Status: {response.status}, Response: {error_text}", bcolors.FAIL)
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.put(url, headers=headers) as response:
+                    if response.status == 204:
+                        self.colors_changed += 1
+                        print_log(f"✅ {self.username}: Color changed to {color}", bcolors.OKGREEN)
+                    else:
+                        error_text = await response.text()
+                        print_log(f"❌ {self.username}: Failed to change color. Status: {response.status}, Response: {error_text}", bcolors.FAIL)
         except Exception as e:
             print_log(f"❌ {self.username}: Error changing color: {e}", bcolors.FAIL)
     
     async def set_username_color(self, color: str):
         """Set username color to a specific color"""
-        if not self.session:
-            self.session = aiohttp.ClientSession()
-        
         # Ensure color starts with #
         if not color.startswith('#'):
             color = f'#{color}'
         
         print_log(f"🎨 {self.username}: Setting color to {color}", bcolors.OKBLUE)
         
-        url = f'https://api.twitch.tv/helix/chat/color?user_id={self.user_id}&color={color.replace("#", "%23")}'
+        # URL encode the color for hex colors (# becomes %23)
+        from urllib.parse import quote
+        encoded_color = quote(color, safe='')
+        
+        url = f'https://api.twitch.tv/helix/chat/color?user_id={self.user_id}&color={encoded_color}'
         headers = {
             'Authorization': f'Bearer {self.access_token}',
             'Client-Id': self.client_id
         }
         
         try:
-            async with self.session.put(url, headers=headers) as response:
-                if response.status == 204:
-                    print_log(f"✅ {self.username}: Color set to {color}", bcolors.OKGREEN)
-                    return True
-                else:
-                    error_text = await response.text()
-                    print_log(f"❌ {self.username}: Failed to set color. Status: {response.status}, Response: {error_text}", bcolors.FAIL)
-                    return False
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.put(url, headers=headers) as response:
+                    if response.status == 204:
+                        print_log(f"✅ {self.username}: Color set to {color}", bcolors.OKGREEN)
+                        return True
+                    else:
+                        error_text = await response.text()
+                        print_log(f"❌ {self.username}: Failed to set color. Status: {response.status}, Response: {error_text}", bcolors.FAIL)
+                        return False
         except Exception as e:
             print_log(f"❌ {self.username}: Error setting color: {e}", bcolors.FAIL)
             return False
-    
+
     async def refresh_access_token(self):
         """Refresh the access token using the refresh token"""
-        if not self.session:
-            self.session = aiohttp.ClientSession()
-        
         data = {
             'grant_type': 'refresh_token',
             'refresh_token': self.refresh_token,
@@ -291,37 +304,35 @@ class TwitchColorBot:
         }
         
         try:
-            async with self.session.post('https://id.twitch.tv/oauth2/token', data=data) as response:
-                if response.status == 200:
-                    token_data = await response.json()
-                    self.access_token = token_data['access_token']
-                    
-                    # Update refresh token if provided
-                    if 'refresh_token' in token_data:
-                        self.refresh_token = token_data['refresh_token']
-                    
-                    # Set token expiry if provided
-                    if 'expires_in' in token_data:
-                        self.token_expiry = datetime.now() + timedelta(seconds=token_data['expires_in'])
-                        print_log(f"🔑 {self.username}: Token will expire at {self.token_expiry.strftime('%Y-%m-%d %H:%M:%S')}")
-                    
-                    return True
-                else:
-                    error_text = await response.text()
-                    print_log(f"❌ {self.username}: Token refresh failed. Status: {response.status}, Response: {error_text}", bcolors.FAIL)
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post('https://id.twitch.tv/oauth2/token', data=data) as response:
+                    if response.status == 200:
+                        token_data = await response.json()
+                        self.access_token = token_data['access_token']
+                        
+                        # Update refresh token if provided
+                        if 'refresh_token' in token_data:
+                            self.refresh_token = token_data['refresh_token']
+                        
+                        # Set token expiry if provided
+                        if 'expires_in' in token_data:
+                            self.token_expiry = datetime.now() + timedelta(seconds=token_data['expires_in'])
+                            print_log(f"🔑 {self.username}: Token will expire at {self.token_expiry.strftime('%Y-%m-%d %H:%M:%S')}")
+                        
+                        return True
+                    else:
+                        error_text = await response.text()
+                        print_log(f"❌ {self.username}: Token refresh failed. Status: {response.status}, Response: {error_text}", bcolors.FAIL)
                     return False
         except Exception as e:
             print_log(f"❌ {self.username}: Error refreshing token: {e}", bcolors.FAIL)
             return False
 
-    async def close(self):
+    def close(self):
         """Close the bot and clean up resources"""
         print_log(f"🛑 Closing bot for {self.username}", bcolors.WARNING, debug_only=False)
         self.running = False
-        
-        if self.session:
-            await self.session.close()
-            self.session = None
             
         if self.irc:
             self.irc.disconnect()
