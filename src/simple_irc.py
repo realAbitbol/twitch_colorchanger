@@ -141,7 +141,8 @@ class SimpleTwitchIRC:
         is_own_message = sender.lower() == self.username.lower()
         debug_only = not is_own_message  # Only show other users' messages in debug mode
         color = bcolors.OKCYAN if is_own_message else bcolors.OKBLUE
-        print_log(f"💬 #{self.message_count}: {sender} in #{channel}: {display_msg}", color, debug_only=debug_only)
+        
+        print_log(f"#{channel} - {sender}: {display_msg}", color, debug_only=debug_only)
         
         # Call message handler
         if self.message_handler:
