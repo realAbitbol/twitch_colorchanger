@@ -54,7 +54,7 @@ services:
       # - LOG_FORMAT=json  # Use JSON format for structured logging
       # - LOG_FILE=/app/logs/bot.log  # Enable file logging (requires volume mount)
     
-    # Volume for token persistence (optional but recommended)
+    # Volume for token persistence (highly recommended)
     volumes:
       - ./config:/app/config  # Mount local ./config directory to persist config file only
       # - ./logs:/app/logs  # Optional: Mount for log file persistence (if LOG_FILE is set)
