@@ -240,7 +240,6 @@ Repeat with `_2`, `_3`, etc. for additional users.
 | `LOG_FILE` | Path to log file | None |
 | `FORCE_COLOR` | Force colored logs | `true` |
 | `PYTHONUNBUFFERED` | Disable output buffering | `1` |
-| (Removed) | Previously user/group remap options have been removed. Container now runs as root always. | - |
 
 ### Configuration File
 
