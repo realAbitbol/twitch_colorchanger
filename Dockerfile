@@ -12,11 +12,19 @@ WORKDIR /app
 # Create non-root user for security and install Python dependencies
 RUN addgroup -g 1001 -S appgroup && \
     adduser -u 1001 -S appuser -G appgroup && \
-    pip install --no-cache-dir --upgrade pip
+    pip install --no-cache-dir --upgrade pip && \
+    # Install build dependencies for RISC-V and other architectures that need compilation
+    if [ "$(uname -m)" = "riscv64" ]; then \
+        apk add --no-cache --virtual .build-deps gcc musl-dev python3-dev; \
+    fi
 
 # Copy and install requirements
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && \
+    # Clean up build dependencies for RISC-V
+    if [ "$(uname -m)" = "riscv64" ]; then \
+        apk del .build-deps; \
+    fi
 
 # Copy application code
 COPY --chown=appuser:appgroup main.py /app/main.py

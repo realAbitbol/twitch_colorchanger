@@ -63,13 +63,13 @@ docker pull damastah/twitch-colorchanger:latest
 docker pull ghcr.io/realabitbol/twitch-colorchanger:latest
 ```
 
-### Multi-architecture support
+## Multi-Architecture Support
 
-Docker will automatically pull the correct architecture for your platform. Supported architectures:
+The pipeline automatically builds Docker images for 5 platforms:
 
-- **x86_64/amd64**: Standard Intel/AMD processors
-- **ARM64**: Apple Silicon Macs, modern ARM servers
-- **ARMv7**: Raspberry Pi 2/3/4, modern 32-bit ARM devices
-- **ARMv6**: Raspberry Pi Zero/1, older ARM devices  
-- **RISC-V 64-bit**: SiFive boards, emerging RISC-V systems
+- `linux/amd64` - Standard x86_64 (Intel/AMD)
+- `linux/arm64` - ARM 64-bit (Apple Silicon, modern ARM servers)
+- `linux/arm/v7` - ARM 32-bit (Raspberry Pi 2/3/4)
+- `linux/arm/v6` - ARM v6 (Raspberry Pi Zero/1)
+- `linux/riscv64` - RISC-V 64-bit
 - **MIPS64LE**: MIPS-based routers and embedded systems
