@@ -26,7 +26,11 @@ RUN addgroup -g 1001 -S appgroup && \
     echo '        delgroup appgroup 2>/dev/null || true' >> /usr/local/bin/start.sh && \
     echo '        addgroup -g "$PGID" -S appgroup 2>/dev/null || true' >> /usr/local/bin/start.sh && \
     echo '        adduser -u "$PUID" -S appuser -G appgroup 2>/dev/null || true' >> /usr/local/bin/start.sh && \
+    echo '        # Change ownership AFTER creating the new user' >> /usr/local/bin/start.sh && \
     echo '        chown -R appuser:appgroup /app' >> /usr/local/bin/start.sh && \
+    echo '        # Ensure config directory exists and is writable' >> /usr/local/bin/start.sh && \
+    echo '        mkdir -p /app/config' >> /usr/local/bin/start.sh && \
+    echo '        chmod 755 /app/config' >> /usr/local/bin/start.sh && \
     echo '    fi' >> /usr/local/bin/start.sh && \
     echo 'fi' >> /usr/local/bin/start.sh && \
     echo 'exec "$@"' >> /usr/local/bin/start.sh && \
