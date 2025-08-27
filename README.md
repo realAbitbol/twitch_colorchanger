@@ -230,8 +230,8 @@ Repeat with `_2`, `_3`, etc. for additional users.
 | `DEBUG` | Enable debug logging | `false` |
 | `LOG_FORMAT` | Log format (`json` or `colored`) | `colored` |
 | `LOG_FILE` | Path to log file | None |
-| `FORCE_COLOR` | Force colored logs | `false` |
-| `PYTHONUNBUFFERED` | Disable output buffering | `0` |
+| `FORCE_COLOR` | Force colored logs | `true` |
+| `PYTHONUNBUFFERED` | Disable output buffering | `1` |
 
 ### Configuration File
 

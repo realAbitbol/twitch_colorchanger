@@ -20,6 +20,7 @@ class BotManager:
         self.bots = []
         self.tasks = []
         self.running = False
+        self.shutdown_initiated = False
         
     async def _start_all_bots(self):
         """Start all bots and return success status"""
@@ -50,6 +51,7 @@ class BotManager:
         await asyncio.sleep(1)
         
         self.running = True
+        self.shutdown_initiated = False  # Reset shutdown flag for new run
         print_log("✅ All bots started successfully!", bcolors.OKGREEN)
         return True
     
@@ -164,6 +166,7 @@ class BotManager:
         """Setup signal handlers for graceful shutdown"""
         def signal_handler(signum, _frame):
             print_log(f"\n🔔 Received signal {signum}, initiating graceful shutdown...", bcolors.WARNING)
+            self.shutdown_initiated = True
             # Save the task to prevent garbage collection (intentionally not awaited in signal handler)
             _ = asyncio.create_task(self._stop_all_bots())
         
@@ -195,11 +198,16 @@ async def run_bots(users_config: List[Dict[str, Any]], config_file: str = None):
             while manager.running:
                 await asyncio.sleep(1)
                 
-                # Check if all tasks have completed (likely due to errors)
+                # Check if all tasks have completed
                 if all(task.done() for task in manager.tasks):
-                    print_log("\n⚠️ All bot tasks have completed unexpectedly", bcolors.WARNING)
-                    print_log("💡 This usually means authentication failed or connection issues", bcolors.OKCYAN)
-                    print_log("🔧 Please verify your Twitch API credentials are valid", bcolors.OKCYAN)
+                    if manager.shutdown_initiated:
+                        # Normal shutdown - tasks completed as expected
+                        print_log("\n✅ All bot tasks completed during shutdown", bcolors.OKGREEN)
+                    else:
+                        # Unexpected completion - likely an error
+                        print_log("\n⚠️ All bot tasks have completed unexpectedly", bcolors.WARNING)
+                        print_log("💡 This usually means authentication failed or connection issues", bcolors.OKCYAN)
+                        print_log("🔧 Please verify your Twitch API credentials are valid", bcolors.OKCYAN)
                     break
                     
         except KeyboardInterrupt:
