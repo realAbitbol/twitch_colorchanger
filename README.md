@@ -240,6 +240,8 @@ Repeat with `_2`, `_3`, etc. for additional users.
 | `LOG_FILE` | Path to log file | None |
 | `FORCE_COLOR` | Force colored logs | `true` |
 | `PYTHONUNBUFFERED` | Disable output buffering | `1` |
+| `PUID` | User ID for file permissions (Docker) | None |
+| `PGID` | Group ID for file permissions (Docker) | None |
 
 ### Configuration File
 
@@ -305,6 +307,34 @@ The bot automatically saves settings to `twitch_colorchanger.conf`:
 - **Connection issues**: HTTP connection pooling optimizes API performance
 - **High CPU usage**: Disable debug logging in production (`DEBUG=false`)
 - **API failures**: Automatic retry logic handles transient failures
+
+### Docker Permission Issues
+
+If you encounter permission denied errors when the container tries to save configuration files, you can fix this by matching the container's user ID to your host user:
+
+```bash
+# Get your user and group IDs
+id -u  # Your user ID (e.g., 1000)
+id -g  # Your group ID (e.g., 1000)
+
+# Run with matching IDs
+docker run -e PUID=1000 -e PGID=1000 damastah/twitch-colorchanger:latest
+```
+
+Or in docker-compose.yml:
+
+```yaml
+services:
+  twitch-colorchanger:
+    image: damastah/twitch-colorchanger:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config:/app/config
+```
+
+**Note**: Replace `1000` with your actual user and group IDs from the `id` command.
 
 ### Debug Mode
 

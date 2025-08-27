@@ -49,6 +49,11 @@ services:
       - FORCE_COLOR=true  # Optional, to force ANSI colors in logs
       - PYTHONUNBUFFERED=1  # Ensure unbuffered output for real-time logs
       
+      # Docker permission fix (optional - use if you get permission denied errors)
+      # Replace 1000 with your actual user/group IDs (run 'id -u' and 'id -g' on host)
+      # - PUID=1000  # Match host user ID to fix config file permissions
+      # - PGID=1000  # Match host group ID to fix config file permissions
+      
       # Enhanced logging and debugging options (2024 improvements)
       # - DEBUG=true  # Enable debug-level logging (verbose output)
       # - LOG_FORMAT=json  # Use JSON format for structured logging

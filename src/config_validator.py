@@ -407,8 +407,8 @@ class ConfigValidator:
                         other_user = all_channels[channel_lower]
                         errors.append(ValidationError(
                             f"user_{i + 1}.channels",
-                            f"Channel '{channel}' is also monitored by user {other_user}. This may cause duplicate color changes",
-                            "warning"
+                            f"Channel '{channel}' is also monitored by user {other_user}. This is normal for multi-user setups - each bot only affects its own user.",
+                            "info"
                         ))
                     else:
                         all_channels[channel_lower] = username
