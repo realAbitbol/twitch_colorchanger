@@ -15,12 +15,12 @@ from .utils import print_log
 class SimpleTwitchIRC:
     """Simple IRC client for Twitch using raw sockets - based on working version"""
     
-    def __init__(self, username: str, token: str, channels: List[str], 
-                 on_message: Optional[Callable] = None):
-        self.username = username.lower()
-        self.token = token if token.startswith('oauth:') else f'oauth:{token}'
-        self.channels = [ch.lower().replace('#', '') for ch in channels]
-        self.on_message = on_message
+    def __init__(self):
+        # IRC connection details (set during connect)
+        self.username = None
+        self.token = None
+        self.channels = []
+        self.message_handler = None
         
         # IRC connection
         self.server = 'irc.chat.twitch.tv'
@@ -33,8 +33,13 @@ class SimpleTwitchIRC:
         self.message_count = 0
         self.joined_channels = set()
         
-    def connect(self) -> bool:
-        """Connect to Twitch IRC"""
+    def connect(self, token: str, username: str, channel: str) -> bool:
+        """Connect to Twitch IRC with the given credentials"""
+        # Set connection details
+        self.username = username.lower()
+        self.token = token if token.startswith('oauth:') else f'oauth:{token}'
+        self.channels = [channel.lower().replace('#', '')]
+        
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.settimeout(10.0)
@@ -56,6 +61,10 @@ class SimpleTwitchIRC:
         except Exception as e:
             print_log(f"❌ IRC connection failed: {e}", bcolors.FAIL)
             return False
+    
+    def set_message_handler(self, handler):
+        """Set the message handler callback"""
+        self.message_handler = handler
     
     def join_channel(self, channel: str):
         """Join a Twitch channel"""
@@ -175,32 +184,14 @@ class SimpleTwitchIRC:
                 print_log(f"❌ Listen error: {e}", bcolors.FAIL)
                 break
     
-    def start(self):
-        """Start IRC connection"""
-        if not self.connect():
-            return False
-        
-        self.running = True
-        
-        # Join channels
-        time.sleep(2)  # Give IRC time to authenticate
-        for channel in self.channels:
-            self.join_channel(channel)
-        
-        # Start listening in background thread
-        listen_thread = threading.Thread(target=self.listen, daemon=True)
-        listen_thread.start()
-        
-        print_log(f"🔍 IRC monitoring started. Joined {len(self.channels)} channels.", bcolors.OKGREEN)
-        return True
-    
-    def stop(self):
-        """Stop IRC connection"""
+    async def disconnect(self):
+        """Disconnect from IRC"""
         self.running = False
         self.connected = False
         if self.sock:
             try:
                 self.sock.close()
-            except (OSError, socket.error):
+            except:
                 pass
-        print_log("📡 IRC connection stopped", bcolors.OKBLUE)
+            self.sock = None
+        print_log("🔌 Disconnected from IRC", bcolors.WARNING)
