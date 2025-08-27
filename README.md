@@ -21,9 +21,13 @@ Automatically change your Twitch username color after each message you send in c
 
 ## 📦 Dependencies
 
-- Requires **Python 3.12+** (no external dependencies except the built-in `requests` library, which is installed automatically in Docker)
-- No other packages required
+- Requires **Python 3.11+** (tested up to Python 3.13)
+- **Core Dependencies:**
+  - `requests` - HTTP requests and API communication
+  - `aiohttp` - Async HTTP client for better performance
+  - `twitchio` - Twitch IRC bot framework
 - For Docker usage, you need Docker installed
+- All dependencies are automatically installed via `requirements.txt`
 
 ---
 
@@ -56,14 +60,15 @@ Use [twitchtokengenerator.com](https://twitchtokengenerator.com) (Custom Token G
 ### Single User (CLI)
 
 ```bash
-python twitch_colorchanger.py
+python main.py
 ```
 
 You will be prompted to add users. The bot supports:
 
-- Adding multiple users interactively
-- Tokens are saved in `twitch_colorchanger.conf` for future runs
-- Each user can have different settings (channels, color preferences)
+- **File-based configuration persistence**: Tokens saved in `twitch_colorchanger.conf` for future runs
+- **Multi-user interactive mode**: Add multiple users in single session
+- **Automatic token refresh**: Access tokens are automatically refreshed and saved
+- **Configuration management**: Load existing config or create new configuration
 
 ### Multi-User Docker (Unattended)
 
@@ -132,7 +137,22 @@ docker run -it --rm \
 
 #### Using Prebuilt Image
 
-Multi-platform images (x86_64 and ARM64) are automatically built and published on every release to both Docker Hub and GitHub Container Registry.
+Multi-platform images (x86_64, ARM64, ARMv7, ARMv6, RISC-V, MIPS64LE) are automatically built and published on every release to both Docker Hub and GitHub Container Registry.
+
+**🔄 Token Persistence in Docker:**
+
+- Tokens are automatically refreshed in Docker mode
+- Mount a volume to persist config file between container restarts:
+
+  ```bash
+  docker run -it --rm \
+      -v $(pwd)/config:/app/config \
+      -e TWITCH_USERNAME_1=user1 \
+      -e TWITCH_ACCESS_TOKEN_1=token1 \
+      damastah/twitch-colorchanger:latest
+  ```
+
+- Config file is saved to `/app/config/twitch_colorchanger.conf` in the container
 
 **From Docker Hub:**
 
@@ -226,6 +246,35 @@ You can configure the bot using environment variables (for Docker) or interactiv
 
 Tokens and settings are saved in `twitch_colorchanger.conf` for future runs.
 
+### Configuration File Format
+
+The bot saves your settings in `twitch_colorchanger.conf` (JSON format) for automatic loading:
+
+```json
+{
+  "users": [
+    {
+      "username": "your_username",
+      "access_token": "your_access_token",
+      "refresh_token": "your_refresh_token",
+      "client_id": "your_client_id",
+      "client_secret": "your_client_secret",
+      "channels": ["channel1", "channel2"],
+      "use_random_colors": true
+    }
+  ]
+}
+```
+
+**Features:**
+
+- **Automatic token refresh**: Tokens are refreshed and saved automatically (even in Docker mode)
+- **Multi-user support**: Add multiple users to the same config file
+- **Interactive management**: Choose to use existing config, add users, or create new
+- **Environment override**: Use `TWITCH_CONF_FILE` to specify custom config file path
+- **Connection keep-alive**: Handles Twitch ping-pong to maintain stable connections
+- **Periodic token refresh**: Tokens are refreshed 1 hour before expiry to prevent interruptions
+
 ---
 
 ## 🐞 Troubleshooting
@@ -249,6 +298,45 @@ Tokens and settings are saved in `twitch_colorchanger.conf` for future runs.
 1. **Environment Mode**: If any `TWITCH_USERNAME_1` (or `TWITCH_USERNAME` for legacy) is found, environment mode is used
 2. **Interactive Mode**: If no environment variables are set, the bot will load from config file and prompt for additional users
 3. **Backwards Compatibility**: Legacy single-user environment variables (`TWITCH_USERNAME` without numbers) are still supported
+
+---
+
+## 🏗️ Architecture
+
+This project uses a **modular architecture** for better maintainability and extensibility:
+
+### Project Structure
+
+```text
+twitch_colorchanger/
+├── main.py                 # Entry point for the application
+├── src/                    # Core application modules
+│   ├── __init__.py        # Package initialization
+│   ├── colors.py          # Color definitions and utilities
+│   ├── config.py          # Configuration management (env vars & interactive)
+│   ├── utils.py           # Utility functions and logging
+│   ├── bot.py             # TwitchColorBot class (core bot logic)
+│   └── bot_manager.py     # Multi-bot management and orchestration
+├── requirements.txt        # Python dependencies
+├── Dockerfile             # Container definition
+└── docker-compose.yml-sample  # Docker Compose example
+```
+
+### Key Components
+
+- **`main.py`**: Async entry point that coordinates configuration and bot execution
+- **`src/config.py`**: Handles both environment variables (Docker mode) and interactive setup
+- **`src/bot.py`**: Individual bot instance with color changing logic and token management
+- **`src/bot_manager.py`**: Manages multiple bots, handles graceful shutdown, and aggregate statistics
+- **`src/utils.py`**: Shared utilities for logging, user input, and channel processing
+- **`src/colors.py`**: Color definitions, ANSI codes, and color generation functions
+
+### Benefits
+
+- **Maintainability**: Smaller, focused modules (50-150 lines each vs 726 lines monolith)
+- **Extensibility**: Easy to add features without affecting other components
+- **Testability**: Individual modules can be tested in isolation
+- **Readability**: Clear separation of concerns and focused functionality
 
 ---
 

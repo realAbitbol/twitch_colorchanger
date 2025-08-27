@@ -12,14 +12,20 @@ WORKDIR /app
 # Create non-root user for security and install Python dependencies
 RUN addgroup -g 1001 -S appgroup && \
     adduser -u 1001 -S appuser -G appgroup && \
-    pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir requests
+    pip install --no-cache-dir --upgrade pip
+
+# Copy and install requirements
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY --chown=appuser:appgroup twitch_colorchanger.py /app/twitch_colorchanger.py
+COPY --chown=appuser:appgroup main.py /app/main.py
+COPY --chown=appuser:appgroup src/ /app/src/
 
-# Ensure the script is executable
-RUN chmod +x /app/twitch_colorchanger.py
+# Create config directory and ensure main script is executable
+RUN mkdir -p /app/config && \
+    chown appuser:appgroup /app/config && \
+    chmod +x /app/main.py
 
 # Switch to non-root user
 USER appuser
@@ -29,9 +35,15 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PIP_NO_CACHE_DIR=1
 
-# Health check to ensure the container is working
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import sys; sys.exit(0)" || exit 1
+# Set default config file path to the volume directory
+ENV TWITCH_CONF_FILE=/app/config/twitch_colorchanger.conf
+
+# Create volume for configuration persistence only
+VOLUME ["/app/config"]
+
+# Health check to ensure the application can start
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python -c "from src.config import get_docker_config; users = get_docker_config(); exit(0 if users else 1)" || exit 1
 
 # Run the application
-CMD ["python", "twitch_colorchanger.py"]
+CMD ["python", "main.py"]

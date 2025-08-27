@@ -24,6 +24,12 @@ jobs:
       contents: read
       packages: write
       id-token: write  # For signing images
+    
+    # Note: DOCKER_USERNAME and DOCKER_PASSWORD are repository secrets
+    # SonarQube may flag these as "potentially invalid" but this is a false positive
+    # These secrets are standard GitHub Actions repository secrets
+    env:
+      DOCKER_HUB_PUSH_ENABLED: ${{ github.repository_owner == 'realAbitbol' }}
 
     steps:
       - name: Checkout repository
@@ -32,15 +38,17 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6,linux/riscv64,linux/mips64le
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6,linux/riscv64,linux/mips64le
 
+      # Log in to Docker Hub (requires DOCKER_USERNAME and DOCKER_PASSWORD secrets)
+      # These secrets should be configured in repository settings
       - name: Log in to Docker Hub
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && env.DOCKER_HUB_PUSH_ENABLED == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.DOCKER_REGISTRY }}
@@ -60,7 +68,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            ${{ env.DOCKER_IMAGE_NAME }}
+            ${{ github.repository_owner == 'realAbitbol' && env.DOCKER_IMAGE_NAME || '' }}
             ${{ env.GHCR_IMAGE_NAME }}
           tags: |
             type=ref,event=branch
@@ -73,13 +81,13 @@ jobs:
             org.opencontainers.image.title=Twitch ColorChanger Bot
             org.opencontainers.image.description=Multi-user Twitch chat color changer bot
             org.opencontainers.image.vendor=realAbitbol
-            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.licenses=GPL-3.0
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6,linux/riscv64,linux/mips64le
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -95,13 +103,19 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Images Built:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Docker Hub:** \`${{ env.DOCKER_IMAGE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.repository_owner }}" == "realAbitbol" ]; then
+            echo "**Docker Hub:** \`${{ env.DOCKER_IMAGE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "**GitHub Container Registry:** \`${{ env.GHCR_IMAGE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Platforms:" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ linux/amd64 (x86_64)" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ linux/arm64 (ARM64)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ linux/arm64 (ARM64, Apple Silicon)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ linux/arm/v7 (32-bit ARM, Raspberry Pi 2/3/4)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ linux/arm/v6 (ARMv6, Raspberry Pi Zero/1)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ linux/riscv64 (RISC-V 64-bit)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ linux/mips64le (MIPS 64-bit little-endian)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Tags:" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
