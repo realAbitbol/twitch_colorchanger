@@ -9,34 +9,47 @@ LABEL version="2.1"
 # Set working directory
 WORKDIR /app
 
-# Create non-root user for security and install Python dependencies
+# Install dependencies, create base user (will be adjusted at runtime), and add startup script
 RUN addgroup -g 1001 -S appgroup && \
     adduser -u 1001 -S appuser -G appgroup && \
+    apk add --no-cache su-exec && \
     pip install --no-cache-dir --upgrade pip && \
-    # Install build dependencies for RISC-V and other architectures that need compilation
     if [ "$(uname -m)" = "riscv64" ]; then \
         apk add --no-cache --virtual .build-deps gcc musl-dev python3-dev; \
     fi && \
-    # Create startup script to handle dynamic PUID/PGID
-    echo '#!/bin/sh' > /usr/local/bin/start.sh && \
-    echo 'if [ -n "$PUID" ] && [ -n "$PGID" ]; then' >> /usr/local/bin/start.sh && \
-    echo '    # Change appuser UID/GID to match PUID/PGID' >> /usr/local/bin/start.sh && \
-    echo '    if [ "$PUID" != "1001" ] || [ "$PGID" != "1001" ]; then' >> /usr/local/bin/start.sh && \
-    echo '        deluser appuser 2>/dev/null || true' >> /usr/local/bin/start.sh && \
-    echo '        delgroup appgroup 2>/dev/null || true' >> /usr/local/bin/start.sh && \
-    echo '        addgroup -g "$PGID" -S appgroup 2>/dev/null || true' >> /usr/local/bin/start.sh && \
-    echo '        adduser -u "$PUID" -S appuser -G appgroup 2>/dev/null || true' >> /usr/local/bin/start.sh && \
-    echo '        # Change ownership AFTER creating the new user' >> /usr/local/bin/start.sh && \
-    echo '        chown -R appuser:appgroup /app 2>/dev/null || true' >> /usr/local/bin/start.sh && \
-    echo '        # Ensure config directory exists and is writable after volume mount' >> /usr/local/bin/start.sh && \
-    echo '        mkdir -p /app/config' >> /usr/local/bin/start.sh && \
-    echo '        # Wait a moment for volume mount to complete, then set ownership recursively' >> /usr/local/bin/start.sh && \
-    echo '        sleep 1' >> /usr/local/bin/start.sh && \
-    echo '        chown -R appuser:appgroup /app/config 2>/dev/null || true' >> /usr/local/bin/start.sh && \
-    echo '        chmod -R 755 /app/config 2>/dev/null || true' >> /usr/local/bin/start.sh && \
-    echo '    fi' >> /usr/local/bin/start.sh && \
-    echo 'fi' >> /usr/local/bin/start.sh && \
-    echo 'exec "$@"' >> /usr/local/bin/start.sh && \
+    printf '%s\n' \
+    '#!/bin/sh' \
+    '' \
+    'set -e' \
+    '' \
+    '# Dynamic user remap (runs as root here)' \
+    'TARGET_UID="${PUID:-1001}"' \
+    'TARGET_GID="${PGID:-1001}"' \
+    '' \
+    '# Recreate group/user if IDs differ' \
+    'CURRENT_UID=$(id -u appuser 2>/dev/null || echo 0)' \
+    'CURRENT_GID=$(getent group appgroup 2>/dev/null | cut -d: -f3 || echo 0)' \
+    'if [ "$CURRENT_UID" != "$TARGET_UID" ] || [ "$CURRENT_GID" != "$TARGET_GID" ]; then' \
+    '  deluser appuser 2>/dev/null || true' \
+    '  delgroup appgroup 2>/dev/null || true' \
+    '  # Try to find existing group with TARGET_GID' \
+    '  EXISTING_GROUP=$(getent group "$TARGET_GID" | cut -d: -f1 || true)' \
+    '  if [ -n "$EXISTING_GROUP" ]; then' \
+    '    adduser -u "$TARGET_UID" -S appuser -G "$EXISTING_GROUP"' \
+    '  else' \
+    '    addgroup -g "$TARGET_GID" -S appgroup || addgroup -S appgroup' \
+    '    adduser -u "$TARGET_UID" -S appuser -G appgroup' \
+    '  fi' \
+    'fi' \
+    '' \
+    '# Ensure config dir exists (handle volume mount race)' \
+    'mkdir -p /app/config' \
+    'sleep 0.2' \
+    'chown -R appuser:appgroup /app/config 2>/dev/null || true' \
+    '' \
+    '# Drop privileges and exec' \
+    'exec su-exec appuser:appgroup "$@"' \
+    > /usr/local/bin/start.sh && \
     chmod +x /usr/local/bin/start.sh
 
 # Copy and install requirements
@@ -56,8 +69,7 @@ RUN mkdir -p /app/config && \
     chown appuser:appgroup /app/config && \
     chmod +x /app/main.py
 
-# Switch to non-root user
-USER appuser
+# (Intentionally run as root; start.sh will drop privileges with su-exec)
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
@@ -74,5 +86,5 @@ VOLUME ["/app/config"]
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD python -c "from src.config import get_docker_config; users = get_docker_config(); exit(0 if users else 1)" || exit 1
 
-# Run the application
+# Run the application (start.sh drops privileges to appuser/appgroup or remapped IDs)
 CMD ["/usr/local/bin/start.sh", "python", "main.py"]
