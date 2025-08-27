@@ -1,30 +1,30 @@
 #!/usr/bin/env python3
 """
-Automatic Twitch Color Changer Bot
-Connects to Twitch IRC to detect messages and changes username color via Twitch API
-after each message you send in any channel.
+Twitch ColorChanger Bot - Multi-User Support
+Automatically changes Twitch chat color every few minutes for multiple users
+Supports Docker deployment with environment variables for unattended mode
 """
 
-import socket
-import time
-import random
-import threading
-import re
-import json
-import requests
 import os
-from datetime import datetime, timedelta
+import sys
+import json
+import time
+import threading
+import random
+import socket
+from datetime import datetime
+
+import requests
+
 
 class bcolors:
-    HEADER = '\033[35m'  # Magenta (standard)
-    OKBLUE = '\033[34m'  # Blue (standard)
-    OKCYAN = '\033[36m'  # Cyan (standard)
-    OKGREEN = '\033[32m'  # Green (standard)
-    WARNING = '\033[33m'  # Yellow (standard)
-    FAIL = '\033[31m'    # Red (standard)
-    ENDC = '\033[0m'     # Reset
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
+    """ANSI color codes for console output"""
+    PURPLE = '\033[95m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
 
 def print_log(message, color=""):
     """Print log with ANSI colors if FORCE_COLOR is not false, else plain text"""
@@ -33,6 +33,151 @@ def print_log(message, color=""):
         print(f"{color}{message}{bcolors.ENDC}")
     else:
         print(message)
+
+# Helper functions for multi-user support and unattended mode
+def process_channels(channels_str):
+    """Process comma-separated channel string into list of lowercase channel names"""
+    return [ch.strip().lower() for ch in channels_str.split(',') if ch.strip()]
+
+
+def load_users_from_env():
+    """Load users from numbered environment variables (Docker unattended mode)"""
+    users = []
+    
+    # First check for numbered environment variables (multi-user mode)
+    for i in range(1, 100):  # Support up to 99 users
+        username = os.environ.get(f'TWITCH_USERNAME_{i}')
+        if not username:
+            break
+        
+        user = {
+            'username': username,
+            'access_token': os.environ.get(f'TWITCH_ACCESS_TOKEN_{i}', ''),
+            'refresh_token': os.environ.get(f'TWITCH_REFRESH_TOKEN_{i}', ''),
+            'client_id': os.environ.get(f'TWITCH_CLIENT_ID_{i}', ''),
+            'client_secret': os.environ.get(f'TWITCH_CLIENT_SECRET_{i}', ''),
+            'channels': process_channels(os.environ.get(f'TWITCH_CHANNELS_{i}', '')),
+            'use_random_colors': os.environ.get(f'TWITCH_USE_RANDOM_COLORS_{i}', 'false').lower() == 'true'
+        }
+        users.append(user)
+    
+    # If no numbered users found, check for legacy single-user environment variables
+    if not users:
+        legacy_username = os.environ.get('TWITCH_USERNAME')
+        if legacy_username:
+            user = {
+                'username': legacy_username,
+                'access_token': os.environ.get('TWITCH_ACCESS_TOKEN', ''),
+                'refresh_token': os.environ.get('TWITCH_REFRESH_TOKEN', ''),
+                'client_id': os.environ.get('TWITCH_CLIENT_ID', ''),
+                'client_secret': os.environ.get('TWITCH_CLIENT_SECRET', ''),
+                'channels': process_channels(os.environ.get('TWITCH_CHANNELS', '')),
+                'use_random_colors': os.environ.get('TWITCH_USE_RANDOM_COLORS', 'false').lower() == 'true'
+            }
+            users.append(user)
+    
+    return users
+
+def load_users_from_config(config_file):
+    """Load users from config file"""
+    try:
+        with open(config_file, 'r') as f:
+            data = json.load(f)
+            # Support both new multi-user format and legacy single-user format
+            if isinstance(data, dict) and 'users' in data:
+                return data['users']
+            elif isinstance(data, list):
+                return data
+            elif isinstance(data, dict) and 'username' in data:
+                # Legacy single-user format, convert to multi-user
+                return [data]
+            else:
+                return []
+    except FileNotFoundError:
+        return []
+    except Exception as e:
+        print_log(f"⚠️ Error loading config: {e}", bcolors.FAIL)
+        return []
+
+def save_users_to_config(users, config_file):
+    """Save users to config file"""
+    try:
+        with open(config_file, 'w') as f:
+            json.dump({'users': users}, f, indent=2)
+        print_log("💾 All users saved successfully", bcolors.OKGREEN)
+    except Exception as e:
+        print_log(f"⚠️ Failed to save users: {e}", bcolors.FAIL)
+
+def prompt_for_user():
+    """Prompt user to add a new user configuration"""
+    print_log("Add a new Twitch user:", bcolors.HEADER)
+    username = input("👤 Username: ").strip()
+    access_token = input("🎫 Access Token: ").strip()
+    refresh_token = input("🔄 Refresh Token: ").strip()
+    client_id = input("📱 Client ID: ").strip()
+    client_secret = input("🔒 Client Secret: ").strip()
+    channels_input = input("📺 Channels (comma-separated): ").strip()
+    channels = process_channels(channels_input)
+    use_random_colors_input = input("🎲 Use random hex colors? [Y/n]: ").strip().lower()
+    use_random_colors = use_random_colors_input in ['', 'y', 'yes']
+    
+    return {
+        'username': username,
+        'access_token': access_token,
+        'refresh_token': refresh_token,
+        'client_id': client_id,
+        'client_secret': client_secret,
+        'channels': channels,
+        'use_random_colors': use_random_colors
+    }
+
+def run_bot_for_user(user):
+    """Run a bot instance for a specific user"""
+    try:
+        bot = TwitchColorBot(
+            user['username'],
+            user['access_token'],
+            user['refresh_token'],
+            user['client_id'],
+            user['client_secret'],
+            user.get('channels', []),
+            use_random_colors=user.get('use_random_colors', False)
+        )
+        bot.start(channels_to_join=user.get('channels', []))
+    except Exception as e:
+        print_log(f"❌ Error running bot for {user['username']}: {e}", bcolors.FAIL)
+
+def print_instructions():
+    """Print setup instructions at launch"""
+    print_log("🎨 Multi-User Twitch Color Changer Bot", bcolors.HEADER)
+    print_log("="*50)
+    
+    print_log("\n📝 Setup (one-time):")
+    print_log("To enable automatic token refresh and color changes, you must create a Twitch app to get a Client ID and Client Secret.")
+    print_log("Steps to create a Twitch app:")
+    print_log("1. Go to https://dev.twitch.tv/console/apps and sign in with your Twitch account.")
+    print_log("2. Click 'Register Your Application'.")
+    print_log("3. Enter a name for your app (e.g., 'TwitchColorBot').")
+    print_log("4. Set 'OAuth Redirect URLs' to: https://twitchtokengenerator.com")
+    print_log("5. Set 'Category' to 'Chat Bot' or 'Other'.")
+    print_log("6. Click 'Create'. Your Client ID will be displayed.")
+    print_log("7. Click 'Manage' next to your app, then 'New Secret' to generate a Client Secret. Save both values.")
+    print_log("8. On https://twitchtokengenerator.com, select 'Custom Token Generator'.")
+    print_log("9. Enter your Client ID and Client Secret.")
+    print_log("10. Select scopes: chat:read, user:manage:chat_color (chat:edit optional for sending messages)")
+    print_log("11. Click 'Generate Token' and save the Access Token and Refresh Token.")
+    
+    print_log("\n🔗 Alternative token generators (require Client ID/Secret):")
+    print_log("   • https://twitchapps.com/tokengen")
+    print_log("   • https://www.twitchtools.com/chat-token")
+    
+    print_log("\n📋 Required scopes for IRC and color changes: chat:read, user:manage:chat_color (chat:edit optional)")
+    print_log("⚠️ IMPORTANT: Save ALL FOUR values - Access Token, Refresh Token, Client ID, AND Client Secret")
+    
+    print_log("\n🐳 Docker Multi-User Support:")
+    print_log("Use numbered environment variables for each user:")
+    print_log("   TWITCH_USERNAME_1, TWITCH_ACCESS_TOKEN_1, etc.")
+    print_log("   TWITCH_USERNAME_2, TWITCH_ACCESS_TOKEN_2, etc.")
 
 class TwitchColorBot:
     def __init__(self, username, access_token, refresh_token, client_id, client_secret, channels=None, use_random_colors=False):
@@ -44,10 +189,11 @@ class TwitchColorBot:
         self.channels = channels or []
         self.use_random_colors = use_random_colors
         
-        # Token management
-        self.token_file = os.environ.get('TWITCH_CONF_FILE', "twitch_colorchanger.conf")
+        # Token management - use user-specific file for multi-user support
+        base_config_file = os.environ.get('TWITCH_CONF_FILE', "twitch_colorchanger.conf")
+        self.token_file = base_config_file
         self.user_id = None
-        self.load_saved_tokens()
+        self.load_saved_tokens()  # Load any saved data for this user
         
         # Twitch IRC settings
         self.server = 'irc.chat.twitch.tv'
@@ -96,46 +242,62 @@ class TwitchColorBot:
         
         return f"#{r:02x}{g:02x}{b:02x}"
     
+    def find_user_in_config(self, users):
+        """Find user data in config by username (case insensitive)"""
+        for i, user in enumerate(users):
+            if user.get('username', '').lower() == self.username:
+                return i, user
+        return None, None
+
     def save_tokens(self):
-        """Save tokens, username, channels, and random colors choice to file"""
-        token_data = {
-            'username': self.username,
-            'channels': self.channels,
-            'access_token': self.access_token,
-            'refresh_token': self.refresh_token,
-            'client_id': self.client_id,
-            'client_secret': self.client_secret,
-            'user_id': self.user_id,
-            'use_random_colors': self.use_random_colors,
-            'saved_at': datetime.now().isoformat()
-        }
+        """Save tokens for this user back to the multi-user config file"""
         try:
-            with open(self.token_file, 'w') as f:
-                json.dump(token_data, f, indent=2)
-            print_log("💾 Tokens saved successfully", bcolors.OKGREEN)
+            # Load existing config
+            users = load_users_from_config(self.token_file)
+            
+            # Update or add this user's data
+            user_data = {
+                'username': self.username,
+                'channels': self.channels,
+                'access_token': self.access_token,
+                'refresh_token': self.refresh_token,
+                'client_id': self.client_id,
+                'client_secret': self.client_secret,
+                'user_id': self.user_id,
+                'use_random_colors': self.use_random_colors,
+                'saved_at': datetime.now().isoformat()
+            }
+            
+            # Find and update existing user or add new one
+            user_index, _ = self.find_user_in_config(users)
+            if user_index is not None:
+                users[user_index] = user_data
+            else:
+                users.append(user_data)
+            
+            save_users_to_config(users, self.token_file)
         except Exception as e:
-            print_log(f"⚠️ Failed to save tokens: {e}", bcolors.FAIL)
+            print_log(f"⚠️ Failed to save tokens for {self.username}: {e}", bcolors.FAIL)
     
     def load_saved_tokens(self):
-        """Load previously saved tokens, username, channels, and random colors choice"""
+        """Load previously saved tokens for this user from multi-user config"""
         try:
-            with open(self.token_file, 'r') as f:
-                token_data = json.load(f)
-                
-            if token_data.get('username', '').lower() == self.username:
-                self.access_token = token_data.get('access_token', self.access_token)
-                self.refresh_token = token_data.get('refresh_token', self.refresh_token)
-                self.client_id = token_data.get('client_id', self.client_id)
-                self.client_secret = token_data.get('client_secret', self.client_secret)
-                self.user_id = token_data.get('user_id', self.user_id)
-                self.channels = token_data.get('channels', self.channels)
-                self.use_random_colors = token_data.get('use_random_colors', self.use_random_colors)
-                print_log("📂 Loaded saved tokens", bcolors.OKCYAN)
-                
-        except FileNotFoundError:
-            print_log("📝 No saved tokens found - will save after first successful connection", bcolors.WARNING)
+            users = load_users_from_config(self.token_file)
+            _, user_data = self.find_user_in_config(users)
+            
+            if user_data:
+                self.access_token = user_data.get('access_token', self.access_token)
+                self.refresh_token = user_data.get('refresh_token', self.refresh_token)
+                self.client_id = user_data.get('client_id', self.client_id)
+                self.client_secret = user_data.get('client_secret', self.client_secret)
+                self.user_id = user_data.get('user_id', self.user_id)
+                self.channels = user_data.get('channels', self.channels)
+                self.use_random_colors = user_data.get('use_random_colors', self.use_random_colors)
+                print_log(f"📂 Loaded saved tokens for {self.username}", bcolors.OKCYAN)
+            else:
+                print_log(f"📝 No saved tokens found for {self.username} - will save after first successful connection", bcolors.WARNING)
         except Exception as e:
-            print_log(f"⚠️ Error loading saved tokens: {e}", bcolors.FAIL)
+            print_log(f"⚠️ Error loading saved tokens for {self.username}: {e}", bcolors.FAIL)
     
     def get_user_id(self):
         """Fetch the user's Twitch ID"""
@@ -255,7 +417,7 @@ class TwitchColorBot:
         """Check if enough time passed since last color change"""
         return (datetime.now() - self.last_color_change).total_seconds() >= self.rate_limit_delay
     
-    def change_color(self, channel=None):
+    def change_color(self):
         """Change username color via Twitch API"""
         if not self.can_change_color():
             print_log("⏳ Rate limit active, skipping color change", bcolors.WARNING)
@@ -301,10 +463,9 @@ class TwitchColorBot:
             print_log("❌ Could not obtain valid token", bcolors.FAIL)
             return False
         
-        if not self.user_id:
-            if not self.get_user_id():
-                print_log("❌ Could not obtain user ID", bcolors.FAIL)
-                return False
+        if not self.user_id and not self.get_user_id():
+            print_log("❌ Could not obtain user ID", bcolors.FAIL)
+            return False
         
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -343,63 +504,77 @@ class TwitchColorBot:
         self.joined_channels.add(channel)
         print_log(f"📺 Joined #{channel}", bcolors.OKBLUE)
     
+    def extract_message_parts(self, raw_message):
+        """Extract prefix, command, and params from IRC message"""
+        if raw_message.startswith('@'):
+            parts = raw_message.split(' ', 3)
+            if len(parts) >= 4:
+                return parts[1], parts[2], parts[3]
+        else:
+            parts = raw_message.split(' ', 2)
+            if len(parts) >= 3:
+                return parts[0], parts[1], parts[2]
+        return None, None, None
+    
+    def extract_sender(self, prefix):
+        """Extract sender name from prefix"""
+        if '!' in prefix:
+            return prefix.split('!')[0].replace(':', '')
+        return prefix.replace(':', '')
+    
+    def parse_channel_message(self, params):
+        """Parse channel and message from params"""
+        channel_msg = params.split(' :', 1)
+        if len(channel_msg) >= 2:
+            channel = channel_msg[0].replace('#', '')
+            message = channel_msg[1]
+            return channel, message
+        return None, None
+
+    def handle_privmsg_command(self, sender, params, raw_message):
+        """Handle PRIVMSG command"""
+        channel, message = self.parse_channel_message(params)
+        if channel is not None and message is not None:
+            print_log(f"📥 Received PRIVMSG from {sender} in #{channel}: {message[:50]}{'...' if len(message) > 50 else ''}", bcolors.OKBLUE)
+            return {
+                'sender': sender,
+                'channel': channel,
+                'message': message,
+                'command': 'PRIVMSG',
+                'raw': raw_message
+            }
+        return None
+    
+    def handle_notice_command(self, sender, params, raw_message):
+        """Handle NOTICE command"""
+        channel, message = self.parse_channel_message(params)
+        if channel is not None and message is not None:
+            print_log(f"⚠️ NOTICE from #{channel}: {message}", bcolors.WARNING)
+            return {
+                'sender': sender,
+                'channel': channel,
+                'message': message,
+                'command': 'NOTICE',
+                'raw': raw_message
+            }
+        return None
+
     def parse_message(self, raw_message):
         """Parse IRC message and extract relevant info"""
         try:
-            if raw_message.startswith('@'):
-                parts = raw_message.split(' ', 3)
-                if len(parts) >= 4:
-                    tags = parts[0]
-                    prefix = parts[1]
-                    command = parts[2]
-                    params = parts[3]
-                else:
-                    return None
-            else:
-                parts = raw_message.split(' ', 2)
-                if len(parts) >= 3:
-                    prefix = parts[0]
-                    command = parts[1]
-                    params = parts[2]
-                    tags = ""
-                else:
-                    return None
+            prefix, command, params = self.extract_message_parts(raw_message)
+            if not prefix or not command or not params:
+                return None
             
-            if '!' in prefix:
-                sender = prefix.split('!')[0].replace(':', '')
-            else:
-                sender = prefix.replace(':', '')
+            sender = self.extract_sender(prefix)
             
-            if command == 'PRIVMSG' and sender.lower() == self.username.lower():
-                channel_msg = params.split(' :', 1)
-                if len(channel_msg) >= 2:
-                    channel = channel_msg[0].replace('#', '')
-                    message = channel_msg[1]
-                    print_log(f"📥 Received PRIVMSG from {sender} in #{channel}: {message[:50]}{'...' if len(message) > 50 else ''}", bcolors.OKBLUE)
-                    return {
-                        'sender': sender,
-                        'channel': channel,
-                        'message': message,
-                        'command': command,
-                        'raw': raw_message
-                    }
+            if command == 'PRIVMSG' and sender.lower() == self.username:
+                return self.handle_privmsg_command(sender, params, raw_message)
             elif command == 'NOTICE':
-                channel_msg = params.split(' :', 1)
-                if len(channel_msg) >= 2:
-                    channel = channel_msg[0].replace('#', '')
-                    message = channel_msg[1]
-                    print_log(f"⚠️ NOTICE from #{channel}: {message}", bcolors.WARNING)
-                    return {
-                        'sender': sender,
-                        'channel': channel,
-                        'message': message,
-                        'command': command,
-                        'raw': raw_message
-                    }
+                return self.handle_notice_command(sender, params, raw_message)
             elif command == '366':  # RPL_ENDOFNAMES, confirms join
                 channel = params.split(' ')[1].replace('#', '')
                 print_log(f"✅ Successfully joined #{channel}", bcolors.OKGREEN)
-                return None
             
             return None
             
@@ -419,7 +594,7 @@ class TwitchColorBot:
             channel = parsed_msg.get('channel', '')
             
             print_log(f"💬 You sent in #{channel}: {message[:50]}{'...' if len(message) > 50 else ''}", bcolors.OKCYAN)
-            threading.Timer(0.5, lambda: self.change_color(channel)).start()
+            threading.Timer(0.5, lambda: self.change_color()).start()
     
     def listen(self):
         """Main listening loop"""
@@ -462,7 +637,7 @@ class TwitchColorBot:
             for channel in channels_to_join:
                 self.join_channel(channel)
         
-        print_log(f"🤖 Bot started! Send messages in Chatterino and your color will change automatically.", bcolors.OKBLUE)
+        print_log("🤖 Bot started! Send messages in Chatterino and your color will change automatically.", bcolors.OKBLUE)
         print_log("🛑 Press Ctrl+C to stop", bcolors.OKBLUE)
         
         try:
@@ -479,147 +654,73 @@ class TwitchColorBot:
             self.sock.close()
         print_log("👋 Bot stopped", bcolors.OKBLUE)
 
-def main():
-    print_log("🎨 Automatic Twitch Color Changer Bot", bcolors.HEADER)
-    print_log("="*50)
+def setup_interactive_users(config_file):
+    """Handle interactive user setup and return list of users"""
+    users = load_users_from_config(config_file)
     
-    print_log("\n📝 Setup (one-time):")
-    print_log("To enable automatic token refresh and color changes, you must create a Twitch app to get a Client ID and Client Secret.")
-    print_log("Steps to create a Twitch app:")
-    print_log("1. Go to https://dev.twitch.tv/console/apps and sign in with your Twitch account.")
-    print_log("2. Click 'Register Your Application'.")
-    print_log("3. Enter a name for your app (e.g., 'TwitchColorBot').")
-    print_log("4. Set 'OAuth Redirect URLs' to: https://twitchtokengenerator.com")
-    print_log("5. Set 'Category' to 'Chat Bot' or 'Other'.")
-    print_log("6. Click 'Create'. Your Client ID will be displayed.")
-    print_log("7. Click 'Manage' next to your app, then 'New Secret' to generate a Client Secret. Save both values.")
-    print_log("8. On https://twitchtokengenerator.com, select 'Custom Token Generator'.")
-    print_log("9. Enter your Client ID and Client Secret.")
-    print_log("10. Select scopes: chat:read, user:manage:chat_color (chat:edit optional for sending messages)")
-    print_log("11. Click 'Generate Token' and save the Access Token and Refresh Token.")
-    print_log("\n🔗 Alternative token generators (require Client ID/Secret):")
-    print_log("   • https://twitchapps.com/tokengen")
-    print_log("   • https://www.twitchtools.com/chat-token")
-    print_log("\n📋 Required scopes for IRC and color changes: chat:read, user:manage:chat_color (chat:edit optional)")
-    print_log("⚠️ IMPORTANT: Save ALL FOUR values - Access Token, Refresh Token, Client ID, AND Client Secret")
+    if not users:
+        print_log("No users found in config. Let's add your first user.", bcolors.WARNING)
+        users.append(prompt_for_user())
+        save_users_to_config(users, config_file)
     
-    token_file = os.environ.get('TWITCH_CONF_FILE', "twitch_colorchanger.conf")
-    
-    # Get potential values from environment variables
-    env_username = os.environ.get('TWITCH_USERNAME', '').strip()
-    env_access_token = os.environ.get('TWITCH_ACCESS_TOKEN', '').strip()
-    env_refresh_token = os.environ.get('TWITCH_REFRESH_TOKEN', '').strip()
-    env_client_id = os.environ.get('TWITCH_CLIENT_ID', '').strip()
-    env_client_secret = os.environ.get('TWITCH_CLIENT_SECRET', '').strip()
-    env_channels_str = os.environ.get('TWITCH_CHANNELS', '').strip()
-    env_use_random_colors = os.environ.get('TWITCH_USE_RANDOM_COLORS', None)
-    
-    # Determine if in env mode (unattended, e.g., Docker)
-    is_env_mode = bool(env_username)  # If username is set via env, assume env mode
-    
-    # Load saved tokens if file exists
-    saved_tokens = None
-    try:
-        with open(token_file, 'r') as f:
-            saved_tokens = json.load(f)
-        if not saved_tokens.get('username'):
-            print_log("❌ Saved tokens missing username", bcolors.FAIL)
-            saved_tokens = None
-    except FileNotFoundError:
-        print_log("📝 No saved tokens found", bcolors.WARNING)
-    except Exception as e:
-        print_log(f"⚠️ Error reading saved tokens: {e}", bcolors.FAIL)
-        saved_tokens = None
-    
-    username = None
-    access_token = None
-    refresh_token = None
-    client_id = None
-    client_secret = None
-    channels = []
-    use_random_colors = False
-    
-    if is_env_mode:
-        # In env mode, use env values, fall back to saved if matching username and value not set in env
-        username = env_username
-        if not username:
-            print_log("❌ TWITCH_USERNAME is required in environment mode", bcolors.FAIL)
-            return
-        
-        # Load saved only if username matches
-        if saved_tokens and saved_tokens.get('username', '').lower() == username.lower():
-            access_token = env_access_token if env_access_token else saved_tokens.get('access_token', '')
-            refresh_token = env_refresh_token if env_refresh_token else saved_tokens.get('refresh_token', '')
-            client_id = env_client_id if env_client_id else saved_tokens.get('client_id', '')
-            client_secret = env_client_secret if env_client_secret else saved_tokens.get('client_secret', '')
-            channels = [ch.strip().lower() for ch in env_channels_str.split(',') if ch.strip()] if env_channels_str else saved_tokens.get('channels', [])
-            use_random_colors = (env_use_random_colors.lower() == 'true') if env_use_random_colors is not None else saved_tokens.get('use_random_colors', False)
+    # Ask if user wants to add more users
+    while True:
+        add_more = input("\nAdd another user? [y/N]: ").strip().lower()
+        if add_more in ['y', 'yes']:
+            users.append(prompt_for_user())
+            save_users_to_config(users, config_file)
         else:
-            access_token = env_access_token
-            refresh_token = env_refresh_token
-            client_id = env_client_id
-            client_secret = env_client_secret
-            channels = [ch.strip().lower() for ch in env_channels_str.split(',') if ch.strip()] if env_channels_str else []
-            use_random_colors = (env_use_random_colors.lower() == 'true') if env_use_random_colors is not None else False
-        
-        # Check for required values
-        if not all([access_token, refresh_token, client_id, client_secret]):
-            print_log("❌ Missing required values (check environment variables or saved config)", bcolors.FAIL)
-            return
-        print_log(f"✅ Using environment configuration for {username}", bcolors.OKGREEN)
+            break
+    
+    return users
+
+def launch_user_bots(users):
+    """Launch bot threads for all valid users"""
+    threads = []
+    for user in users:
+        if not all([user.get('username'), user.get('access_token'), user.get('refresh_token'), 
+                   user.get('client_id'), user.get('client_secret')]):
+            print_log(f"⚠️ Skipping user {user.get('username', 'unknown')} - missing required credentials", bcolors.WARNING)
+            continue
+            
+        t = threading.Thread(target=run_bot_for_user, args=(user,), daemon=True)
+        t.start()
+        threads.append(t)
+        print_log(f"✅ Started bot for {user['username']}", bcolors.OKGREEN)
+    
+    return threads
+
+def main():
+    """Main function - handles multi-user setup and launches bots"""
+    print_instructions()
+    
+    config_file = os.environ.get('TWITCH_CONF_FILE', "twitch_colorchanger.conf")
+    
+    # First, try to load users from environment variables (Docker unattended mode)
+    env_users = load_users_from_env()
+    if env_users:
+        users = env_users
+        print_log(f"✅ Loaded {len(users)} users from environment variables.", bcolors.OKGREEN)
     else:
-        # Interactive mode
-        if saved_tokens:
-            print_log(f"\n💾 Found saved tokens for {saved_tokens.get('username', 'unknown')} with channels: {saved_tokens.get('channels', [])}", bcolors.OKCYAN)
-            print("🔄 Load saved tokens and channels from twitch_colorchanger.conf? [Y/n]: ")
-            use_saved = input().lower()
-            if use_saved == '' or use_saved.startswith('y'):
-                username = saved_tokens.get('username', '')
-                access_token = saved_tokens.get('access_token', '')
-                refresh_token = saved_tokens.get('refresh_token', '')
-                client_id = saved_tokens.get('client_id', '')
-                client_secret = saved_tokens.get('client_secret', '')
-                channels = saved_tokens.get('channels', [])
-                use_random_colors = saved_tokens.get('use_random_colors', False)
-                print_log(f"✅ Using saved tokens and channels: {channels}", bcolors.OKGREEN)
-            else:
-                saved_tokens = None
-        
-        if not username:
-            username = input("\n👤 Enter your Twitch username: ").strip()
-        
-        if not username:
-            print_log("❌ Username cannot be empty", bcolors.FAIL)
-            return
-        
-        if not access_token or not refresh_token or not client_id or not client_secret:
-            print_log("\n🔑 From the token generator, you need ALL FOUR values:")
-            access_token = input("🎫 Enter your ACCESS TOKEN: ").strip()
-            refresh_token = input("🔄 Enter your REFRESH TOKEN: ").strip()
-            client_id = input("📱 Enter your CLIENT ID: ").strip()
-            client_secret = input("🔒 Enter your CLIENT SECRET: ").strip()
-        
-        if not access_token or not refresh_token or not client_id or not client_secret:
-            print_log("❌ All four values are required for automatic refresh!", bcolors.FAIL)
-            return
-        
-        print_log("\n📺 Enter channels to join (where you'll be chatting):")
-        print_log("   Leave empty to join channels manually in Chatterino")
-        channels_input = input("   Channels (comma-separated): ").strip()
-        channels = [ch.strip().lower() for ch in channels_input.split(',') if ch.strip()]
-        
-        print_log("\n🎲 Use random hex colors? (recommended for Prime/Turbo users) [Y/n]: ")
-        use_random_input = input().lower()
-        use_random_colors = use_random_input == '' or use_random_input.startswith('y')
+        # Interactive mode - load from config file or prompt user
+        users = setup_interactive_users(config_file)
+    
+    # Launch bots for all users
+    threads = launch_user_bots(users)
+    
+    if not threads:
+        print_log("❌ No valid users to run bots for. Check your configuration.", bcolors.FAIL)
+        return
+    
+    print_log(f"\n🤖 {len(threads)} bots running! Send messages in Chatterino and your colors will change automatically.", bcolors.OKBLUE)
+    print_log("🛑 Press Ctrl+C to stop all bots", bcolors.OKBLUE)
     
     try:
-        bot = TwitchColorBot(username, access_token, refresh_token, client_id, client_secret, channels, use_random_colors=use_random_colors)
-        print_log(f"\n🎨 Starting bot with {'random hex colors' if use_random_colors else 'preset colors'}...", bcolors.OKBLUE)
-        bot.start(channels_to_join=channels)
+        # Keep main thread alive
+        for t in threads:
+            t.join()
     except KeyboardInterrupt:
-        print_log("\n👋 Goodbye!", bcolors.OKBLUE)
-    except Exception as e:
-        print_log(f"❌ Error: {e}", bcolors.FAIL)
+        print_log("\n🛑 Stopping all bots...", bcolors.WARNING)
 
 if __name__ == "__main__":
     main()

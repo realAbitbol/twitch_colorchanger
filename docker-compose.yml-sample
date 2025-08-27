@@ -11,13 +11,41 @@ services:
     
     container_name: twitch-colorchanger
     environment:
-      - TWITCH_USERNAME=your_twitch_username
-      - TWITCH_ACCESS_TOKEN=your_access_token
-      - TWITCH_REFRESH_TOKEN=your_refresh_token
-      - TWITCH_CLIENT_ID=your_client_id
-      - TWITCH_CLIENT_SECRET=your_client_secret
-      - TWITCH_CHANNELS=channel1,channel2,channel3  # Optional, comma-separated
-      - TWITCH_USE_RANDOM_COLORS=true  # Optional, true or false
+      # Multi-User Support: Use numbered environment variables for each user
+      
+      # User 1
+      - TWITCH_USERNAME_1=your_twitch_username_1
+      - TWITCH_ACCESS_TOKEN_1=your_access_token_1
+      - TWITCH_REFRESH_TOKEN_1=your_refresh_token_1
+      - TWITCH_CLIENT_ID_1=your_client_id_1
+      - TWITCH_CLIENT_SECRET_1=your_client_secret_1
+      - TWITCH_CHANNELS_1=channel1,channel2,channel3  # Optional, comma-separated
+      - TWITCH_USE_RANDOM_COLORS_1=true  # Optional, true or false
+      
+      # User 2 (optional - add more users as needed)
+      # - TWITCH_USERNAME_2=your_twitch_username_2
+      # - TWITCH_ACCESS_TOKEN_2=your_access_token_2
+      # - TWITCH_REFRESH_TOKEN_2=your_refresh_token_2
+      # - TWITCH_CLIENT_ID_2=your_client_id_2
+      # - TWITCH_CLIENT_SECRET_2=your_client_secret_2
+      # - TWITCH_CHANNELS_2=channel4,channel5  # Optional, comma-separated
+      # - TWITCH_USE_RANDOM_COLORS_2=false  # Optional, true or false
+      
+      # User 3 (optional)
+      # - TWITCH_USERNAME_3=your_twitch_username_3
+      # ... continue with _3 suffix for each setting
+      
+      # Single User Mode (Legacy - for backward compatibility)
+      # Use these if you only want to run one user and don't want numbered variables
+      # - TWITCH_USERNAME=your_single_twitch_username
+      # - TWITCH_ACCESS_TOKEN=your_single_access_token
+      # - TWITCH_REFRESH_TOKEN=your_single_refresh_token
+      # - TWITCH_CLIENT_ID=your_single_client_id
+      # - TWITCH_CLIENT_SECRET=your_single_client_secret
+      # - TWITCH_CHANNELS=channel1,channel2,channel3  # Optional, comma-separated
+      # - TWITCH_USE_RANDOM_COLORS=true  # Optional, true or false
+      
+      # Global settings
       - FORCE_COLOR=true  # Optional, to force ANSI colors in logs
       - PYTHONUNBUFFERED=1  # Ensure unbuffered output for real-time logs
     volumes:
