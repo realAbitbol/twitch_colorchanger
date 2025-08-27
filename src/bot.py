@@ -87,10 +87,9 @@ class TwitchColorBot:
         """Start the bot"""
         print_log(f"🚀 Starting bot for {self.username}", bcolors.OKBLUE)
         self.running = True
-        
-        # Check token validity first
-        await self._check_and_refresh_token()
-        
+        # Force a token refresh at launch (if refresh token available) to ensure fresh 4h window
+        await self._check_and_refresh_token(force=True)
+            
         # Fetch user_id if not set
         if not self.user_id:
             user_info = await self._get_user_info()
@@ -177,50 +176,78 @@ class TwitchColorBot:
                 # Wait 5 minutes before retrying
                 await asyncio.sleep(300)
     
-    async def _check_and_refresh_token(self):
-        """Check token validity and refresh if needed"""
+    async def _check_and_refresh_token(self, force: bool = False):
+        """Public coordinator for token validation / refresh.
+
+        Args:
+            force: Always attempt a refresh (when a refresh token exists) regardless of
+                   current expiry / validation state. Used at startup.
+        """
         if not self.refresh_token:
             print_log(f"⚠️ {self.username}: No refresh token available", bcolors.WARNING)
             return False
-        
+
+        if force:
+            return await self._force_token_refresh(initial=True)
+
+        # 1. If we have an expiry timestamp, handle via expiry logic.
+        if self._has_token_expiry():
+            return await self._check_expiring_token()
+
+        # 2. Otherwise, validate via API (no known expiry stored).
+        if await self._validate_token_via_api():
+            return True
+
+        # 3. Fallback refresh attempt when validation failed or not conclusive.
+        return await self._attempt_standard_refresh()
+
+    # --------------------- Helper methods (complexity reduction) --------------------- #
+    def _has_token_expiry(self) -> bool:
+        return bool(getattr(self, 'token_expiry', None))
+
+    def _hours_until_expiry(self) -> float:
+        if not self._has_token_expiry():
+            return float('inf')
+        return (self.token_expiry - datetime.now()).total_seconds() / 3600
+
+    async def _force_token_refresh(self, initial: bool = False) -> bool:
+        label = "initial" if initial else "forced"
+        print_log(f"🔄 {self.username}: Forcing {label} token refresh", bcolors.OKBLUE)
+        success = await self._refresh_access_token()
+        if success:
+            print_log(f"✅ {self.username}: Forced token refresh succeeded", bcolors.OKGREEN)
+            self._persist_token_changes()
+        else:
+            print_log(f"❌ {self.username}: Forced token refresh failed", bcolors.FAIL)
+        return success
+
+    async def _check_expiring_token(self) -> bool:
+        hours_remaining = self._hours_until_expiry()
+        print_log(f"🔑 {self.username}: Token expires in {hours_remaining:.1f} hours")
+        if hours_remaining < 1:
+            print_log(f"⏰ {self.username}: Token expires in less than 1 hour, refreshing...", bcolors.WARNING)
+            return await self._attempt_standard_refresh()
+        print_log(f"✅ {self.username}: Token is valid and has sufficient time remaining", bcolors.OKGREEN)
+        return True
+
+    async def _validate_token_via_api(self) -> bool:
         try:
-            # Check token expiry time if available
-            if hasattr(self, 'token_expiry') and self.token_expiry:
-                time_remaining = self.token_expiry - datetime.now()
-                hours_remaining = time_remaining.total_seconds() / 3600
-                
-                # Always log time remaining in non-debug mode
-                print_log(f"🔑 {self.username}: Token expires in {hours_remaining:.1f} hours")
-                
-                if hours_remaining < 1:
-                    print_log(f"⏰ {self.username}: Token expires in less than 1 hour, refreshing...", bcolors.WARNING)
-                    success = await self._refresh_access_token()
-                    if success:
-                        print_log(f"✅ {self.username}: Token refreshed and saved successfully", bcolors.OKGREEN)
-                        self._persist_token_changes()
-                    else:
-                        print_log(f"❌ {self.username}: Token refresh failed", bcolors.FAIL)
-                    return success
-                else:
-                    print_log(f"✅ {self.username}: Token is valid and has sufficient time remaining", bcolors.OKGREEN)
-                    return True
-            
-            # Fallback: Check if current token is still valid via API
             user_info = await self._get_user_info()
             if user_info:
                 print_log(f"✅ {self.username}: Token is still valid (API check)")
                 return True
-        except Exception as e:
+            return False
+        except Exception as e:  # Broad by design; upstream already categorized.
             print_log(f"🔍 {self.username}: Token validation failed ({e}), attempting refresh...", bcolors.WARNING)
-        
-        # Try to refresh the token
+            return False
+
+    async def _attempt_standard_refresh(self) -> bool:
         success = await self._refresh_access_token()
         if success:
             print_log(f"✅ {self.username}: Token refreshed and saved successfully", bcolors.OKGREEN)
             self._persist_token_changes()
         else:
             print_log(f"❌ {self.username}: Token refresh failed", bcolors.FAIL)
-        
         return success
     
     @with_error_handling(category=ErrorCategory.API, severity=ErrorSeverity.MEDIUM)

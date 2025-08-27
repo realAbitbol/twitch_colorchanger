@@ -27,7 +27,7 @@ Automatically change your Twitch username color after each message you send in c
 - **👥 Multi-User Support**: Run multiple bots for different Twitch accounts simultaneously
 - **🎲 Flexible Colors**: Supports both preset Twitch colors and random hex colors (Prime/Turbo users)
 - **🔄 Universal Compatibility**: Works with Chatterino, web chat, or any IRC client
-- **🔑 Token Management**: Automatic token refresh for seamless operation
+- **🔑 Token Management**: Forced startup refresh + periodic (10 min) checks; refreshes automatically when <1h remains
 - **🐳 Docker Ready**: Multi-platform support (amd64, arm64, arm/v7, arm/v6, riscv64) with unattended mode
 - **💾 Persistent Config**: Interactive setup with configuration file persistence
 
@@ -263,11 +263,11 @@ The bot automatically saves settings to `twitch_colorchanger.conf`:
 
 Features:
 
-- **Automatic token refresh**: Tokens are refreshed and saved automatically
+- **Automatic token lifecycle**: Forced refresh at startup then every 10 minutes if expiring (<1h) or validation fails
 - **Multi-user support**: Add multiple users to the same config file
 - **Interactive management**: Choose to use existing config, add users, or create new
 - **Environment override**: Use `TWITCH_CONF_FILE` to specify custom config file path
-- **Mixed environment and config**: Environment variables take precedence over config file
+- **Targeted precedence**: Environment overrides channels & random color flags; config file retains tokens & client credentials
 
 ### Docker Permission Notes
 
@@ -295,6 +295,17 @@ docker run -e LOG_FILE=/app/logs/bot.log -v $PWD/logs:/app/logs damastah/twitch-
 ```
 
 ---
+
+### Channel Join Reliability
+
+Each channel JOIN waits for confirmation (numeric 366). If not received within 30 seconds a single retry is issued (max 2 attempts). Final failure is logged after the second timeout.
+
+### Token Strategy
+
+On startup the bot forces a token refresh (if a refresh token exists) for a full validity window. A background task then runs every 10 minutes:
+
+- If expiry is known and < 1 hour → refresh
+- If no expiry is tracked → validate via a lightweight users endpoint call, refresh on failure
 
 ## Troubleshooting
 

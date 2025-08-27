@@ -1,21 +1,132 @@
 # Twitch Color Changer Bot - Functional Documentation
 
+Single authoritative functional specification (merged: removed duplicate updated file).
+
 ## Project Overview
 
-The Twitch Color Changer Bot is a Python-based application that automatically changes Twitch username colors after each message sent by configured users. It supports multiple users, both random hex colors (for Prime/Turbo users) and preset Twitch colors, and includes comprehensive token management with automatic refresh capabilities.
+The Twitch Color Changer Bot automatically changes a user's Twitch chat color after every message they send. It supports multiple users, random hex colors (Prime/Turbo) and preset Twitch colors (standard), robust token lifecycle management, efficient IRC connectivity, Docker deployment, and structured logging.
 
 ## Core Functionality
 
 ### Primary Features
 
-1. **Automatic Color Changing**: Changes username color after each message sent
-2. **Multi-User Support**: Runs multiple bot instances simultaneously for different users
-3. **Dual Color Modes**: Random hex colors for Prime/Turbo users, preset colors for regular users
-4. **Color Avoidance**: Ensures each color change is different from the previous one
-5. **Current Color Detection**: Initializes with user's current color to guarantee first change is different
-6. **Token Management**: Automatic token refresh with 10-minute validation intervals
-7. **IRC Connection**: Custom IRC implementation for reliable Twitch chat monitoring
-8. **Docker Support**: Containerized deployment with multi-architecture support
+1. Automatic Color Changing: Immediate trigger after each own message (no artificial delay)
+2. Multi-User Support: Multiple concurrent bot instances in one process
+3. Dual Color Modes: Random hex (Prime/Turbo) or preset Twitch colors
+4. Color Avoidance: Never repeats the last applied color consecutively
+5. Current Color Detection: Initializes from current Twitch color so first change differs
+6. Token Management: Forced startup refresh + periodic 10‑minute validation (refresh when <1h remaining or validation fails)
+7. IRC Connection: Custom client with JOIN confirmation (numeric 366) + 30s timeout and single retry
+8. Docker Support: Multi-architecture image; runs as root for broad NAS / volume compatibility
+9. Rate Limiting: Central limiter tracks Helix headers and annotates logs with remaining quota
+10. Memory Monitoring: Periodic leak detection every 5 minutes
+
+## Token Lifecycle
+
+Sequence:
+
+1. Startup: Force refresh if refresh token exists (guarantees full validity window; sets `token_expiry`).
+2. Every 600s: If `token_expiry` known and < 1 hour → refresh; else validate with `GET /helix/users`; refresh on failure.
+3. Persist refreshed tokens (access + possibly new refresh token) back to config file.
+
+Helper-based implementation (`_force_token_refresh`, `_check_expiring_token`, `_validate_token_via_api`, `_attempt_standard_refresh`) reduces complexity.
+
+## Environment vs Config Precedence
+
+- Tokens & client credentials (access, refresh, client_id, client_secret): Config file is source of truth (environment won’t overwrite existing values—safer persistence).
+- Runtime fields (channels, use_random_colors): Environment overrides config (explicit env flag wins, including disabling random colors).
+- Dual variable support: `TWITCH_USE_RANDOM_COLORS_N` (preferred) and legacy `USE_RANDOM_COLORS_N`.
+
+## Channel Join Reliability
+
+- Each JOIN tracked until RPL_ENDOFNAMES (366) received.
+- 30s timeout → one retry (max 2 attempts total) → final failure log if still unconfirmed.
+- Only success/failure events logged (no verbose interim “joining” lines).
+
+## Logging Philosophy
+
+Only durable outcomes logged to minimize noise:
+
+- Startup, user_id retrieval, initial color detection
+- JOIN success or final failure
+- Color change success (with rate limit info) or failure/timeout
+- Token expiry status, refresh actions, refresh failures
+- Significant warnings (e.g. join timeout, rate limiting, memory leak hints)
+
+Example snippet:
+
+```text
+🚀 Starting bot for username
+✅ username: Retrieved user_id: 12345678
+✅ username: Initialized with current color: #00FF7F
+✅ username successfully joined #channel1
+Color changed to #1e90ff [745/800 reqs]
+🔑 username: Token expires in 3.9 hours
+⏰ username: Token expires in less than 1 hour, refreshing...
+✅ username: Token refreshed and saved successfully
+❌ username failed to join #channel2 after 2 attempts (timeout)
+```
+
+Transitional log lines like “Changing color to …” are intentionally omitted.
+
+## Color Change Logic
+
+- Random mode: `generate_random_hex_color(exclude_color=last_color)` (HSL distribution; excludes last color)
+- Preset mode: `get_different_twitch_color(exclude_color=last_color)` ensures change among named Twitch presets
+- 10s timeout wraps `PUT /helix/chat/color`
+- On success: updates `last_color`, increments counter, appends rate-limit summary
+
+## Rate Limiting Display
+
+Appends bracketed summary after color change:
+
+- Format examples: `[745/800 reqs]`, `[45/800 reqs, reset in 52s]`, `[⚠️ 3/800 reqs, reset in 12s]`
+- Stale or missing header data indicated via placeholders
+
+## Memory Monitoring
+
+Periodic (5 min interval) leak check logs warning if object class growth surpasses heuristic thresholds; otherwise debug note.
+
+## Updated Core Methods Overview (bot.py)
+
+- `start()` – startup orchestration (forced refresh, user_id fetch, current color, IRC connect, periodic token task)
+- `_check_and_refresh_token()` – coordinator delegating to helper methods
+- `_change_color()` – main color change with timeout & rate limit integration
+- `_get_current_color()` – initialization fetch
+- `_persist_token_changes()` – saves tokens to config file
+
+## IRC (simple_irc.py) Highlights
+
+- Tracks `pending_joins` with timestamps & attempts
+- `_check_join_timeouts()` invoked each loop batch
+- Logs only success/failure
+- Own PRIVMSG triggers immediate color change scheduling (run loop or thread fallback)
+
+## Security & Deployment
+
+- Container runs as root (simplifies mounted volume permissions, especially NAS)
+- Persist only `/app/config` for token continuity
+- No UID/GID env indirection supported
+
+## Migration Notes (from earlier versions)
+
+- Remove assumptions about delayed color change (`delayed_color_change()` removed)
+- Expect forced token refresh on first run (see startup log)
+- Use `TWITCH_USE_RANDOM_COLORS_N=false` to disable random colors even if config sets true
+- Remove any legacy UID/GID or non-root adjustments (now unused)
+
+## Future Improvements (Optional Ideas)
+
+- HTTP health/metrics endpoint
+- Structured metrics export (Prometheus) for rate limits & token expiry
+- Exponential backoff for join retries beyond single second attempt
+
+## Reference & Additional Detail
+
+For deeper architectural breakdown (HTTP pooling, error taxonomy, validator internals), see `IMPLEMENTATION_GUIDE.md` and runtime examples in `README.md`.
+
+---
+Canonical functional description last updated after refactor of token management & logging simplification.
 
 ## Enhanced Features (2024 Improvements)
 
@@ -44,6 +155,7 @@ logger.log_api_request("/helix/chat/color", "PUT", user="streamername", response
 
 **Validation Categories**:
 
+- **Token Management**: Forced startup refresh plus 10‑minute validation/refresh cycle (refreshes when <1h remaining)
 - **Format Validation**: Regex patterns for usernames (3-25 chars), tokens, client credentials
 - **Security Checks**: Detects placeholder tokens, validates token formats
 - **Conflict Detection**: Duplicate usernames, overlapping channels
@@ -51,9 +163,10 @@ logger.log_api_request("/helix/chat/color", "PUT", user="streamername", response
 
 **Error Reporting**:
 
-- Errors: Critical issues preventing operation
-- Warnings: Non-critical issues that should be addressed
-- Info: Optimization recommendations
+- `_change_color()`: Executes color change via Twitch API (avoids previous color, timeout + rate limit aware)
+- `_get_current_color()`: Fetch user's current color from Twitch API for initialization
+- `_check_and_refresh_token()`: Orchestrates validation, forced & periodic refresh
+- (Removed) `delayed_color_change()`: Color changes are now triggered immediately after own messages for responsiveness
 
 ### 3. Advanced Error Handling
 
@@ -63,6 +176,11 @@ logger.log_api_request("/helix/chat/color", "PUT", user="streamername", response
 
 - `NetworkError`: Connection and HTTP-related failures
 - `AuthenticationError`: Token validation and refresh issues
+
+```text
+IRC Message → SimpleTwitchIRC.parse_message() →
+TwitchColorBot.handle_irc_message() → _change_color() (immediate) →
+Twitch API Call → Success / Failure Logging
 - `APIError`: Twitch API-specific errors with endpoint context
 - `RateLimitError`: Rate limiting with automatic retry timing
 - `ConfigurationError`: Configuration validation failures
@@ -70,25 +188,21 @@ logger.log_api_request("/helix/chat/color", "PUT", user="streamername", response
 
 **Features**:
 
+ (No "Changing color to ..." transitional line)
 - **Automatic Retries**: Exponential backoff for transient failures
 - **Error Tracking**: Frequency monitoring and alerting
 - **Contextual Information**: User, channel, API endpoint details
 - **Secure Logging**: No sensitive data (tokens) in error messages
-
-### 4. HTTP Connection Pooling
-
-**Purpose**: Optimized HTTP performance with resource management and memory leak prevention
-
 **Features**:
 
-**Performance Benefits**:
-
+- `TWITCH_USE_RANDOM_COLORS_N` / `USE_RANDOM_COLORS_N`: Boolean for hex vs preset colors (default: true). Both supported; prefixed variant preferred.
 ### 5. Memory Monitoring
 
- The container now always runs as root for simplicity and broad compatibility (including restrictive NAS mounts). Only the configuration directory is persisted via a volume. No UID/GID remapping or fallback environment variables are supported anymore.
+### Docker Security
 
-**Purpose**: Detection and prevention of memory leaks in long-running bot instances
-
+- Runs as root (simplified) for broad NAS / volume compatibility
+- Minimal base image & least external dependencies
+- Only config directory needs persistence
 **Features**:
 
 - **Periodic Leak Detection**: Automatic checks every 5 minutes during operation
@@ -107,10 +221,6 @@ logger.log_api_request("/helix/chat/color", "PUT", user="streamername", response
 - **Connection Statistics**: Session age, request count, active connections
 
 ### Architecture Components
-
-#### 1. Main Entry Point (`main.py`)
-
-- Application bootstrap and initialization
 
 - Configuration loading and validation
 

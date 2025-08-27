@@ -212,6 +212,12 @@ def _merge_config_with_env(config_users, env_users):
         username = env_user['username']
         if username in config_user_map:
             config_user = config_user_map[username]
+            # Determine if env explicitly set use_random_colors (presence of var)
+            env_has_flag = any(
+                f'{prefix}_{env_user.get("username")}' in os.environ for prefix in [
+                    'TWITCH_USE_RANDOM_COLORS', 'USE_RANDOM_COLORS'
+                ]
+            )
             merged_user = {
                 'username': config_user.get('username', env_user.get('username')),
                 'access_token': config_user.get('access_token', env_user.get('access_token', '')),
@@ -219,7 +225,8 @@ def _merge_config_with_env(config_users, env_users):
                 'client_id': config_user.get('client_id', env_user.get('client_id', '')),
                 'client_secret': config_user.get('client_secret', env_user.get('client_secret', '')),
                 'channels': env_user.get('channels', config_user.get('channels', [username])),
-                'use_random_colors': env_user.get('use_random_colors', config_user.get('use_random_colors', True))
+                # If env flag explicitly provided, override config; else keep config value
+                'use_random_colors': env_user['use_random_colors'] if env_has_flag else config_user.get('use_random_colors', env_user.get('use_random_colors', True))
             }
             print_log(f"🔄 Merged user {username}: using config file tokens, env channels/colors", bcolors.OKBLUE)
         else:
