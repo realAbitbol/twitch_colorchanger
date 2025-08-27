@@ -3,6 +3,7 @@ Simple IRC client for Twitch - based on working implementation
 """
 
 import socket
+import time
 from typing import Optional
 
 from .colors import bcolors
@@ -18,17 +19,21 @@ class SimpleTwitchIRC:
         self.token = None
         self.channels = []
         self.message_handler = None
-        
+
         # IRC connection
         self.server = 'irc.chat.twitch.tv'
         self.port = 6667
         self.sock = None
         self.running = False
         self.connected = False
-        
+
         # Message tracking
         self.message_count = 0
         self.joined_channels = set()
+        self.confirmed_channels = set()
+        self.pending_joins = {}
+        self.join_timeout = 30  # seconds to wait for RPL_ENDOFNAMES before retry/fail
+        self.max_join_attempts = 2
         
     def connect(self, token: str, username: str, channel: str) -> bool:
         """Connect to Twitch IRC with the given credentials"""
@@ -70,55 +75,42 @@ class SimpleTwitchIRC:
         if self.sock and self.connected:
             self.sock.send(f"JOIN #{channel}\r\n".encode('utf-8'))
             self.joined_channels.add(channel)
-            print_log(f"📺 {self.username} joined #{channel}", bcolors.OKBLUE)
+            # Track pending join (or increment attempts if retrying)
+            attempt = 1
+            if channel in self.pending_joins:
+                attempt = self.pending_joins[channel]['attempts'] + 1
+            self.pending_joins[channel] = {'sent_at': time.time(), 'attempts': attempt}
     
     def _parse_message(self, raw_message: str) -> Optional[dict]:
         """Parse IRC message into components"""
         try:
+            # Split line depending on presence of tags; unify variable extraction
             if raw_message.startswith('@'):
                 parts = raw_message.split(' ', 3)
-                if len(parts) >= 4:
-                    _ = parts[0]  # tags (not used in current implementation)
-                    prefix = parts[1]
-                    command = parts[2]
-                    params = parts[3]
-                else:
+                if len(parts) < 4:
                     return None
+                _, prefix, command, params = parts
             else:
                 parts = raw_message.split(' ', 2)
-                if len(parts) >= 3:
-                    prefix = parts[0]
-                    command = parts[1]
-                    params = parts[2]
-                    # No tags in this message format
-                else:
+                if len(parts) < 3:
                     return None
-            
-            if '!' in prefix:
-                sender = prefix.split('!')[0].replace(':', '')
-            else:
-                sender = prefix.replace(':', '')
-            
+                prefix, command, params = parts
+
+            sender = prefix.split('!')[0].replace(':', '') if '!' in prefix else prefix.replace(':', '')
+
             if command == 'PRIVMSG':
                 channel_msg = params.split(' :', 1)
-                if len(channel_msg) >= 2:
-                    channel = channel_msg[0].replace('#', '')
-                    message = channel_msg[1]
-                    
-                    return {
-                        'sender': sender,
-                        'channel': channel,
-                        'message': message,
-                        'command': command,
-                        'raw': raw_message
-                    }
-            elif command == '366':  # RPL_ENDOFNAMES - successful join
+                if len(channel_msg) < 2:
+                    return None
+                channel = channel_msg[0].replace('#', '')
+                message = channel_msg[1]
+                return {'sender': sender, 'channel': channel, 'message': message, 'command': command, 'raw': raw_message}
+            if command == '366':  # RPL_ENDOFNAMES - successful join
                 channel = params.split(' ')[1].replace('#', '')
+                self.confirmed_channels.add(channel)
+                self.pending_joins.pop(channel, None)
                 print_log(f"✅ {self.username} successfully joined #{channel}", bcolors.OKGREEN)
-                return None
-            
             return None
-            
         except Exception as e:
             print_log(f"⚠️ Parse error: {e}", bcolors.WARNING)
             return None
@@ -179,12 +171,50 @@ class SimpleTwitchIRC:
                     if line:
                         print_log(f"📝 Processing IRC line: {repr(line)}", bcolors.OKGREEN, debug_only=True)
                         self._process_line(line)
+                # After processing batch, check for join timeouts
+                self._check_join_timeouts()
                         
             except socket.timeout:
                 continue
             except Exception as e:
                 print_log(f"❌ Listen error: {e}", bcolors.FAIL)
                 break
+
+    def _check_join_timeouts(self):
+        """Check pending channel joins for timeouts and retry or fail."""
+        if not self.pending_joins:
+            return
+        now = time.time()
+        to_remove = []
+        for channel, info in self.pending_joins.items():
+            if self._handle_single_join_timeout(channel, info, now):
+                to_remove.append(channel)
+        for ch in to_remove:
+            self.pending_joins.pop(ch, None)
+
+    def _handle_single_join_timeout(self, channel: str, info: dict, now: float) -> bool:
+        """Handle timeout logic for a single pending JOIN.
+        Returns True if the channel should be removed from pending joins."""
+        # Still waiting
+        if (now - info['sent_at']) < self.join_timeout:
+            return False
+        attempts = info['attempts']
+        can_retry = attempts < self.max_join_attempts
+        connected = self.sock and self.connected
+        if can_retry and connected:
+            print_log(f"⚠️ {self.username} retrying join for #{channel} (attempt {attempts + 1})", bcolors.WARNING)
+            try:
+                self.sock.send(f"JOIN #{channel}\r\n".encode('utf-8'))
+                info['sent_at'] = now
+                info['attempts'] = attempts + 1
+                return False  # Keep pending
+            except Exception as e:
+                print_log(f"❌ {self.username} failed to resend JOIN for #{channel}: {e}", bcolors.FAIL)
+        elif can_retry and not connected:
+            print_log(f"❌ {self.username} cannot retry join for #{channel} (not connected)", bcolors.FAIL)
+        # Failure path
+        print_log(f"❌ {self.username} failed to join #{channel} after {attempts} attempts (timeout)", bcolors.FAIL)
+        return True
     
     def disconnect(self):
         """Disconnect from IRC"""

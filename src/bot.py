@@ -326,18 +326,21 @@ class TwitchColorBot:
             # Use static Twitch preset colors for regular users
             color = get_different_twitch_color(exclude_color=self.last_color)
         
-        # Get current rate limit status for display
-        rate_status = self._get_rate_limit_display()
-        logger.info(f"Changing color to {color}{rate_status}", user=self.username)
-        
         try:
             http_client = get_http_client()
             # Don't URL encode the color - aiohttp will handle URL encoding automatically
             # Twitch API expects colors like "#ff0000" or "red", not "%23ff0000"
             params = {'user_id': self.user_id, 'color': color}
-            _, status_code, headers = await http_client.twitch_api_request(
-                'PUT', 'chat/color', self.access_token, self.client_id, params=params
-            )
+            try:
+                _, status_code, headers = await asyncio.wait_for(
+                    http_client.twitch_api_request(
+                        'PUT', 'chat/color', self.access_token, self.client_id, params=params
+                    ),
+                    timeout=10
+                )
+            except asyncio.TimeoutError:
+                logger.error("Failed to change color (timeout)", user=self.username)
+                return
             
             # Update rate limiting info from response headers
             self.rate_limiter.update_from_headers(headers, is_user_request=True)
