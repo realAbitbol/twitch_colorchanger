@@ -39,7 +39,7 @@ def save_users_to_config(users, config_file):
     try:
         with open(config_file, 'w') as f:
             json.dump({'users': users}, f, indent=2)
-        print_log("💾 Configuration saved successfully", bcolors.OKGREEN)
+        print_log("💾 Configuration saved successfully", bcolors.OKGREEN, debug_only=True)
     except Exception as e:
         print_log(f"⚠️ Failed to save configuration: {e}", bcolors.FAIL)
 

@@ -4,7 +4,7 @@ Bot manager for handling multiple Twitch bots
 
 import asyncio
 import signal
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from .bot import TwitchColorBot
 from .colors import bcolors
@@ -23,11 +23,11 @@ class BotManager:
         
     async def start_all_bots(self):
         """Start all bots for configured users"""
-        print_log(f"\n🚀 Starting {len(self.users_config)} bot(s)...", bcolors.HEADER)
+        print_log(f"🚀 Starting {len(self.users_config)} bot(s)...", bcolors.HEADER)
         
         for i, user_config in enumerate(self.users_config, 1):
             try:
-                bot = self.create_bot(user_config, i)
+                bot = self.create_bot(user_config)
                 if bot:
                     self.bots.append(bot)
                     
@@ -40,7 +40,7 @@ class BotManager:
             return False
         
         # Start all bot tasks
-        print_log(f"\n🎯 Launching {len(self.bots)} bot task(s)...", bcolors.OKGREEN)
+        print_log(f"🎯 Launching {len(self.bots)} bot task(s)...", bcolors.OKGREEN)
         
         for bot in self.bots:
             task = asyncio.create_task(bot.start())
@@ -53,14 +53,12 @@ class BotManager:
         print_log("✅ All bots started successfully!", bcolors.OKGREEN)
         return True
     
-    def create_bot(self, user_config: Dict[str, Any], user_num: int) -> TwitchColorBot:
-        """Create a single bot instance"""
+    def create_bot(self, user_config: Dict[str, Any]) -> TwitchColorBot:
+        """Create a TwitchColorBot instance for a user"""
         username = user_config['username']
-        print_log(f"👤 Creating bot for user {user_num}: {username}", bcolors.OKCYAN)
-        
-        # Get token from config (no oauth prefix manipulation needed)
         token = user_config['access_token']
-        # Ensure oauth prefix for twitchio Bot constructor
+        
+        # Ensure token has oauth prefix
         if not token.startswith('oauth:'):
             token = f"oauth:{token}"
         
@@ -73,7 +71,8 @@ class BotManager:
                 nick=username,
                 channels=user_config['channels'],
                 use_random_colors=user_config.get('use_random_colors', True),
-                config_file=self.config_file
+                config_file=self.config_file,
+                user_id=None  # Will be fetched by the bot itself
             )
             
             print_log(f"✅ Bot created for {username}", bcolors.OKGREEN)
@@ -84,13 +83,25 @@ class BotManager:
             raise
     
     async def wait_for_completion(self):
-        """Wait for all bot tasks to complete"""
+        """Wait for all bot tasks to complete or keep running if they fail"""
         if not self.tasks:
             return
         
         try:
-            # Wait for all tasks to complete
-            await asyncio.gather(*self.tasks, return_exceptions=True)
+            # Wait for all tasks to complete, but handle failures gracefully
+            results = await asyncio.gather(*self.tasks, return_exceptions=True)
+            
+            # Check if any tasks failed due to authentication issues
+            failed_tasks = 0
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    print_log(f"⚠️ Bot task {i+1} failed: {result}", bcolors.WARNING)
+                    failed_tasks += 1
+            
+            if failed_tasks > 0:
+                print_log(f"⚠️ {failed_tasks}/{len(self.tasks)} bot tasks failed", bcolors.WARNING)
+                print_log("💡 This is usually due to invalid/expired Twitch credentials", bcolors.OKCYAN)
+                print_log("🔧 Please update your tokens in the configuration", bcolors.OKCYAN)
             
         except Exception as e:
             print_log(f"❌ Error in bot tasks: {e}", bcolors.FAIL)
@@ -106,20 +117,29 @@ class BotManager:
         print_log("\n🛑 Stopping all bots...", bcolors.WARNING)
         
         # Cancel all tasks
-        for task in self.tasks:
-            if not task.done():
-                task.cancel()
+        for i, task in enumerate(self.tasks):
+            try:
+                if task and not task.done():
+                    task.cancel()
+                    print_log(f"✅ Cancelled task {i+1}", bcolors.OKGREEN)
+            except Exception as e:
+                print_log(f"⚠️ Error cancelling task {i+1}: {e}", bcolors.WARNING)
         
         # Close all bots
-        for bot in self.bots:
+        for i, bot in enumerate(self.bots):
             try:
-                await bot.close()
+                if bot:
+                    await bot.close()
+                    print_log(f"✅ Closed bot {i+1}", bcolors.OKGREEN)
             except Exception as e:
-                print_log(f"⚠️ Error closing bot: {e}", bcolors.WARNING)
+                print_log(f"⚠️ Error closing bot {i+1}: {e}", bcolors.WARNING)
         
         # Wait for tasks to finish cancellation
         if self.tasks:
-            await asyncio.gather(*self.tasks, return_exceptions=True)
+            try:
+                await asyncio.gather(*self.tasks, return_exceptions=True)
+            except Exception as e:
+                print_log(f"⚠️ Error waiting for task completion: {e}", bcolors.WARNING)
         
         self.running = False
         print_log("✅ All bots stopped", bcolors.OKGREEN)
@@ -148,7 +168,8 @@ class BotManager:
         """Setup signal handlers for graceful shutdown"""
         def signal_handler(signum, frame):
             print_log(f"\n🔔 Received signal {signum}, initiating graceful shutdown...", bcolors.WARNING)
-            asyncio.create_task(self.stop_all_bots())
+            # Save the task to prevent garbage collection (intentionally not awaited in signal handler)
+            _ = asyncio.create_task(self.stop_all_bots())
         
         # Handle SIGINT (Ctrl+C) and SIGTERM
         signal.signal(signal.SIGINT, signal_handler)
@@ -170,10 +191,21 @@ async def run_bots(users_config: List[Dict[str, Any]], config_file: str = None):
         
         print_log("\n🎮 Bots are running! Press Ctrl+C to stop.", bcolors.HEADER)
         print_log("💬 Start chatting in your channels to see color changes!", bcolors.OKBLUE)
+        print_log("⚠️ Note: If bots exit quickly, check your Twitch credentials", bcolors.WARNING)
         
         # Keep running until interrupted
         try:
-            await manager.wait_for_completion()
+            # Instead of waiting for completion, keep running until interrupted
+            while manager.running:
+                await asyncio.sleep(1)
+                
+                # Check if all tasks have completed (likely due to errors)
+                if all(task.done() for task in manager.tasks):
+                    print_log("\n⚠️ All bot tasks have completed unexpectedly", bcolors.WARNING)
+                    print_log("💡 This usually means authentication failed or connection issues", bcolors.OKCYAN)
+                    print_log("🔧 Please verify your Twitch API credentials are valid", bcolors.OKCYAN)
+                    break
+                    
         except KeyboardInterrupt:
             print_log("\n⌨️ Keyboard interrupt received", bcolors.WARNING)
         
