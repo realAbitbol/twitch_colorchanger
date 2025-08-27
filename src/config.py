@@ -70,9 +70,13 @@ def save_users_to_config(users, config_file):
             except PermissionError:
                 pass  # Ignore permission errors on existing files
 
+        print_log(f"💾 Saving {len(users)} users to {config_file}", bcolors.OKBLUE)
+        for i, user in enumerate(users, 1):
+            print_log(f"  User {i}: {user['username']} -> use_random_colors: {user.get('use_random_colors', True)}", bcolors.OKCYAN)
+        
         with open(config_file, 'w') as f:
             json.dump({'users': users}, f, indent=2)
-        print_log("💾 Configuration saved successfully", bcolors.OKGREEN, debug_only=True)
+        print_log("💾 Configuration saved successfully", bcolors.OKGREEN)
     except Exception as e:
         print_log(f"⚠️ Failed to save configuration: {e}", bcolors.FAIL)
 
@@ -189,6 +193,10 @@ def _validate_docker_users(users):
 def _persist_docker_config(users, config_file):
     """Try to persist Docker configuration for token refresh"""
     try:
+        print_log(f"🔄 Persisting Docker config with {len(users)} users", bcolors.OKBLUE)
+        for i, user in enumerate(users, 1):
+            print_log(f"  Persisting User {i}: {user['username']} -> use_random_colors: {user.get('use_random_colors', True)}", bcolors.OKCYAN)
+        
         save_users_to_config(users, config_file)
         print_log(f"💾 Configuration backed up to {config_file} for token persistence", bcolors.OKBLUE)
     except Exception as e:
@@ -225,8 +233,8 @@ def _merge_config_with_env(config_users, env_users):
                 'client_id': config_user.get('client_id', env_user.get('client_id', '')),
                 'client_secret': config_user.get('client_secret', env_user.get('client_secret', '')),
                 'channels': env_user.get('channels', config_user.get('channels', [username])),
-                # If env flag explicitly provided, override config; else keep config value
-                'use_random_colors': env_user['use_random_colors'] if env_has_flag else config_user.get('use_random_colors', env_user.get('use_random_colors', True))
+                # Always include use_random_colors in merged result
+                'use_random_colors': env_user['use_random_colors'] if env_has_flag else config_user.get('use_random_colors', True)
             }
             if env_has_flag:
                 print_log(f"🔄 Merged user {username}: using config file tokens, env channels/colors (env random_colors override: {env_user['use_random_colors']})", bcolors.OKBLUE)
@@ -240,7 +248,11 @@ def _merge_config_with_env(config_users, env_users):
     env_usernames = {user['username'] for user in env_users}
     for config_user in config_users:
         if config_user['username'] not in env_usernames:
-            merged_users.append(config_user)
+            # Ensure config-only users have use_random_colors field
+            config_only_user = config_user.copy()
+            if 'use_random_colors' not in config_only_user:
+                config_only_user['use_random_colors'] = True  # Default value
+            merged_users.append(config_only_user)
             print_log(f"📁 Kept existing user {config_user['username']} from config file", bcolors.OKCYAN)
 
     return merged_users
