@@ -28,6 +28,10 @@ MANIFEST
 
 # Virtual environments
 .env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 .venv
 env/
 venv/
@@ -36,7 +40,7 @@ env.bak/
 venv.bak/
 .python-version
 
-# OS generated files (consolidated)
+# OS generated files
 .DS_Store
 .DS_Store?
 ._*
@@ -68,27 +72,16 @@ coverage.xml
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# pyenv
-.python-version
+# Linting and formatting caches
+.ruff_cache/
+.mypy_cache/
+.black_cache/
+.isort_cache/
 
-# Environments (consolidated)
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-.python-version
-
-# Backup files
-*.bak
-*.backup
-*.tmp
+# Package managers
+poetry.lock
+Pipfile.lock
+requirements-dev.txt
 
 # IDEs and editors
 .vscode/
@@ -96,4 +89,14 @@ venv.bak/
 *.swp
 *.swo
 *~
+
+# Backup files
+*.bak
+*.backup
+*.tmp
+
+# Runtime files
+*.pid
+*.pid.lock
+*.seed
 

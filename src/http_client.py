@@ -310,9 +310,10 @@ class HTTPClient:
             if response.content_length and response.content_length > 0:
                 try:
                     json_data = await response.json()
-                except Exception:
+                except (aiohttp.ContentTypeError, ValueError) as e:
                     # Some endpoints return empty body or non-JSON
-                    pass
+                    logger.debug(f"Non-JSON response: {e}")
+                    json_data = None
             
             return json_data, response.status, response_headers
     

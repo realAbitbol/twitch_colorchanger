@@ -421,29 +421,57 @@ class ConfigValidator:
         if not errors:
             logger.info("✅ Configuration validation passed with no issues")
             return
-        
-        # Group errors by severity
-        error_count = sum(1 for e in errors if e.severity == "error")
-        warning_count = sum(1 for e in errors if e.severity == "warning")
-        info_count = sum(1 for e in errors if e.severity == "info")
-        
-        logger.info(f"📋 Configuration validation report: {error_count} errors, {warning_count} warnings, {info_count} recommendations")
-        
-        # Print errors by severity
+
+        # Extract statistics calculation
+        stats = cls._calculate_error_statistics(errors)
+
+        # Format and display report
+        cls._display_validation_report(stats, errors)
+
+    @classmethod
+    def _calculate_error_statistics(cls, errors: List[ValidationError]) -> Dict[str, Any]:
+        """Calculate error statistics"""
+        return {
+            'error_count': sum(1 for e in errors if e.severity == "error"),
+            'warning_count': sum(1 for e in errors if e.severity == "warning"),
+            'info_count': sum(1 for e in errors if e.severity == "info"),
+            'total_count': len(errors)
+        }
+
+    @classmethod
+    def _display_validation_report(cls, stats: Dict[str, Any], errors: List[ValidationError]) -> None:
+        """Display formatted validation report"""
+        cls._log_report_summary(stats)
+        cls._log_errors_by_severity(errors)
+        cls._log_final_assessment(stats)
+
+    @classmethod
+    def _log_report_summary(cls, stats: Dict[str, Any]) -> None:
+        """Log report summary"""
+        logger.info(f"📋 Configuration validation report: {stats['error_count']} errors, {stats['warning_count']} warnings, {stats['info_count']} recommendations")
+
+    @classmethod
+    def _log_errors_by_severity(cls, errors: List[ValidationError]) -> None:
+        """Log errors grouped by severity"""
         for severity in ["error", "warning", "info"]:
             severity_errors = [e for e in errors if e.severity == severity]
-            if not severity_errors:
-                continue
-            
-            severity_icon = {"error": "❌", "warning": "⚠️", "info": "💡"}[severity]
-            logger.info(f"\n{severity_icon} {severity.upper()}S:")
-            
-            for error in severity_errors:
-                logger.info(f"  • {error.field}: {error.message}")
-        
-        if error_count > 0:
+            if severity_errors:
+                cls._log_severity_group(severity, severity_errors)
+
+    @classmethod
+    def _log_severity_group(cls, severity: str, errors: List[ValidationError]) -> None:
+        """Log a group of errors with same severity"""
+        severity_icon = {"error": "❌", "warning": "⚠️", "info": "💡"}[severity]
+        logger.info(f"\n{severity_icon} {severity.upper()}S:")
+        for error in errors:
+            logger.info(f"  • {error.field}: {error.message}")
+
+    @classmethod
+    def _log_final_assessment(cls, stats: Dict[str, Any]) -> None:
+        """Log final assessment based on error counts"""
+        if stats['error_count'] > 0:
             logger.error("Configuration validation failed due to errors. Please fix the issues above.")
-        elif warning_count > 0:
+        elif stats['warning_count'] > 0:
             logger.warning("Configuration validation passed with warnings. Consider addressing the issues above.")
         else:
             logger.info("Configuration validation passed with recommendations.")

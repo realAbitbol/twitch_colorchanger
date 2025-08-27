@@ -41,6 +41,10 @@ venv/
 env/
 ENV/
 .env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
 # IDEs and editors
 .vscode/
@@ -61,6 +65,8 @@ Thumbs.db
 # Logs
 *.log
 logs/
+pip-log.txt
+pip-delete-this-directory.txt
 
 # Testing
 .pytest_cache/
@@ -68,11 +74,33 @@ logs/
 htmlcov/
 .tox/
 .nox/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# Linting and formatting caches
+.ruff_cache/
+.mypy_cache/
+.black_cache/
+.isort_cache/
+
+# Package managers
+poetry.lock
+Pipfile.lock
+requirements-dev.txt
 
 # Backup files
 *.bak
 *.backup
 *.tmp
+
+# Runtime files
+*.pid
+*.pid.lock
+*.seed
 
 # Other
 node_modules/

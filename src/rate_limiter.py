@@ -53,50 +53,69 @@ class TwitchRateLimiter:
     def update_from_headers(self, headers: Dict[str, str], is_user_request: bool = True):
         """
         Update rate limit info from API response headers
-        
+
         Args:
             headers: Response headers from Twitch API
             is_user_request: True if request used user access token, False for app token
         """
         try:
             # Debug: Show all headers that might contain rate limit info (debug mode only)
-            bucket_key = self._get_bucket_key(is_user_request)
-            rate_headers = {k: v for k, v in headers.items() if 'ratelimit' in k.lower()}
-            if rate_headers:
-                print_log(f"🔍 {bucket_key}: API Headers: {rate_headers}", bcolors.OKBLUE, debug_only=True)
-            else:
-                print_log(f"⚠️ {bucket_key}: No rate limit headers found in response", bcolors.WARNING, debug_only=True)
-            
-            # Extract rate limit headers (case-insensitive)
-            limit = headers.get('ratelimit-limit') or headers.get('Ratelimit-Limit')
-            remaining = headers.get('ratelimit-remaining') or headers.get('Ratelimit-Remaining')
-            reset = headers.get('ratelimit-reset') or headers.get('Ratelimit-Reset')
-            
-            if limit and remaining and reset:
-                rate_info = RateLimitInfo(
-                    limit=int(limit),
-                    remaining=int(remaining),
-                    reset_timestamp=float(reset),
-                    last_updated=time.time()
-                )
-                
+            self._log_rate_limit_headers(headers, is_user_request)
+
+            # Parse rate limit information from headers
+            rate_info = self._parse_rate_limit_headers(headers)
+            if rate_info:
                 # Update appropriate bucket
-                if is_user_request:
-                    self.user_bucket = rate_info
-                else:
-                    self.app_bucket = rate_info
-                
-                bucket_key = self._get_bucket_key(is_user_request)
-                reset_in = max(0, rate_info.reset_timestamp - time.time())
-                print_log(
-                    f"🔄 {bucket_key}: Rate limit updated - {remaining}/{limit} points remaining "
-                    f"(resets in {reset_in:.0f}s)", 
-                    bcolors.OKBLUE, 
-                    debug_only=True
-                )
-                
+                self._update_rate_limit_bucket(rate_info, is_user_request)
+                # Log successful update
+                self._log_rate_limit_update(rate_info, is_user_request)
+
         except (ValueError, TypeError) as e:
-            print_log(f"⚠️ Failed to parse rate limit headers: {e}", bcolors.WARNING, debug_only=True)
+            bucket_key = self._get_bucket_key(is_user_request)
+            print_log(f"⚠️ {bucket_key}: Failed to parse rate limit headers: {e}", bcolors.WARNING, debug_only=True)
+
+    def _log_rate_limit_headers(self, headers: Dict[str, str], is_user_request: bool) -> None:
+        """Log rate limit headers for debugging"""
+        bucket_key = self._get_bucket_key(is_user_request)
+        rate_headers = {k: v for k, v in headers.items() if 'ratelimit' in k.lower()}
+        if rate_headers:
+            print_log(f"🔍 {bucket_key}: API Headers: {rate_headers}", bcolors.OKBLUE, debug_only=True)
+        else:
+            print_log(f"⚠️ {bucket_key}: No rate limit headers found in response", bcolors.WARNING, debug_only=True)
+
+    def _parse_rate_limit_headers(self, headers: Dict[str, str]) -> Optional[RateLimitInfo]:
+        """Parse rate limit headers into RateLimitInfo object"""
+        # Extract rate limit headers (case-insensitive)
+        limit = headers.get('ratelimit-limit') or headers.get('Ratelimit-Limit')
+        remaining = headers.get('ratelimit-remaining') or headers.get('Ratelimit-Remaining')
+        reset = headers.get('ratelimit-reset') or headers.get('Ratelimit-Reset')
+
+        if limit and remaining and reset:
+            return RateLimitInfo(
+                limit=int(limit),
+                remaining=int(remaining),
+                reset_timestamp=float(reset),
+                last_updated=time.time()
+            )
+        return None
+
+    def _update_rate_limit_bucket(self, rate_info: RateLimitInfo, is_user_request: bool) -> None:
+        """Update the appropriate rate limit bucket"""
+        if is_user_request:
+            self.user_bucket = rate_info
+        else:
+            self.app_bucket = rate_info
+
+    def _log_rate_limit_update(self, rate_info: RateLimitInfo, is_user_request: bool) -> None:
+        """Log successful rate limit update"""
+        bucket_key = self._get_bucket_key(is_user_request)
+        reset_in = max(0, rate_info.reset_timestamp - time.time())
+        print_log(
+            f"🔄 {bucket_key}: Rate limit updated - {rate_info.remaining}/{rate_info.limit} points remaining "
+            f"(resets in {reset_in:.0f}s)",
+            bcolors.OKBLUE,
+            debug_only=True
+        )
     
     def _calculate_delay(self, bucket: RateLimitInfo, points_needed: int = 1) -> float:
         """

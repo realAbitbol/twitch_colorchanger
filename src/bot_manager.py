@@ -162,7 +162,7 @@ class BotManager:
     
     def setup_signal_handlers(self):
         """Setup signal handlers for graceful shutdown"""
-        def signal_handler(signum, frame):
+        def signal_handler(signum, _frame):
             print_log(f"\n🔔 Received signal {signum}, initiating graceful shutdown...", bcolors.WARNING)
             # Save the task to prevent garbage collection (intentionally not awaited in signal handler)
             _ = asyncio.create_task(self._stop_all_bots())

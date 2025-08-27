@@ -256,39 +256,54 @@ class ErrorHandler:
     
     def _default_retry_logic(self, error: Exception, context: ErrorContext) -> bool:
         """Default retry logic for common error scenarios"""
-        # Network errors: retry for temporary issues
-        if context.category == ErrorCategory.NETWORK:
-            if context.additional_info and context.additional_info.get('status_code'):
-                status_code = context.additional_info['status_code']
-                # Retry on server errors but not client errors
-                return 500 <= status_code < 600
-            return True  # Retry network errors without status codes
-        
-        # Rate limit errors: always retry after waiting
-        if context.category == ErrorCategory.RATE_LIMIT:
-            return True
-        
-        # Authentication errors: don't retry invalid tokens
-        if context.category == ErrorCategory.AUTH:
-            return False
-        
-        # API errors: retry on server errors
-        if context.category == ErrorCategory.API:
-            if context.additional_info and context.additional_info.get('status_code'):
-                status_code = context.additional_info['status_code']
-                return 500 <= status_code < 600
-            return False
-        
-        # IRC errors: retry connection issues
-        if context.category == ErrorCategory.IRC:
-            return True
-        
-        # Configuration errors: don't retry
-        if context.category == ErrorCategory.CONFIG:
-            return False
-        
-        # Default: don't retry unknown errors
+        # Create handler mapping for different error categories
+        retry_handlers = {
+            ErrorCategory.NETWORK: self._handle_network_retry,
+            ErrorCategory.RATE_LIMIT: self._handle_rate_limit_retry,
+            ErrorCategory.AUTH: self._handle_auth_retry,
+            ErrorCategory.API: self._handle_api_retry,
+            ErrorCategory.IRC: self._handle_irc_retry,
+            ErrorCategory.CONFIG: self._handle_config_retry,
+        }
+
+        # Get the appropriate handler, default to no retry for unknown categories
+        handler = retry_handlers.get(context.category, lambda e, c: False)
+        return handler(error, context)
+
+    def _handle_network_retry(self, error: Exception, context: ErrorContext) -> bool:
+        """Handle network error retry logic"""
+        if context.additional_info and context.additional_info.get('status_code'):
+            status_code = context.additional_info['status_code']
+            # Retry on server errors but not client errors
+            return self._should_retry_status_code(status_code)
+        return True  # Retry network errors without status codes
+
+    def _handle_rate_limit_retry(self, error: Exception, context: ErrorContext) -> bool:
+        """Handle rate limit error retry logic"""
+        return True  # Always retry after waiting
+
+    def _handle_auth_retry(self, error: Exception, context: ErrorContext) -> bool:
+        """Handle authentication error retry logic"""
+        return False  # Don't retry invalid tokens
+
+    def _handle_api_retry(self, error: Exception, context: ErrorContext) -> bool:
+        """Handle API error retry logic"""
+        if context.additional_info and context.additional_info.get('status_code'):
+            status_code = context.additional_info['status_code']
+            return self._should_retry_status_code(status_code)
         return False
+
+    def _handle_irc_retry(self, error: Exception, context: ErrorContext) -> bool:
+        """Handle IRC error retry logic"""
+        return True  # Retry connection issues
+
+    def _handle_config_retry(self, error: Exception, context: ErrorContext) -> bool:
+        """Handle configuration error retry logic"""
+        return False  # Don't retry configuration errors
+
+    def _should_retry_status_code(self, status_code: int) -> bool:
+        """Determine if we should retry based on HTTP status code"""
+        return 500 <= status_code < 600  # Retry on server errors
     
     def get_error_stats(self) -> Dict[str, int]:
         """Get error statistics for monitoring"""

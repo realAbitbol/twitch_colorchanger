@@ -53,7 +53,7 @@ async def main():
 
 def setup_signal_handlers():
     """Setup signal handlers for graceful shutdown"""
-    def signal_handler(signum, frame):
+    def signal_handler(signum, _frame):
         logger.info(f"Received signal {signum}, initiating graceful shutdown...")
         # This will cause KeyboardInterrupt to be raised in the main loop
         raise KeyboardInterrupt()
