@@ -58,22 +58,26 @@ def prompt_for_user():
     print_log("👤 Enter user details:", bcolors.OKCYAN)
     print_log("="*50, bcolors.OKCYAN)
     
-    username = input("👤 Username: ").strip()
-    access_token = input("🎫 Access Token: ").strip()
-    refresh_token = input("🔄 Refresh Token: ").strip()
-    client_id = input("📱 Client ID: ").strip()
-    client_secret = input("🔒 Client Secret: ").strip()
-    channels_input = input("📺 Channels (comma-separated): ").strip()
-    channels = process_channels(channels_input)
-    use_random_colors_input = input("🎲 Use random hex colors? [Y/n]: ").strip().lower()
-    use_random_colors = use_random_colors_input != 'n'
-    
-    return {
-        'username': username,
-        'access_token': access_token,
-        'refresh_token': refresh_token,
-        'client_id': client_id,
-        'client_secret': client_secret,
-        'channels': channels,
-        'use_random_colors': use_random_colors
-    }
+    try:
+        username = input("👤 Username: ").strip()
+        access_token = input("🎫 Access Token: ").strip()
+        refresh_token = input("🔄 Refresh Token: ").strip()
+        client_id = input("📱 Client ID: ").strip()
+        client_secret = input("🔒 Client Secret: ").strip()
+        channels_input = input("📺 Channels (comma-separated): ").strip()
+        channels = process_channels(channels_input)
+        use_random_colors_input = input("🎲 Use random hex colors? [Y/n]: ").strip().lower()
+        use_random_colors = use_random_colors_input != 'n'
+        
+        return {
+            'username': username,
+            'access_token': access_token,
+            'refresh_token': refresh_token,
+            'client_id': client_id,
+            'client_secret': client_secret,
+            'channels': channels,
+            'use_random_colors': use_random_colors
+        }
+    except (EOFError, KeyboardInterrupt):
+        print_log("\n⚠️ Input interrupted, cannot create user configuration", bcolors.FAIL)
+        raise EOFError("User input was interrupted")

@@ -194,7 +194,12 @@ def _add_new_user_to_config(valid_users, config_file):
     """Add a new user to existing configuration"""
     print_log("➕ Adding new user to existing configuration", bcolors.OKBLUE)
     from .utils import prompt_for_user
-    new_user = prompt_for_user()
+    
+    try:
+        new_user = prompt_for_user()
+    except EOFError:
+        print_log("⚠️ User input interrupted, returning existing configuration", bcolors.WARNING)
+        return valid_users
     
     if not validate_user_config(new_user):
         print_log(INVALID_CONFIG_MSG, bcolors.FAIL)
@@ -209,7 +214,12 @@ def _create_new_configuration(config_file):
     """Create new configuration from user input"""
     print_log("🆕 Creating new configuration", bcolors.OKBLUE)
     from .utils import prompt_for_user
-    user_config = prompt_for_user()
+    
+    try:
+        user_config = prompt_for_user()
+    except EOFError:
+        print_log("❌ Cannot create configuration without user input", bcolors.FAIL)
+        sys.exit(1)
     
     if not validate_user_config(user_config):
         print_log(INVALID_CONFIG_MSG, bcolors.FAIL)
@@ -223,7 +233,12 @@ def _create_new_configuration(config_file):
 def _handle_existing_config(valid_users, config_file):
     """Handle existing configuration choices"""
     _display_existing_config(valid_users)
-    choice = input("\n🤔 Use existing config? (y/n/add): ").strip().lower()
+    
+    try:
+        choice = input("\n🤔 Use existing config? (y/n/add): ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print_log("\n⚠️ Input interrupted, using existing configuration", bcolors.WARNING)
+        return valid_users
     
     if choice in ('y', 'yes'):
         return valid_users

@@ -13,6 +13,7 @@ from .colors import bcolors, generate_random_hex_color, get_different_twitch_col
 from .utils import print_log
 from .simple_irc import SimpleTwitchIRC
 from .config import update_user_in_config
+from .rate_limiter import get_rate_limiter
 
 
 class TwitchColorBot:
@@ -47,6 +48,9 @@ class TwitchColorBot:
         
         # Color tracking to avoid repeating the same color
         self.last_color = None
+        
+        # Rate limiter for API requests
+        self.rate_limiter = get_rate_limiter(self.client_id, self.username)
     
     async def start(self):
         """Start the bot"""
@@ -114,20 +118,15 @@ class TwitchColorBot:
         # Only react to our own messages
         if sender.lower() == self.username.lower():
             self.messages_sent += 1
-            # Schedule color change in the event loop
+            # Schedule color change in the event loop (no more fixed delays!)
             try:
                 loop = asyncio.get_event_loop()
-                _ = asyncio.run_coroutine_threadsafe(self._delayed_color_change(), loop)
+                _ = asyncio.run_coroutine_threadsafe(self._change_color(), loop)
                 # Don't wait for completion to avoid blocking the IRC thread
             except RuntimeError:
                 # Fallback: run in new thread
                 import threading
-                threading.Thread(target=lambda: asyncio.run(self._delayed_color_change()), daemon=True).start()
-    
-    async def _delayed_color_change(self):
-        """Delay color change by 1-3 seconds to avoid rate limiting"""
-        await asyncio.sleep(random.uniform(1, 3))  # 1-3 second delay
-        await self._change_color()
+                threading.Thread(target=lambda: asyncio.run(self._change_color()), daemon=True).start()
     
     async def _periodic_token_check(self):
         """Periodically check and refresh token if needed"""
@@ -195,6 +194,9 @@ class TwitchColorBot:
     
     async def _get_user_info(self):
         """Retrieve user information from Twitch API"""
+        # Wait for rate limiting before making request
+        await self.rate_limiter.wait_if_needed('get_user_info', is_user_request=True)
+        
         headers = {
             'Authorization': f'Bearer {self.access_token}',
             'Client-Id': self.client_id
@@ -204,10 +206,15 @@ class TwitchColorBot:
             timeout = aiohttp.ClientTimeout(total=10)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get('https://api.twitch.tv/helix/users', headers=headers) as response:
+                    # Update rate limiting info from response headers
+                    self.rate_limiter.update_from_headers(dict(response.headers), is_user_request=True)
+                    
                     if response.status == 200:
                         data = await response.json()
                         if data.get('data'):
                             return data['data'][0]
+                    elif response.status == 429:
+                        self.rate_limiter.handle_429_error(dict(response.headers), is_user_request=True)
                     return None
         except Exception as e:
             print_log(f'⚠️ Error getting user info: {e}', bcolors.WARNING)
@@ -215,6 +222,9 @@ class TwitchColorBot:
     
     async def _get_current_color(self):
         """Get the user's current color from Twitch API"""
+        # Wait for rate limiting before making request
+        await self.rate_limiter.wait_if_needed('get_current_color', is_user_request=True)
+        
         headers = {
             'Authorization': f'Bearer {self.access_token}',
             'Client-Id': self.client_id
@@ -225,6 +235,9 @@ class TwitchColorBot:
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 url = f'https://api.twitch.tv/helix/chat/color?user_id={self.user_id}'
                 async with session.get(url, headers=headers) as response:
+                    # Update rate limiting info from response headers
+                    self.rate_limiter.update_from_headers(dict(response.headers), is_user_request=True)
+                    
                     if response.status == 200:
                         data = await response.json()
                         if data.get('data') and len(data['data']) > 0:
@@ -232,6 +245,8 @@ class TwitchColorBot:
                             if color:
                                 print_log(f"🎨 {self.username}: Current color is {color}", bcolors.OKBLUE)
                                 return color
+                    elif response.status == 429:
+                        self.rate_limiter.handle_429_error(dict(response.headers), is_user_request=True)
                     # If no color set or API call fails, return None
                     print_log(f"🎨 {self.username}: No current color set (using default)", bcolors.OKBLUE)
                     return None
@@ -258,14 +273,19 @@ class TwitchColorBot:
     
     async def _change_color(self):
         """Change the username color via Twitch API"""
+        # Wait for rate limiting before making request  
+        await self.rate_limiter.wait_if_needed('change_color', is_user_request=True)
+        
         if self.use_random_colors:
             # Use hex colors for Prime/Turbo users
             color = generate_random_hex_color(exclude_color=self.last_color)
         else:
             # Use static Twitch preset colors for regular users
             color = get_different_twitch_color(exclude_color=self.last_color)
-            
-        print_log(f"🎨 {self.username}: Changing color to {color}", bcolors.OKBLUE)
+        
+        # Get current rate limit status for display
+        rate_status = self._get_rate_limit_display()
+        print_log(f"🎨 {self.username}: Changing color to {color}{rate_status}", bcolors.OKBLUE)
         
         # URL encode the color for hex colors (# becomes %23)
         from urllib.parse import quote
@@ -281,15 +301,52 @@ class TwitchColorBot:
             timeout = aiohttp.ClientTimeout(total=10)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.put(url, headers=headers) as response:
+                    # Update rate limiting info from response headers
+                    response_headers = dict(response.headers)
+                    self.rate_limiter.update_from_headers(response_headers, is_user_request=True)
+                    
                     if response.status == 204:
                         self.colors_changed += 1
                         self.last_color = color  # Store the successfully applied color
-                        print_log(f"✅ {self.username}: Color changed to {color}", bcolors.OKGREEN)
+                        rate_status = self._get_rate_limit_display()
+                        print_log(f"✅ {self.username}: Color changed to {color}{rate_status}", bcolors.OKGREEN)
+                    elif response.status == 429:
+                        self.rate_limiter.handle_429_error(dict(response.headers), is_user_request=True)
+                        print_log(f"⚠️ {self.username}: Rate limited, will retry automatically", bcolors.WARNING)
                     else:
                         error_text = await response.text()
                         print_log(f"❌ {self.username}: Failed to change color. Status: {response.status}, Response: {error_text}", bcolors.FAIL)
         except Exception as e:
             print_log(f"❌ {self.username}: Error changing color: {e}", bcolors.FAIL)
+
+    def _get_rate_limit_display(self):
+        """Get rate limit information for display in messages"""
+        import time
+        
+        if not self.rate_limiter.user_bucket:
+            return " [rate limit info pending]"
+        
+        bucket = self.rate_limiter.user_bucket
+        current_time = time.time()
+        
+        # If bucket info is stale, indicate it
+        if current_time - bucket.last_updated > 60:
+            return " [rate limit info stale]"
+        
+        remaining = bucket.remaining
+        limit = bucket.limit
+        reset_in = max(0, bucket.reset_timestamp - current_time)
+        
+        # Format the rate limit info compactly
+        if remaining > 100:
+            # Plenty of requests left - show simple status
+            return f" [{remaining}/{limit} reqs]"
+        elif remaining > 10:
+            # Getting low - show with time until reset
+            return f" [{remaining}/{limit} reqs, reset in {reset_in:.0f}s]"
+        else:
+            # Very low - highlight the critical status
+            return f" [⚠️ {remaining}/{limit} reqs, reset in {reset_in:.0f}s]"
 
     async def _refresh_access_token(self):
         """Refresh the access token using the refresh token"""
