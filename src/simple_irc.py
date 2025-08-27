@@ -184,14 +184,14 @@ class SimpleTwitchIRC:
                 print_log(f"❌ Listen error: {e}", bcolors.FAIL)
                 break
     
-    async def disconnect(self):
+    def disconnect(self):
         """Disconnect from IRC"""
         self.running = False
         self.connected = False
         if self.sock:
             try:
                 self.sock.close()
-            except:
+            except (OSError, AttributeError):
                 pass
             self.sock = None
         print_log("🔌 Disconnected from IRC", bcolors.WARNING)
