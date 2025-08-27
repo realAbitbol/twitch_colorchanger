@@ -70,7 +70,7 @@ class SimpleTwitchIRC:
         if self.sock and self.connected:
             self.sock.send(f"JOIN #{channel}\r\n".encode('utf-8'))
             self.joined_channels.add(channel)
-            print_log(f"📺 Joined #{channel}", bcolors.OKBLUE)
+            print_log(f"📺 {self.username} joined #{channel}", bcolors.OKBLUE)
     
     def _parse_message(self, raw_message: str) -> Optional[dict]:
         """Parse IRC message into components"""
@@ -114,7 +114,7 @@ class SimpleTwitchIRC:
                     }
             elif command == '366':  # RPL_ENDOFNAMES - successful join
                 channel = params.split(' ')[1].replace('#', '')
-                print_log(f"✅ Successfully joined #{channel}", bcolors.OKGREEN)
+                print_log(f"✅ {self.username} successfully joined #{channel}", bcolors.OKGREEN)
                 return None
             
             return None
