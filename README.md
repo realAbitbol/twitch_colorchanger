@@ -28,7 +28,7 @@ Automatically change your Twitch username color after each message you send in c
 - **🎲 Flexible Colors**: Supports both preset Twitch colors and random hex colors (Prime/Turbo users)
 - **🔄 Universal Compatibility**: Works with Chatterino, web chat, or any IRC client
 - **🔑 Token Management**: Automatic token refresh for seamless operation
-- **🐳 Docker Ready**: Unattended mode with environment variables
+- **🐳 Docker Ready**: Multi-platform support (amd64, arm64, arm/v7, arm/v6, riscv64) with unattended mode
 - **💾 Persistent Config**: Interactive setup with configuration file persistence
 
 ### Enhanced Features
@@ -157,6 +157,14 @@ Multi-platform images are available on:
 
 - **Docker Hub**: `damastah/twitch-colorchanger:latest`
 - **GitHub Container Registry**: `ghcr.io/realabitbol/twitch-colorchanger:latest`
+
+**Supported Architectures:**
+
+- `linux/amd64` - Standard x86_64 (Intel/AMD)
+- `linux/arm64` - ARM 64-bit (Apple Silicon, modern ARM servers)
+- `linux/arm/v7` - ARM 32-bit (Raspberry Pi 2/3/4)
+- `linux/arm/v6` - ARM v6 (Raspberry Pi Zero/1)
+- `linux/riscv64` - RISC-V 64-bit
 
 #### Docker Compose
 
