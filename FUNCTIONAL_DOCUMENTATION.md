@@ -111,10 +111,15 @@ Periodic (5 min interval) leak check logs warning if object class growth surpass
 ## Updated Core Methods Overview (bot.py)
 
 - `start()` – startup orchestration (forced refresh, user_id fetch, current color, IRC connect, periodic token task)
+- `handle_irc_message()` – processes IRC messages and triggers immediate color changes
 - `_check_and_refresh_token()` – coordinator delegating to helper methods
-- `_change_color()` – main color change with timeout & rate limit integration
-- `_get_current_color()` – initialization fetch
-- `_persist_token_changes()` – saves tokens to config file
+- `_change_color()` – main color change with memory check, rate limiting, and Turbo/Prime fallback
+- `_select_color()` – chooses appropriate color based on user settings and last color
+- `_attempt_color_change()` – makes API request and handles response/errors
+- `_handle_api_error()` – processes Turbo/Prime errors and disables random colors
+- `_try_preset_color_fallback()` – fallback to preset colors when hex colors fail
+- `_get_current_color()` – initialization fetch to avoid repeating current color
+- `_persist_token_changes()` – saves tokens and settings to config file
 
 ## IRC (simple_irc.py) Highlights
 
@@ -333,7 +338,7 @@ Twitch API Call → Success / Failure Logging
 
 - `check_and_refresh_token()`: Validate and refresh authentication tokens
 
-- `delayed_color_change()`: Add random delay (1-3s) before color change
+- `_change_color()`: Main color change with memory check, rate limiting, and fallback logic
 
 **Token Management:**
 
@@ -559,7 +564,7 @@ main.py → Configuration Loading → Bot Manager → Individual Bots
 ```text
 
 IRC Message → SimpleTwitchIRC.parse_message() → 
-TwitchColorBot.handle_irc_message() → delayed_color_change() → 
+TwitchColorBot.handle_irc_message() → _change_color() → API request
 Twitch API Call → Success/Error Logging
 
 ```

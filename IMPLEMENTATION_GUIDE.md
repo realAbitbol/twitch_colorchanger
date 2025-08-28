@@ -16,9 +16,15 @@ twitch_colorchanger/
     ├── bot.py                  # Core bot logic
     ├── bot_manager.py          # Multi-bot orchestration
     ├── config.py               # Configuration management
+    ├── config_validator.py     # Configuration validation
     ├── simple_irc.py           # IRC client implementation
     ├── colors.py               # Color generation and console formatting
-    └── utils.py                # Utilities and logging
+    ├── utils.py                # Utilities and logging
+    ├── logger.py               # Structured logging
+    ├── http_client.py          # HTTP client with connection pooling
+    ├── rate_limiter.py         # API rate limiting
+    ├── memory_monitor.py       # Memory leak detection
+    └── error_handling.py       # Error handling and decorators
 ```
 
 ### Step 2: Core Dependencies
@@ -208,173 +214,227 @@ class SimpleTwitchIRC:
 
 ```python
 import asyncio
-import random
 from datetime import datetime, timedelta
-import aiohttp
-from urllib.parse import quote
+from typing import List
+
+from .colors import bcolors, generate_random_hex_color, get_different_twitch_color
+from .utils import print_log
+from .logger import logger
+from .simple_irc import SimpleTwitchIRC
+from .config import update_user_in_config, disable_random_colors_for_user
+from .rate_limiter import get_rate_limiter
+from .http_client import get_http_client
+from .error_handling import with_error_handling, ErrorCategory, ErrorSeverity, APIError
+from .memory_monitor import check_memory_leaks
+
+# Constants
+CHAT_COLOR_ENDPOINT = 'chat/color'
 
 class TwitchColorBot:
-    def __init__(self, token: str, refresh_token: str, client_id: str, 
-                 client_secret: str, nick: str, channels: list, 
-                 use_random_colors: bool = True, config_file: str = None, user_id: str = None):
+    """Bot that changes Twitch username colors after each message"""
+    
+    OAUTH_PREFIX = 'oauth:'
+    
+    def __init__(self, token: str, refresh_token: str, client_id: str, client_secret: str, 
+                 nick: str, channels: List[str], use_random_colors: bool = True, config_file: str = None,
+                 user_id: str = None):
+        # User credentials
         self.username = nick
-        self.access_token = token.replace('oauth:', '')
+        self.access_token = token.replace(self.OAUTH_PREFIX, '') if token.startswith(self.OAUTH_PREFIX) else token
         self.refresh_token = refresh_token
         self.client_id = client_id
         self.client_secret = client_secret
         self.user_id = user_id
+        self.token_expiry = None
+        
+        # Bot settings
         self.channels = channels
         self.use_random_colors = use_random_colors
         self.config_file = config_file
+        
+        # IRC connection
         self.irc = None
         self.running = False
+        
+        # Statistics
         self.messages_sent = 0
         self.colors_changed = 0
+        
+        # Color tracking to avoid repeating the same color
+        self.last_color = None
+        
+        # Rate limiter for API requests
+        self.rate_limiter = get_rate_limiter(self.client_id, self.username)
+        
+        # Memory monitoring
+        self.last_memory_check = datetime.now()
+        self.memory_check_interval = timedelta(minutes=5)  # Check every 5 minutes
     
     async def start(self):
+        """Start the bot"""
+        print_log(f"🚀 Starting bot for {self.username}", bcolors.OKBLUE)
         self.running = True
-        await self.check_and_refresh_token()
-        
-        # Get user_id if not set
-
+        # Force a token refresh at launch (if refresh token available) to ensure fresh 4h window
+        await self._check_and_refresh_token(force=True)
+            
+        # Fetch user_id if not set
         if not self.user_id:
-            user_info = await self.get_user_info()
+            user_info = await self._get_user_info()
             if user_info and 'id' in user_info:
                 self.user_id = user_info['id']
+                print_log(f"✅ {self.username}: Retrieved user_id: {self.user_id}", bcolors.OKGREEN)
+            else:
+                print_log(f"❌ {self.username}: Failed to retrieve user_id", bcolors.FAIL)
+                return
         
-        # Setup IRC
-
-        from .simple_irc import SimpleTwitchIRC
+        # Get current color to avoid repeating it on first change
+        current_color = await self._get_current_color()
+        if current_color:
+            self.last_color = current_color
+            print_log(f"✅ {self.username}: Initialized with current color: {current_color}", bcolors.OKGREEN)
+        
+        # Create IRC connection
         self.irc = SimpleTwitchIRC()
         self.irc.connect(self.access_token, self.username, self.channels[0])
         
+        # Join all configured channels
         for channel in self.channels:
             self.irc.join_channel(channel)
         
+        # Set up message handler
         self.irc.set_message_handler(self.handle_irc_message)
         
         # Start background tasks
-
         token_task = asyncio.create_task(self._periodic_token_check())
+        
+        # Run IRC listening in executor since it's not async
         loop = asyncio.get_event_loop()
         irc_task = loop.run_in_executor(None, self.irc.listen)
         
-        await asyncio.gather(token_task, irc_task, return_exceptions=True)
+        try:
+            # Wait for either task to complete
+            await asyncio.gather(token_task, irc_task, return_exceptions=True)
+        except KeyboardInterrupt:
+            print_log("🛑 Shutting down bot...", bcolors.WARNING)
+        finally:
+            await self.stop()
     
     def handle_irc_message(self, sender: str, channel: str, message: str):
+        """Handle IRC messages from SimpleTwitchIRC"""
+        # Only react to our own messages
         if sender.lower() == self.username.lower():
             self.messages_sent += 1
+            # Schedule color change in the event loop (no delays!)
             try:
                 loop = asyncio.get_event_loop()
-                asyncio.run_coroutine_threadsafe(self.delayed_color_change(), loop)
+                _ = asyncio.run_coroutine_threadsafe(self._change_color(), loop)
+                # Don't wait for completion to avoid blocking the IRC thread
             except RuntimeError:
+                # Fallback: run in new thread
                 import threading
-                threading.Thread(target=lambda: asyncio.run(self.change_color()), daemon=True).start()
+                threading.Thread(target=lambda: asyncio.run(self._change_color()), daemon=True).start()
     
-    async def delayed_color_change(self):
-        await asyncio.sleep(random.uniform(1, 3))  # Random delay
-
-        await self.change_color()
+    async def _change_color(self):
+        """Change the username color via Twitch API"""
+        # Check for memory leaks periodically
+        if self._should_check_memory():
+            self._check_memory_leaks()
+        
+        # Wait for rate limiting before making request  
+        await self.rate_limiter.wait_if_needed('change_color', is_user_request=True)
+        
+        color = self._select_color()
+        
+        try:
+            success = await self._attempt_color_change(color)
+            if not success and self.use_random_colors:
+                # Try fallback to preset colors if random colors failed due to Turbo/Prime requirement
+                await self._try_preset_color_fallback()
+        except Exception as e:
+            logger.error(f"Error changing color: {e}", exc_info=True, user=self.username)
     
-    async def change_color(self):
+    def _select_color(self):
+        """Select the appropriate color based on user settings"""
         if self.use_random_colors:
-            from .colors import generate_random_hex_color
-            color = generate_random_hex_color()
+            # Use hex colors for Prime/Turbo users
+            return generate_random_hex_color(exclude_color=self.last_color)
         else:
-            from .colors import get_twitch_colors
-            color = random.choice(get_twitch_colors())
-        
-        # URL encode for API
-
-        encoded_color = quote(color, safe='')
-        url = f'https://api.twitch.tv/helix/chat/color?user_id={self.user_id}&color={encoded_color}'
-        headers = {
-            'Authorization': f'Bearer {self.access_token}',
-            'Client-Id': self.client_id
-        }
-        
+            # Use static Twitch preset colors for regular users
+            return get_different_twitch_color(exclude_color=self.last_color)
+    
+    async def _attempt_color_change(self, color):
+        """Attempt to change color and handle the response"""
         try:
-            timeout = aiohttp.ClientTimeout(total=10)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.put(url, headers=headers) as response:
-                    if response.status == 204:
-                        self.colors_changed += 1
-                        print(f"✅ {self.username}: Color changed to {color}")
-                    else:
-                        error_text = await response.text()
-                        # Check for Turbo/Prime requirement error
-                        if ("Turbo or Prime user" in error_text or "Hex color code" in error_text) and self.use_random_colors:
-                            print(f"⚠️ {self.username}: Requires Turbo/Prime for hex colors. Switching to preset colors.")
-                            await self._handle_turbo_prime_fallback()
-                        else:
-                            print(f"❌ {self.username}: Failed to change color. Status: {response.status}")
-        except Exception as e:
-            print(f"❌ {self.username}: Error changing color: {e}")
+            http_client = get_http_client()
+            params = {'user_id': self.user_id, 'color': color}
+            
+            try:
+                _, status_code, headers = await asyncio.wait_for(
+                    http_client.twitch_api_request(
+                        'PUT', CHAT_COLOR_ENDPOINT, self.access_token, self.client_id, params=params
+                    ),
+                    timeout=10
+                )
+            except asyncio.TimeoutError:
+                logger.error("Failed to change color (timeout)", user=self.username)
+                return False
+            
+            # Update rate limiting info from response headers
+            self.rate_limiter.update_from_headers(headers, is_user_request=True)
+            
+            return self._handle_color_change_response(status_code, color)
+            
+        except APIError as e:
+            return self._handle_api_error(e)
     
-    async def _handle_turbo_prime_fallback(self):
-        """Handle fallback to preset colors when user lacks Turbo/Prime"""
-        # Disable random colors for this user
-        self.use_random_colors = False
-        
-        # Save the setting to config file
-        if self.config_file:
-            from .config import disable_random_colors_for_user
-            disable_random_colors_for_user(self.username, self.config_file)
-        
-        # Try again with preset colors
-        from .colors import get_twitch_colors
-        color = random.choice(get_twitch_colors())
-        
-        # URL encode for API
-        encoded_color = quote(color, safe='')
-        url = f'https://api.twitch.tv/helix/chat/color?user_id={self.user_id}&color={encoded_color}'
-        headers = {
-            'Authorization': f'Bearer {self.access_token}',
-            'Client-Id': self.client_id
-        }
-        
+    def _handle_api_error(self, e):
+        """Handle API errors, specifically the Turbo/Prime requirement error"""
+        error_text = str(e)
+        if ("Turbo or Prime user" in error_text or "Hex color code" in error_text) and self.use_random_colors:
+            logger.warning(f"User {self.username} requires Turbo/Prime for hex colors. Disabling random colors and using preset colors.", user=self.username)
+            
+            # Disable random colors for this user
+            self.use_random_colors = False
+            
+            # Persist the change to config file
+            if self.config_file:
+                if disable_random_colors_for_user(self.username, self.config_file):
+                    logger.info(f"Disabled random colors for {self.username} in configuration", user=self.username)
+                else:
+                    logger.warning(f"Failed to persist random color setting change for {self.username}", user=self.username)
+            
+            return False  # Indicate that fallback is needed
+        else:
+            logger.error(f"Error changing color: {e}", exc_info=True, user=self.username)
+            return False
+    
+    async def _try_preset_color_fallback(self):
+        """Try changing color with preset colors as fallback"""
         try:
-            timeout = aiohttp.ClientTimeout(total=10)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.put(url, headers=headers) as response:
-                    if response.status == 204:
-                        self.colors_changed += 1
-                        print(f"✅ {self.username}: Color changed to {color} (using preset colors)")
-                    else:
-                        print(f"❌ {self.username}: Failed to change color with preset. Status: {response.status}")
-        except Exception as e:
-            print(f"❌ {self.username}: Error changing color with preset: {e}")
-    
-    async def _periodic_token_check(self):
-        while self.running:
-            await asyncio.sleep(600)  # 10 minutes
-
-            if self.running:
-                await self.check_and_refresh_token()
-    
-    async def check_and_refresh_token(self):
-        # Implementation for token validation and refresh
-
-        # Check expiry, refresh if needed, update config
-
-        pass
-    
-    async def get_user_info(self):
-        headers = {
-            'Authorization': f'Bearer {self.access_token}',
-            'Client-Id': self.client_id
-        }
-        
-        try:
-            timeout = aiohttp.ClientTimeout(total=10)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get('https://api.twitch.tv/helix/users', headers=headers) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        return data.get('data', [{}])[0] if data.get('data') else None
-        except Exception:
-            return None
-
+            color = get_different_twitch_color(exclude_color=self.last_color)
+            http_client = get_http_client()
+            params = {'user_id': self.user_id, 'color': color}
+            
+            _, status_code, headers = await asyncio.wait_for(
+                http_client.twitch_api_request(
+                    'PUT', CHAT_COLOR_ENDPOINT, self.access_token, self.client_id, params=params
+                ),
+                timeout=10
+            )
+            
+            # Update rate limiting info from response headers
+            self.rate_limiter.update_from_headers(headers, is_user_request=True)
+            
+            if status_code == 204:
+                self.colors_changed += 1
+                self.last_color = color
+                rate_status = self._get_rate_limit_display()
+                logger.info(f"Color changed to {color} (using preset colors){rate_status}", user=self.username)
+            else:
+                logger.error(f"Failed to change color with preset color. Status: {status_code}", user=self.username, status_code=status_code)
+                
+        except Exception as fallback_e:
+            logger.error(f"Error changing color with preset color fallback: {fallback_e}", exc_info=True, user=self.username)
 ```
 
 ### Step 4: Configuration Management
@@ -936,10 +996,9 @@ class TwitchColorBot:
 
 1. IRC message received → `SimpleTwitchIRC.parse_message()`
 2. If sender matches bot username → `TwitchColorBot.handle_irc_message()`
-3. Random delay 1-3 seconds → `delayed_color_change()`
-
-4. Generate color → `change_color()`
-5. API call to Twitch → Success/failure logging
+3. Immediate color change → `_change_color()` (no delays!)
+4. Generate color → `_select_color()`
+5. API call to Twitch → Success/failure logging with rate limit info
 
 #### Token Management
 
