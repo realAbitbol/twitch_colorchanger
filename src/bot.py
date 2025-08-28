@@ -16,10 +16,7 @@ from .config import (
     update_user_in_config, disable_random_colors_for_user
 )
 from .rate_limiter import get_rate_limiter
-from .error_handling import (
-    with_error_handling, ErrorCategory, ErrorSeverity, 
-    AuthenticationError, APIError
-)
+from .error_handling import APIError, simple_retry, log_error
 
 # Constants
 CHAT_COLOR_ENDPOINT = 'chat/color'
@@ -250,9 +247,12 @@ class TwitchColorBot:
             print_log(f"❌ {self.username}: Token refresh failed", bcolors.FAIL)
         return success
     
-    @with_error_handling(category=ErrorCategory.API, severity=ErrorSeverity.MEDIUM)
     async def _get_user_info(self):
         """Retrieve user information from Twitch API"""
+        return await simple_retry(self._get_user_info_impl, user=self.username)
+    
+    async def _get_user_info_impl(self):
+        """Implementation of user info retrieval"""
         # Wait for rate limiting before making request
         await self.rate_limiter.wait_if_needed('get_user_info', is_user_request=True)
         
@@ -274,21 +274,24 @@ class TwitchColorBot:
                 return None
                 
         except APIError as e:
-            if e.context and e.context.additional_info and e.context.additional_info.get('status_code') == 401:
+            if e.status_code == 401:
                 logger.warning("Token expired, attempting refresh", user=self.username)
                 if await self._check_and_refresh_token():
                     # Retry with new token
-                    return await self._get_user_info()
+                    return await self._get_user_info_impl()
                 else:
-                    raise AuthenticationError("Token refresh failed", user=self.username)
+                    raise APIError("Token refresh failed")
             raise
         except Exception as e:
             logger.error(f"Error getting user info: {e}", exc_info=True, user=self.username)
             return None
     
-    @with_error_handling(category=ErrorCategory.API, severity=ErrorSeverity.LOW)
     async def _get_current_color(self):
         """Get the user's current color from Twitch API"""
+        return await simple_retry(self._get_current_color_impl, user=self.username)
+    
+    async def _get_current_color_impl(self):
+        """Implementation of current color retrieval"""
         # Wait for rate limiting before making request
         await self.rate_limiter.wait_if_needed('get_current_color', is_user_request=True)
         
@@ -477,9 +480,12 @@ class TwitchColorBot:
             # Very low - highlight the critical status
             return f" [⚠️ {remaining}/{limit} reqs, reset in {reset_in:.0f}s]"
 
-    @with_error_handling(category=ErrorCategory.AUTH, severity=ErrorSeverity.HIGH)
     async def _refresh_access_token(self):
         """Refresh the access token using the refresh token"""
+        return await simple_retry(self._refresh_access_token_impl, user=self.username)
+    
+    async def _refresh_access_token_impl(self):
+        """Implementation of token refresh"""
         token_data = {
             'grant_type': 'refresh_token',
             'refresh_token': self.refresh_token,

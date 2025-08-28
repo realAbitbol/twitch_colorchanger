@@ -11,14 +11,12 @@ from src.config import get_configuration, print_config_summary
 from src.bot_manager import run_bots
 from src.utils import print_instructions
 from src.logger import logger
-from src.error_handling import setup_error_handlers, handle_critical_error
+from src.error_handling import log_error
 
 
 async def main():
     """Main function"""
     try:
-        # Setup error handling system
-        setup_error_handlers()
         logger.info("🚀 Starting Twitch Color Changer Bot")
         
         # Print welcome message and instructions
@@ -39,7 +37,9 @@ async def main():
     except KeyboardInterrupt:
         logger.warning("⌨️ Interrupted by user")
     except Exception as e:
-        handle_critical_error(e, "Main application error")
+        log_error("Main application error", e)
+        logger.critical(f"Critical error occurred: {e}", exc_info=True)
+        sys.exit(1)
     finally:
         # Cleanup resources
         logger.info("🏁 Application shutdown complete")
@@ -64,4 +64,6 @@ if __name__ == "__main__":
         logger.info("Application terminated by user")
         sys.exit(0)
     except Exception as e:
-        handle_critical_error(e, "Top-level error")
+        log_error("Top-level error", e)
+        logger.critical(f"Critical error occurred: {e}", exc_info=True)
+        sys.exit(1)

@@ -221,7 +221,7 @@ from .logger import logger
 from .simple_irc import SimpleTwitchIRC
 from .config import update_user_in_config, disable_random_colors_for_user
 from .rate_limiter import get_rate_limiter
-from .error_handling import with_error_handling, ErrorCategory, ErrorSeverity, APIError
+from .error_handling import APIError, simple_retry, log_error
 
 # Constants
 CHAT_COLOR_ENDPOINT = 'chat/color'
@@ -648,58 +648,44 @@ class ConfigValidator:
 
 ### Enhanced Error Handling Implementation
 
-#### Exception Hierarchy (`src/error_handling.py`)
+#### Simple Error Handling (`src/error_handling.py`)
 
 ```python
-from enum import Enum
-from typing import Optional, Dict, Any
-import time
 import asyncio
+from .logger import logger
 
-class ErrorCategory(Enum):
-    NETWORK = "network"
-    API = "api"
-    AUTHENTICATION = "authentication"
-    CONFIGURATION = "configuration"
-    IRC = "irc"
-    RATE_LIMIT = "rate_limit"
-
-class ErrorSeverity(Enum):
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    CRITICAL = "critical"
-
-class BaseError(Exception):
-    """Base exception with context"""
-    def __init__(self, message: str, category: ErrorCategory, 
-                 severity: ErrorSeverity, **context):
+class APIError(Exception):
+    """API request error with optional status code"""
+    def __init__(self, message: str, status_code: int = None):
         super().__init__(message)
-        self.category = category
-        self.severity = severity
-        self.context = context
-        self.timestamp = time.time()
+        self.status_code = status_code
 
-class NetworkError(BaseError):
-    def __init__(self, message: str, status_code: Optional[int] = None, **context):
-        super().__init__(message, ErrorCategory.NETWORK, ErrorSeverity.MEDIUM,
-                        status_code=status_code, **context)
-
-class APIError(BaseError):
-    def __init__(self, message: str, status_code: int, endpoint: str, **context):
-        super().__init__(message, ErrorCategory.API, ErrorSeverity.HIGH,
-                        status_code=status_code, endpoint=endpoint, **context)
-
-# Error handling decorator
-def with_error_handling(max_retries: int = 3, backoff_factor: float = 1.5):
-    def decorator(func):
-        async def wrapper(*args, **kwargs):
-            last_exception = None
+async def simple_retry(func, max_retries=3, delay=1, user=None):
+    """Simple retry with exponential backoff"""
+    for attempt in range(max_retries + 1):
+        try:
+            return await func()
+        except Exception as e:
+            if attempt == max_retries:
+                log_error("Max retries exceeded", e, user)
+                raise
             
-            for attempt in range(max_retries):
+            wait_time = delay * (2 ** attempt)
+            user_context = f" [user={user}]" if user else ""
+            logger.warning(f"Retry {attempt + 1}/{max_retries} in {wait_time}s{user_context}: {e}")
+            await asyncio.sleep(wait_time)
+
+def log_error(message: str, error: Exception, user: str = None):
+    """Log error with optional user context"""
+    user_context = f" [user={user}]" if user else ""
+    logger.error(f"{message}{user_context}: {error}")
+
+# Usage example
+async def some_api_call():
+    return await simple_retry(some_api_call_impl, user="username")
                 try:
                     return await func(*args, **kwargs)
-                except (NetworkError, APIError) as e:
+                except APIError as e:
                     last_exception = e
                     if attempt < max_retries - 1:
                         wait_time = backoff_factor ** attempt
@@ -715,10 +701,9 @@ def with_error_handling(max_retries: int = 3, backoff_factor: float = 1.5):
 
 # Usage in bot methods
 class TwitchColorBot:
-    @with_error_handling(max_retries=3)
     async def change_color(self):
-        # Method implementation with automatic retry
-        pass
+        # Method implementation with simple retry
+        return await simple_retry(self.change_color_impl, user=self.username)
 ```
 
 ### Simplified Integration Example
@@ -727,16 +712,19 @@ class TwitchColorBot:
 
 ```python
 from src.logger import BotLogger
-from src.error_handling import with_error_handling, APIError
+from src.error_handling import APIError, simple_retry
 import aiohttp
 
 class TwitchColorBot:
     def __init__(self, ...):
         self.logger = BotLogger(f"bot.{self.username}")
     
-    @with_error_handling(max_retries=3)
     async def change_color(self):
         """Simplified color change with direct HTTP requests"""
+        return await simple_retry(self.change_color_impl, user=self.username)
+    
+    async def change_color_impl(self):
+        """Implementation of color change"""
         # Generate color
         color = self._generate_color()
         
@@ -1012,7 +1000,7 @@ class MemoryMonitor:
 ```python
 from src.logger import BotLogger
 from src.http_client import get_http_client
-from src.error_handling import with_error_handling, APIError
+from src.error_handling import APIError, simple_retry
 from src.memory_monitor import MemoryMonitor
 
 class TwitchColorBot:
@@ -1022,9 +1010,12 @@ class TwitchColorBot:
         self.memory_monitor = MemoryMonitor()
         self.memory_monitor.set_baseline()
     
-    @with_error_handling(max_retries=3)
     async def change_color(self):
         """Enhanced color change with all improvements"""
+        return await simple_retry(self.change_color_impl, user=self.username)
+    
+    async def change_color_impl(self):
+        """Implementation of enhanced color change"""
         # Memory leak check (periodic)
         if self._should_check_memory():
             leak_report = self.memory_monitor.check_leaks()

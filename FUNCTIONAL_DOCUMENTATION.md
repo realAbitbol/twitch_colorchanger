@@ -188,25 +188,24 @@ logger.log_api_request("/helix/chat/color", "PUT", user="streamername", response
 - `_check_and_refresh_token()`: Orchestrates validation, forced & periodic refresh
 - (Removed) `delayed_color_change()`: Color changes are now triggered immediately after own messages for responsiveness
 
-### 3. Advanced Error Handling
+### 3. Simple Error Handling
 
-**Purpose**: Resilient operation with automatic recovery and detailed error categorization
+**Purpose**: Reliable operation with automatic retry and clear error logging
 
 **Exception Types**:
 
-- `NetworkError`: Connection and HTTP-related failures
-- `AuthenticationError`: Token validation and refresh issues
+- `APIError`: Twitch API errors with status codes (preserves Turbo/Prime detection)
 
 ```text
 IRC Message → SimpleTwitchIRC.parse_message() →
 TwitchColorBot.handle_irc_message() → _change_color() (immediate) →
 Twitch API Call → Success / Failure Logging
-- `APIError`: Twitch API-specific errors with endpoint context
-- `RateLimitError`: Rate limiting with automatic retry timing
-- `ConfigurationError`: Configuration validation failures
-- `IRCError`: IRC connection and message processing errors
 
 **Features**:
+
+- Simple retry mechanism with exponential backoff
+- User context logging for debugging
+- Preserved Turbo/Prime error detection for automatic fallback
 
  (No "Changing color to ..." transitional line)
 - **Automatic Retries**: Exponential backoff for transient failures
