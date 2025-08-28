@@ -2,6 +2,7 @@
 
 [![Build and Push Docker Images](https://github.com/realAbitbol/twitch_colorchanger/actions/workflows/docker-build.yml/badge.svg)](https://github.com/realAbitbol/twitch_colorchanger/actions/workflows/docker-build.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/realabitbol)
 
 Automatically change your Twitch username color after each message you send in chat. Supports both preset Twitch colors and random hex colors (for Prime/Turbo users). **Supports multiple users and Docker deployment!**
 
@@ -401,13 +402,21 @@ We chose GPL v3 to ensure this software remains free and open source. Any deriva
 
 ## ⭐ Show Your Support
 
-If you found this project helpful, please consider giving it a star! ⭐
+If you found this project helpful, please consider showing your support!
 
-Your star helps others discover this tool and motivates us to continue improving it. It's a simple way to show appreciation for the work that went into creating this bot.
+### ⭐ Star the Repository
+
+Your star helps others discover this tool and motivates us to continue improving it.
 
 **[⭐ Click here to star this repository](https://github.com/realAbitbol/twitch_colorchanger)**
 
-### Why star this repo?
+### ☕ Buy Me a Coffee
+
+If this bot has saved you time or enhanced your Twitch experience, consider supporting the development with a coffee!
+
+**[☕ Support on Ko-fi](https://ko-fi.com/realabitbol)**
+
+### Why support this project?
 
 - 🎨 **Unique functionality** - One of the few bots that automatically changes Twitch chat colors
 - 👥 **Multi-user support** - Run multiple accounts simultaneously
