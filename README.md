@@ -37,10 +37,9 @@ Automatically change your Twitch username color after each message you send in c
 - **🛡️ Advanced Error Handling**: Automatic retries with exponential backoff
 - **🎯 Smart Turbo/Prime Detection**: Automatically detects non-Turbo/Prime users and falls back to preset colors
 - **💾 Persistent Fallback**: Saves Turbo/Prime limitations to config for permanent fallback behavior
-- **⚡ HTTP Optimization**: Connection pooling and resource management
-- **🔍 Memory Protection**: Automatic monitoring and cleanup
+- **⚡ Efficient HTTP Requests**: Simple and reliable HTTP client for API communication
 - **✅ Configuration Validation**: Comprehensive validation with detailed error reporting
-- **📊 Observability**: API performance monitoring and statistics
+- **📊 Rate Limiting**: Smart rate limiting with quota tracking and logging
 
 ---
 
@@ -352,24 +351,22 @@ If issues persist, open an issue with: platform, Python/Docker version, relevant
 twitch_colorchanger/
 ├── main.py                     # Application entry point
 ├── src/                        # Core application modules
-│   ├── __init__.py            # Package initialization
-│   ├── bot.py                 # TwitchColorBot class (core logic)
-│   ├── bot_manager.py         # Multi-bot management
-│   ├── config.py              # Configuration management
-│   ├── config_validator.py    # Configuration validation
-│   ├── simple_irc.py          # Custom IRC client
-│   ├── colors.py              # Color definitions and utilities
-│   ├── utils.py               # Utility functions
-│   ├── logger.py              # Structured logging system
-│   ├── error_handling.py      # Advanced error handling
-│   ├── http_client.py         # HTTP connection pooling
-│   ├── rate_limiter.py        # Rate limiting for API requests
-│   └── memory_monitor.py      # Memory leak detection
+│   ├── __init__.py             # Package initialization
+│   ├── bot.py                  # TwitchColorBot class (core logic)
+│   ├── bot_manager.py          # Multi-bot management
+│   ├── config.py               # Configuration management
+│   ├── config_validator.py     # Configuration validation
+│   ├── simple_irc.py           # Custom IRC client
+│   ├── colors.py               # Color definitions and utilities
+│   ├── utils.py                # Utility functions
+│   ├── logger.py               # Structured logging system
+│   ├── error_handling.py       # Advanced error handling
+│   └── rate_limiter.py         # Rate limiting for API requests
 ├── requirements.txt            # Python dependencies
-├── Dockerfile                 # Container definition
-├── docker-compose.yml-sample  # Docker Compose template
+├── Dockerfile                  # Container definition
+├── docker-compose.yml-sample   # Docker Compose template
 ├── FUNCTIONAL_DOCUMENTATION.md # Feature specifications
-└── IMPLEMENTATION_GUIDE.md    # Technical implementation details
+└── IMPLEMENTATION_GUIDE.md     # Technical implementation details
 ```
 
 ### Key Components
@@ -387,18 +384,17 @@ twitch_colorchanger/
 - **`src/logger.py`**: Structured logging with JSON/colored output
 - **`src/config_validator.py`**: Comprehensive configuration validation
 - **`src/error_handling.py`**: Custom exception hierarchy with retry logic
-- **`src/http_client.py`**: HTTP connection pooling with memory leak prevention
 - **`src/rate_limiter.py`**: Intelligent rate limiting for Twitch API
-- **`src/memory_monitor.py`**: Memory leak detection and prevention
 
 ### Design Principles
 
 - **Modular Architecture**: Clear separation of concerns for maintainability
 - **Reliability**: Advanced error handling and automatic recovery
-- **Performance**: Optimized resource management and connection pooling
-- **Observability**: Comprehensive logging and monitoring
+- **Performance**: Efficient HTTP requests with proper resource management
+- **Observability**: Comprehensive logging and rate limit monitoring
 - **Extensibility**: Easy to add features without affecting other components
 - **Security**: Secure token handling and configuration validation
+- **Simplicity**: Clean, maintainable code without over-engineering
 
 ---
 

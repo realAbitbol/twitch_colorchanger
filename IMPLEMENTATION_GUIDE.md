@@ -21,9 +21,7 @@ twitch_colorchanger/
     ├── colors.py               # Color generation and console formatting
     ├── utils.py                # Utilities and logging
     ├── logger.py               # Structured logging
-    ├── http_client.py          # HTTP client with connection pooling
     ├── rate_limiter.py         # API rate limiting
-    ├── memory_monitor.py       # Memory leak detection
     └── error_handling.py       # Error handling and decorators
 ```
 
@@ -223,9 +221,7 @@ from .logger import logger
 from .simple_irc import SimpleTwitchIRC
 from .config import update_user_in_config, disable_random_colors_for_user
 from .rate_limiter import get_rate_limiter
-from .http_client import get_http_client
 from .error_handling import with_error_handling, ErrorCategory, ErrorSeverity, APIError
-from .memory_monitor import check_memory_leaks
 
 # Constants
 CHAT_COLOR_ENDPOINT = 'chat/color'
@@ -365,13 +361,12 @@ class TwitchColorBot:
     async def _attempt_color_change(self, color):
         """Attempt to change color and handle the response"""
         try:
-            http_client = get_http_client()
             params = {'user_id': self.user_id, 'color': color}
             
             try:
                 _, status_code, headers = await asyncio.wait_for(
-                    http_client.twitch_api_request(
-                        'PUT', CHAT_COLOR_ENDPOINT, self.access_token, self.client_id, params=params
+                    self._make_api_request(
+                        'PUT', CHAT_COLOR_ENDPOINT, params=params
                     ),
                     timeout=10
                 )
@@ -412,12 +407,11 @@ class TwitchColorBot:
         """Try changing color with preset colors as fallback"""
         try:
             color = get_different_twitch_color(exclude_color=self.last_color)
-            http_client = get_http_client()
             params = {'user_id': self.user_id, 'color': color}
             
             _, status_code, headers = await asyncio.wait_for(
-                http_client.twitch_api_request(
-                    'PUT', CHAT_COLOR_ENDPOINT, self.access_token, self.client_id, params=params
+                self._make_api_request(
+                    'PUT', CHAT_COLOR_ENDPOINT, params=params
                 ),
                 timeout=10
             )
@@ -738,7 +732,101 @@ class TwitchColorBot:
         pass
 ```
 
-### HTTP Connection Pooling Implementation
+### Simplified Integration Example
+
+#### Bot Implementation with Direct HTTP
+
+```python
+from src.logger import BotLogger
+from src.error_handling import with_error_handling, APIError
+import aiohttp
+
+class TwitchColorBot:
+    def __init__(self, ...):
+        self.logger = BotLogger(f"bot.{self.username}")
+    
+    @with_error_handling(max_retries=3)
+    async def change_color(self):
+        """Simplified color change with direct HTTP requests"""
+        # Generate color
+        color = self._generate_color()
+        
+        # Log the operation
+        self.logger.info("Changing color", user=self.username, color=color)
+        
+        try:
+            # Make API request with simple HTTP client
+            start_time = time.time()
+            data, status, headers = await self._make_api_request(
+                'PUT', 'chat/color', 
+                params={'user_id': self.user_id, 'color': color}
+            )
+            response_time = time.time() - start_time
+            
+            # Log success
+            self.logger.log_api_request("/helix/chat/color", "PUT",
+                                      user=self.username, 
+                                      response_time=response_time,
+                                      status_code=status)
+            
+            if status == 204:
+                self.logger.info("Color changed successfully", 
+                               user=self.username, color=color)
+                self.last_color = color
+                self.colors_changed += 1
+            else:
+                raise APIError(f"Unexpected status code: {status}", 
+                             status_code=status, endpoint="/helix/chat/color")
+                
+        except Exception as e:
+            self.logger.error("Color change failed", 
+                            user=self.username, error=str(e))
+            raise
+
+    async def _make_api_request(self, method: str, endpoint: str, params: dict = None):
+        """Make a simple API request to Twitch"""
+        url = f"https://api.twitch.tv/helix/{endpoint}"
+        headers = {
+            'Authorization': f'Bearer {self.access_token}',
+            'Client-Id': self.client_id,
+            'Content-Type': 'application/json'
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.request(method, url, headers=headers, params=params) as response:
+                content = await response.text()
+                return content, response.status, dict(response.headers)
+```
+
+### Final Implementation Summary
+
+#### Core Message Processing
+
+1. IRC message received → `SimpleTwitchIRC.parse_message()`
+2. If sender matches bot username → `TwitchColorBot.handle_irc_message()`
+3. Immediate color change → `_change_color()` (no delays!)
+4. Generate color → `_select_color()`
+5. API call to Twitch → Success/failure logging with rate limit info
+
+#### Authentication & Token Lifecycle
+
+1. Check every 10 minutes → `_periodic_token_check()`
+2. Validate current token → API call to `/helix/users`
+3. If expired or expiring soon → `refresh_access_token()`
+4. Update configuration file → `update_user_in_config()`
+
+#### Exception Handling Strategy
+
+```python
+try:
+    # Operation
+    pass
+except Exception as e:
+    print_log(f"❌ Error context: {e}", bcolors.FAIL)
+    # Graceful fallback
+```
+
+This implementation guide provides the essential code structure and patterns needed to recreate the complete Twitch Color Changer Bot functionality.
 
 #### Connection Pool Manager (`src/http_client.py`)
 

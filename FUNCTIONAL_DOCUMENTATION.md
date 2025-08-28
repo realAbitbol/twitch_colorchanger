@@ -20,7 +20,6 @@ The Twitch Color Changer Bot automatically changes a user's Twitch chat color af
 8. IRC Connection: Custom client with JOIN confirmation (numeric 366) + 30s timeout and single retry
 9. Docker Support: Multi-architecture image; runs as root for broad NAS / volume compatibility
 10. Rate Limiting: Central limiter tracks Helix headers and annotates logs with remaining quota
-11. Memory Monitoring: Periodic leak detection every 5 minutes
 
 ## Token Lifecycle
 
@@ -52,7 +51,7 @@ Only durable outcomes logged to minimize noise:
 - JOIN success or final failure
 - Color change success (with rate limit info) or failure/timeout
 - Token expiry status, refresh actions, refresh failures
-- Significant warnings (e.g. join timeout, rate limiting, memory leak hints)
+- Significant warnings (e.g. join timeout, rate limiting)
 
 Example snippet:
 
@@ -104,16 +103,12 @@ Appends bracketed summary after color change:
 - Format examples: `[745/800 reqs]`, `[45/800 reqs, reset in 52s]`, `[⚠️ 3/800 reqs, reset in 12s]`
 - Stale or missing header data indicated via placeholders
 
-## Memory Monitoring
-
-Periodic (5 min interval) leak check logs warning if object class growth surpasses heuristic thresholds; otherwise debug note.
-
 ## Updated Core Methods Overview (bot.py)
 
 - `start()` – startup orchestration (forced refresh, user_id fetch, current color, IRC connect, periodic token task)
 - `handle_irc_message()` – processes IRC messages and triggers immediate color changes
 - `_check_and_refresh_token()` – coordinator delegating to helper methods
-- `_change_color()` – main color change with memory check, rate limiting, and Turbo/Prime fallback
+- `_change_color()` – main color change with rate limiting and Turbo/Prime fallback
 - `_select_color()` – chooses appropriate color based on user settings and last color
 - `_attempt_color_change()` – makes API request and handles response/errors
 - `_handle_api_error()` – processes Turbo/Prime errors and disables random colors
@@ -222,19 +217,11 @@ Twitch API Call → Success / Failure Logging
 **Features**:
 
 - `TWITCH_USE_RANDOM_COLORS_N` / `USE_RANDOM_COLORS_N`: Boolean for hex vs preset colors (default: true). Both supported; prefixed variant preferred.
-### 5. Memory Monitoring
-
-### Docker Security
+### 5. Docker Security
 
 - Runs as root (simplified) for broad NAS / volume compatibility
 - Minimal base image & least external dependencies
 - Only config directory needs persistence
-**Features**:
-
-- **Periodic Leak Detection**: Automatic checks every 5 minutes during operation
-- **Baseline Comparison**: Compares current memory usage to startup baseline
-- **Object Tracking**: Monitors HTTP-related objects for increases
-- **Cross-Loop Safety**: Proper cleanup of sessions across different event loops
 
 ### 6. Enhanced Observability
 
@@ -641,7 +628,7 @@ Refresh if Needed → Update Config → Continue Operation
 
 - Minimal CPU usage (event-driven architecture)
 
-- Low memory footprint (~50MB per bot instance)
+- Low memory footprint (~30-40MB per bot instance)
 
 - Efficient asyncio-based concurrent operation
 
