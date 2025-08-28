@@ -1,6 +1,17 @@
 # Configuration files with sensitive data
 docker-compose.yml
+docker-compose.*.yml
+docker-compose-*.yml
 twitch_colorchanger.conf
+
+# Test files and temporary configurations
+*test*.yml
+*test*.yaml
+test-*
+*-test.*
+*.test.*
+test_*
+*_test.*
 
 # Python
 __pycache__/
