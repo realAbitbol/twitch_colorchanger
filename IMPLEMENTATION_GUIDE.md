@@ -437,27 +437,22 @@ class TwitchColorBot:
 
 ```python
 
-# Multi-user Docker configuration
-
-def get_docker_config():
-    users = []
-    user_num = 1
+# Configuration loading from file only
+def get_configuration():
+    config_file = os.environ.get('TWITCH_CONF_FILE', "twitch_colorchanger.conf")
+    users = load_users_from_config(config_file)
     
-    while True:
-        username = os.environ.get(f'TWITCH_USERNAME_{user_num}')
-        access_token = os.environ.get(f'TWITCH_ACCESS_TOKEN_{user_num}')
-        
-        if not username or not access_token:
-            break
-            
-        user_config = {
-            'username': username,
-            'access_token': access_token,
-            'refresh_token': os.environ.get(f'TWITCH_REFRESH_TOKEN_{user_num}', ''),
-            'client_id': os.environ.get(f'TWITCH_CLIENT_ID_{user_num}', ''),
-            'client_secret': os.environ.get(f'TWITCH_CLIENT_SECRET_{user_num}', ''),
-            'channels': process_channels(os.environ.get(f'TWITCH_CHANNELS_{user_num}', username)),
-            'use_random_colors': os.environ.get(f'USE_RANDOM_COLORS_{user_num}', 'true').lower() == 'true'
+    if not users:
+        print("No configuration file found!")
+        print(f"Please create a config file: {config_file}")
+        sys.exit(1)
+    
+    valid_users = validate_all_users(users)
+    if not valid_users:
+        print("No valid user configurations found!")
+        sys.exit(1)
+    
+    return valid_users
         }
         users.append(user_config)
         user_num += 1

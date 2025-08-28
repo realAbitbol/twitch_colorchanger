@@ -3,7 +3,7 @@
 [![Build and Push Docker Images](https://github.com/realAbitbol/twitch_colorchanger/actions/workflows/docker-build.yml/badge.svg)](https://github.com/realAbitbol/twitch_colorchanger/actions/workflows/docker-build.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-Automatically change your Twitch username color after each message you send in chat. Supports both preset Twitch colors and random hex colors (for Prime/Turbo users). **Now supports multiple users and Docker unattended mode!**
+Automatically change your Twitch username color after each message you send in chat. Supports both preset Twitch colors and random hex colors (for Prime/Turbo users). **Supports multiple users and Docker deployment!**
 
 ## Table of Contents
 
@@ -31,13 +31,13 @@ Automatically change your Twitch username color after each message you send in c
 - **🐳 Docker Ready**: Multi-platform support (amd64, arm64, arm/v7, arm/v6, riscv64) with unattended mode
 - **💾 Persistent Config**: Interactive setup with configuration file persistence
 
-### Enhanced Features
+### Additional Features
 
 - **🏗️ Colored Logging**: Clean, colored console output for easy monitoring
-- **🛡️ Advanced Error Handling**: Automatic retries with exponential backoff
+- **🛡️ Error Handling**: Automatic retries with exponential backoff
 - **🎯 Smart Turbo/Prime Detection**: Automatically detects non-Turbo/Prime users and falls back to preset colors
 - **💾 Persistent Fallback**: Saves Turbo/Prime limitations to config for permanent fallback behavior
-- **⚡ Efficient HTTP Requests**: Simple and reliable HTTP client for API communication
+- **⚡ HTTP Client**: Simple and reliable HTTP client for API communication
 - **✅ Configuration Validation**: Comprehensive validation with detailed error reporting
 - **📊 Rate Limiting**: Smart rate limiting with quota tracking and logging
 
@@ -83,43 +83,30 @@ Use [twitchtokengenerator.com](https://twitchtokengenerator.com):
 
 ### 2. Run the Bot
 
-#### Option A: Interactive Setup (Recommended)
+#### Option A: Direct Run
+
+Create a config file from the sample:
 
 ```bash
+cp twitch_colorchanger.conf.sample twitch_colorchanger.conf
+# Edit the config file with your credentials
 python main.py
 ```
 
-Follow the prompts to configure your bot(s).
+#### Option B: Docker
 
-#### Option B: Docker (Single User)
+Create a config file from the sample:
 
 ```bash
-docker run -it --rm \
-  -e TWITCH_USERNAME=your_username \
-  -e TWITCH_ACCESS_TOKEN=your_access_token \
-  -e TWITCH_REFRESH_TOKEN=your_refresh_token \
-  -e TWITCH_CLIENT_ID=your_client_id \
-  -e TWITCH_CLIENT_SECRET=your_client_secret \
-  -e TWITCH_CHANNELS=channel1,channel2 \
-  damastah/twitch-colorchanger:latest
+cp twitch_colorchanger.conf.sample twitch_colorchanger.conf
+# Edit the config file with your credentials
 ```
 
-#### Option C: Docker (Multi-User)
+Then run:
 
 ```bash
 docker run -it --rm \
-  -e TWITCH_USERNAME_1=user1 \
-  -e TWITCH_ACCESS_TOKEN_1=token1 \
-  -e TWITCH_REFRESH_TOKEN_1=refresh1 \
-  -e TWITCH_CLIENT_ID_1=client1 \
-  -e TWITCH_CLIENT_SECRET_1=secret1 \
-  -e TWITCH_CHANNELS_1=channel1,channel2 \
-  -e TWITCH_USERNAME_2=user2 \
-  -e TWITCH_ACCESS_TOKEN_2=token2 \
-  -e TWITCH_REFRESH_TOKEN_2=refresh2 \
-  -e TWITCH_CLIENT_ID_2=client2 \
-  -e TWITCH_CLIENT_SECRET_2=secret2 \
-  -e TWITCH_CHANNELS_2=channel3,channel4 \
+  -v $(pwd)/twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf \
   damastah/twitch-colorchanger:latest
 ```
 
@@ -175,26 +162,8 @@ Copy `docker-compose.yml-sample` to `docker-compose.yml` and customize:
 services:
   twitch-colorchanger:
     image: damastah/twitch-colorchanger:latest
-    environment:
-      # User 1
-      - TWITCH_USERNAME_1=user1
-      - TWITCH_ACCESS_TOKEN_1=your_access_token_1
-      - TWITCH_REFRESH_TOKEN_1=your_refresh_token_1
-      - TWITCH_CLIENT_ID_1=your_client_id_1
-      - TWITCH_CLIENT_SECRET_1=your_client_secret_1
-      - TWITCH_CHANNELS_1=channel1,channel2
-      - TWITCH_USE_RANDOM_COLORS_1=true
-
-      # User 2
-      - TWITCH_USERNAME_2=user2
-      - TWITCH_ACCESS_TOKEN_2=your_access_token_2
-      - TWITCH_REFRESH_TOKEN_2=your_refresh_token_2
-      - TWITCH_CLIENT_ID_2=your_client_id_2
-      - TWITCH_CLIENT_SECRET_2=your_client_secret_2
-      - TWITCH_CHANNELS_2=channel3,channel4
-      - TWITCH_USE_RANDOM_COLORS_2=false
     volumes:
-      - ./config:/app/config
+      - ./twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf
     restart: unless-stopped
 ```
 
@@ -202,47 +171,32 @@ services:
 
 ## Configuration
 
-### Environment Variables
-
-#### Multi-User Configuration
-
-Use numbered environment variables for multiple users:
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `TWITCH_USERNAME_1` | Twitch username for user 1 | `user1` |
-| `TWITCH_ACCESS_TOKEN_1` | OAuth access token | `abc123...` |
-| `TWITCH_REFRESH_TOKEN_1` | OAuth refresh token | `def456...` |
-| `TWITCH_CLIENT_ID_1` | Twitch app client ID | `client_id_1` |
-| `TWITCH_CLIENT_SECRET_1` | Twitch app client secret | `client_secret_1` |
-| `TWITCH_CHANNELS_1` | Channels to join (comma-separated) | `channel1,channel2` |
-| `TWITCH_USE_RANDOM_COLORS_1` | Use random hex colors (legacy: `USE_RANDOM_COLORS_1`) | `true`/`false` |
-
-Repeat with `_2`, `_3`, etc. for additional users.
-
-#### Single User Configuration (Legacy)
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `TWITCH_USERNAME` | Twitch username | `your_username` |
-| `TWITCH_ACCESS_TOKEN` | OAuth access token | `abc123...` |
-| `TWITCH_REFRESH_TOKEN` | OAuth refresh token | `def456...` |
-| `TWITCH_CLIENT_ID` | Twitch app client ID | `client_id` |
-| `TWITCH_CLIENT_SECRET` | Twitch app client secret | `client_secret` |
-| `TWITCH_CHANNELS` | Channels to join | `channel1,channel2` |
-| `TWITCH_USE_RANDOM_COLORS` | Use random hex colors | `true`/`false` |
-
-#### Advanced Configuration
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `DEBUG` | Enable debug logging | `false` |
-| `FORCE_COLOR` | Force colored logs | `true` |
-| `PYTHONUNBUFFERED` | Disable output buffering | `1` |
-
 ### Configuration File
 
-The bot automatically saves settings to `twitch_colorchanger.conf`:
+The bot uses a configuration file for all settings: `twitch_colorchanger.conf`
+
+Copy the sample file to get started:
+
+```bash
+cp twitch_colorchanger.conf.sample twitch_colorchanger.conf
+```
+
+Edit the configuration file with your credentials:
+
+The bot loads settings from `twitch_colorchanger.conf` by default. You can use a custom config file by setting the `TWITCH_CONF_FILE` environment variable:
+
+```bash
+# Use a custom config file
+export TWITCH_CONF_FILE=/path/to/my-config.conf
+python main.py
+
+# Or for Docker
+docker run -e TWITCH_CONF_FILE=/app/config/my-config.conf \
+  -v $(pwd)/my-config.conf:/app/config/my-config.conf \
+  damastah/twitch-colorchanger:latest
+```
+
+Configuration file format:
 
 ```json
 {
@@ -264,19 +218,28 @@ Features:
 
 - **Automatic token lifecycle**: Forced refresh at startup then every 10 minutes if expiring (<1h) or validation fails
 - **Multi-user support**: Add multiple users to the same config file
-- **Interactive management**: Choose to use existing config, add users, or create new
-- **Environment override**: Use `TWITCH_CONF_FILE` to specify custom config file path
-- **Targeted precedence**: Environment overrides channels & random color flags; config file retains tokens & client credentials
+- **Simple configuration**: Single configuration file for all settings
+- **Custom config file**: Use `TWITCH_CONF_FILE` environment variable to specify custom config file path
+- **Docker support**: Containerized deployment with mounted config file
 
-### Docker Permission Notes
+### Advanced Configuration
 
-The container now always runs as root for simplicity and maximum compatibility with NAS / mounted volumes. Mount only the config directory for persistence:
+Environment variables:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DEBUG` | Enable debug logging | `false` |
+| `TWITCH_CONF_FILE` | Path to configuration file | `/app/config/twitch_colorchanger.conf` |
+
+### Docker Configuration
+
+The container runs as root for compatibility with mounted volumes. Mount your config file directly:
 
 ```bash
-docker run -v $PWD/config:/app/config damastah/twitch-colorchanger:latest
+docker run -v $PWD/twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf damastah/twitch-colorchanger:latest
 ```
 
-If you still encounter write issues on a NAS, ensure the mounted path is writable by root inside the container (most setups allow this by default). No user remapping variables are required or supported anymore. To fix rare NAS permission issues manually (SSH), ensure the directory is writable by root.
+If you encounter permission issues, ensure the mounted config file is readable by the container.
 
 ### Debug Mode
 
@@ -313,9 +276,9 @@ On startup the bot forces a token refresh (if a refresh token exists) for a full
 
 ### Docker
 
-- Config not persisting: confirm volume mount `-v $PWD/config:/app/config` exists and directory is writable.
-- No users loaded: ensure environment variables use numbered suffixes (`_1`, `_2`, ...).
-- Color not changing: non‑Prime/Turbo accounts can only use preset colors.
+- Config not loading: confirm config file is mounted correctly `-v $(pwd)/twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf`
+- Configuration issues: check that your config file has valid JSON format and contains user configurations
+- Color not changing: non‑Prime/Turbo accounts can only use preset colors
 
 ### Turbo/Prime Limitations
 
@@ -355,7 +318,7 @@ twitch_colorchanger/
 │   ├── colors.py               # Color definitions and utilities
 │   ├── utils.py                # Utility functions
 │   ├── logger.py               # Structured logging system
-│   ├── error_handling.py       # Advanced error handling
+│   ├── error_handling.py       # Error handling
 │   └── rate_limiter.py         # Rate limiting for API requests
 ├── requirements.txt            # Python dependencies
 ├── Dockerfile                  # Container definition
@@ -368,13 +331,13 @@ twitch_colorchanger/
 
 #### Core System
 
-- **`main.py`**: Enhanced entry point with error handling and graceful shutdown
+- **`main.py`**: Application entry point with error handling and graceful shutdown
 - **`src/config.py`**: Handles environment variables and interactive setup
 - **`src/bot.py`**: Individual bot instance with color changing logic
 - **`src/bot_manager.py`**: Manages multiple bots and handles shutdown
 - **`src/simple_irc.py`**: Custom Twitch IRC client implementation
 
-#### Advanced Features
+#### System Features
 
 - **`src/logger.py`**: Simple colored logging system
 - **`src/config_validator.py`**: Comprehensive configuration validation
@@ -384,12 +347,12 @@ twitch_colorchanger/
 ### Design Principles
 
 - **Modular Architecture**: Clear separation of concerns for maintainability
-- **Reliability**: Advanced error handling and automatic recovery
+- **Reliability**: Error handling and automatic recovery
 - **Performance**: Efficient HTTP requests with proper resource management
 - **Observability**: Clear colored logging and rate limit monitoring
 - **Extensibility**: Easy to add features without affecting other components
 - **Security**: Secure token handling and configuration validation
-- **Simplicity**: Clean, maintainable code without over-engineering
+- **Simplicity**: Clean, maintainable code
 
 ---
 

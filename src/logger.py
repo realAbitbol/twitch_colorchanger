@@ -10,20 +10,13 @@ from .colors import bcolors
 
 
 class ColoredFormatter(logging.Formatter):
-    """Simple formatter that outputs colored logs for development"""
-    
-    def __init__(self):
-        super().__init__()
-        self.use_colors = os.environ.get('FORCE_COLOR', 'true').lower() != 'false'
+    """Simple formatter that outputs colored logs"""
     
     def format(self, record: logging.LogRecord) -> str:
         return self._format_colored(record)
     
     def _format_colored(self, record: logging.LogRecord) -> str:
         """Format log record with colors"""
-        if not self.use_colors:
-            return f"{record.getMessage()}"
-        
         # Color mapping
         colors = {
             'DEBUG': bcolors.OKBLUE,

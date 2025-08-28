@@ -22,7 +22,7 @@ async def main():
         # Print welcome message and instructions
         print_instructions()
         
-        # Get configuration (Docker or interactive mode)
+        # Get configuration from config file
         users_config = get_configuration()
         
         # Print configuration summary

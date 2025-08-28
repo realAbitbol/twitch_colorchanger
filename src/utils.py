@@ -21,11 +21,6 @@ def print_log(message, color="", debug_only=False):
         print(message)
 
 
-def process_channels(channels_str):
-    """Process comma-separated channel string into list of lowercase channel names"""
-    return [ch.strip().lower() for ch in channels_str.split(',') if ch.strip()]
-
-
 def print_instructions():
     """Display essential setup instructions"""
     print_log("="*60, bcolors.PURPLE)
@@ -40,6 +35,11 @@ def print_instructions():
     print_log("   - Select scopes: chat:read, user:manage:chat_color")
     print_log("   - Save the Access Token and Refresh Token")
     
+    print_log("\n📁 Configuration:")
+    print_log("• Copy twitch_colorchanger.conf.sample to twitch_colorchanger.conf")
+    print_log("• Edit the config file with your credentials")
+    print_log("• The bot will load all users from the config file")
+    
     print_log("\n🎯 How it works:")
     print_log("• The bot monitors your chat messages")
     print_log("• After each message you send, it changes your username color")
@@ -47,37 +47,3 @@ def print_instructions():
     print_log("• Can run multiple users simultaneously")
     
     print_log("\n⚠️ IMPORTANT: Save Access Token, Refresh Token, Client ID, AND Client Secret")
-    
-    print_log("\n🐳 Docker Multi-User Support:")
-    print_log("Use numbered environment variables: TWITCH_USERNAME_1, TWITCH_ACCESS_TOKEN_1, etc.")
-
-
-def prompt_for_user():
-    """Prompt user for their Twitch credentials and settings"""
-    print_log("\n" + "="*50, bcolors.OKCYAN)
-    print_log("👤 Enter user details:", bcolors.OKCYAN)
-    print_log("="*50, bcolors.OKCYAN)
-    
-    try:
-        username = input("👤 Username: ").strip()
-        access_token = input("🎫 Access Token: ").strip()
-        refresh_token = input("🔄 Refresh Token: ").strip()
-        client_id = input("📱 Client ID: ").strip()
-        client_secret = input("🔒 Client Secret: ").strip()
-        channels_input = input("📺 Channels (comma-separated): ").strip()
-        channels = process_channels(channels_input)
-        use_random_colors_input = input("🎲 Use random hex colors? [Y/n]: ").strip().lower()
-        use_random_colors = use_random_colors_input != 'n'
-        
-        return {
-            'username': username,
-            'access_token': access_token,
-            'refresh_token': refresh_token,
-            'client_id': client_id,
-            'client_secret': client_secret,
-            'channels': channels,
-            'use_random_colors': use_random_colors
-        }
-    except (EOFError, KeyboardInterrupt):
-        print_log("\n⚠️ Input interrupted, cannot create user configuration", bcolors.FAIL)
-        raise EOFError("User input was interrupted")

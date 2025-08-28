@@ -256,7 +256,7 @@ Twitch API Call → Success / Failure Logging
 
 - Environment variable processing for Docker
 
-- Interactive configuration setup
+- Configuration file setup
 
 - Token persistence and updates
 
@@ -264,7 +264,7 @@ Twitch API Call → Success / Failure Logging
 
 - `get_docker_config()`: Extract multi-user config from environment variables
 
-- `get_interactive_config()`: Interactive setup for local deployment
+- `get_configuration()`: Load configuration from file only
 
 - `load_users_from_config()` / `save_users_to_config()`: JSON config file management
 
@@ -432,7 +432,7 @@ lightness = random.randint(35, 75)   # Moderate lightness
 
 - `process_channels()`: Parse comma-separated channel lists
 
-- `prompt_for_user()`: Interactive user credential collection
+- `print_instructions()`: Display setup and usage information
 
 - `print_instructions()`: Display setup and usage information
 
@@ -441,41 +441,25 @@ lightness = random.randint(35, 75)   # Moderate lightness
 ### 1. Local Development
 
 ```bash
+# First copy the sample config
+cp twitch_colorchanger.conf.sample twitch_colorchanger.conf
+# Edit with your credentials
 python main.py
-
-# Interactive configuration prompts
-
-# Saves config to twitch_colorchanger.conf
-
 ```
 
 ### 2. Docker Single User
 
 ```bash
-docker run -e TWITCH_USERNAME=user \
-           -e TWITCH_ACCESS_TOKEN=token \
-           -e TWITCH_REFRESH_TOKEN=refresh \
-           -e TWITCH_CLIENT_ID=id \
-           -e TWITCH_CLIENT_SECRET=secret \
+docker run -v $(pwd)/twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf \
            damastah/twitch-colorchanger
-
 ```
 
 ### 3. Docker Multi-User
 
 ```bash
-docker run -e TWITCH_USERNAME_1=user1 \
-
-           -e TWITCH_ACCESS_TOKEN_1=token1 \
-
-           -e TWITCH_USERNAME_2=user2 \
-
-           -e TWITCH_ACCESS_TOKEN_2=token2 \
-
-           # ... additional users with _N suffix
-
+# Edit twitch_colorchanger.conf to include multiple users
+docker run -v $(pwd)/twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf \
            damastah/twitch-colorchanger
-
 ```
 
 ### 4. Docker Compose
@@ -484,18 +468,9 @@ docker run -e TWITCH_USERNAME_1=user1 \
 services:
   twitch-colorchanger:
     image: damastah/twitch-colorchanger:latest
-    environment:
-      - TWITCH_USERNAME_1=user1
-
-      - TWITCH_ACCESS_TOKEN_1=token1
-
-      # ... additional configuration
-
     volumes:
-      - ./config:/app/config
-
+      - ./twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf
     restart: unless-stopped
-
 ```
 
 ### 5. Docker Runtime Permissions
@@ -705,29 +680,19 @@ Refresh if Needed → Update Config → Continue Operation
 
 ## Configuration Reference
 
-### Required Environment Variables (Per User)
+### Environment Variables
 
-- `TWITCH_USERNAME_N`: Twitch username
-
-- `TWITCH_ACCESS_TOKEN_N`: OAuth access token
-
-- `TWITCH_REFRESH_TOKEN_N`: OAuth refresh token
-
-- `TWITCH_CLIENT_ID_N`: Twitch application client ID
-
-- `TWITCH_CLIENT_SECRET_N`: Twitch application client secret
-
-### Optional Environment Variables (Per User)
-
-- `TWITCH_CHANNELS_N`: Comma-separated channel list (default: username)
-
-- `USE_RANDOM_COLORS_N`: Boolean for hex vs preset colors (default: true)
-
-### Global Environment Variables
+Environment variables:
 
 - `DEBUG`: Enable debug logging (default: false)
 
-- `FORCE_COLOR`: Enable ANSI colors (default: true)
+### Configuration File
+
+All bot configuration is done via the `twitch_colorchanger.conf` file. Use the sample file as a template:
+
+```bash
+cp twitch_colorchanger.conf.sample twitch_colorchanger.conf
+```
 
 - `TWITCH_CONF_FILE`: Configuration file path (default: twitch_colorchanger.conf)
 
@@ -745,7 +710,7 @@ Refresh if Needed → Update Config → Continue Operation
 1. **Bot not detecting messages**: Check IRC connection and channel joins
 2. **Color changes failing**: Verify token scopes and Prime/Turbo status for hex colors
 3. **Token expired**: Refresh tokens automatically, check client credentials
-4. **Multi-user conflicts**: Ensure unique numbered environment variables
+4. **Color changes failing**: Verify token scopes and Prime/Turbo status for hex colors
 
 ### Debug Mode Activation
 

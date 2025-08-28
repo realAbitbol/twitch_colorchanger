@@ -30,6 +30,6 @@ ENV PYTHONUNBUFFERED=1 \
 VOLUME ["/app/config"]
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD python -c "from src.config import get_docker_config; users = get_docker_config(); exit(0 if users else 1)" || exit 1
+    CMD python -c "import os,json,subprocess,sys; cf=os.environ.get('TWITCH_CONF_FILE','/app/config/twitch_colorchanger.conf'); f=open(cf); c=json.load(f); f.close(); sys.exit(0 if c.get('users') and subprocess.run(['pgrep','-f','python.*main.py'],capture_output=True).returncode==0 else 1)" || exit 1
 
 CMD ["python", "main.py"]
