@@ -6,7 +6,7 @@ import asyncio
 import aiohttp
 import json
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Tuple
 
 from .colors import bcolors, generate_random_hex_color, get_different_twitch_color
 from .utils import print_log
@@ -16,7 +16,7 @@ from .config import (
     update_user_in_config, disable_random_colors_for_user
 )
 from .rate_limiter import get_rate_limiter
-from .error_handling import APIError, simple_retry, log_error
+from .error_handling import APIError, simple_retry
 
 # Constants
 CHAT_COLOR_ENDPOINT = 'chat/color'

@@ -66,26 +66,3 @@ def validate_all_users(users_config):
         logger.error("No valid user configurations found!")
     
     return valid_users
-
-
-# Legacy compatibility class for existing imports
-class ConfigValidator:
-    """Legacy compatibility wrapper"""
-    
-    @classmethod
-    def validate_user_config(cls, user_config, user_index=0):
-        """Legacy method - returns (is_valid, errors_list)"""
-        is_valid = validate_user_config(user_config)
-        return is_valid, []  # Empty errors list for compatibility
-    
-    @classmethod
-    def validate_all_configs(cls, users_config):
-        """Legacy method - returns (all_valid, errors_list)"""
-        valid_users = validate_all_users(users_config)
-        all_valid = len(valid_users) == len(users_config)
-        return all_valid, []  # Empty errors list for compatibility
-    
-    @classmethod
-    def print_validation_report(cls, errors):
-        """Legacy method - does nothing since we log directly"""
-        pass
