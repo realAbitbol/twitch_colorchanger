@@ -101,6 +101,13 @@ def _verify_saved_data(config_file):
 def save_users_to_config(users, config_file):
     """Save users to config file"""
     try:
+        # Pause watcher during bot-initiated changes
+        try:
+            from .watcher_globals import pause_config_watcher, resume_config_watcher
+            pause_config_watcher()
+        except ImportError:
+            pass  # Watcher not available
+        
         # Ensure all users have use_random_colors field before saving
         for user in users:
             if 'use_random_colors' not in user:
@@ -126,8 +133,21 @@ def save_users_to_config(users, config_file):
         
         # Verify the save
         _verify_saved_data(config_file)
+        
+        # Add small delay before resuming watcher to avoid detecting our own change
+        import time
+        time.sleep(0.5)
+        
     except Exception as e:
         print_log(f"⚠️ Failed to save configuration: {e}", bcolors.FAIL)
+        raise
+    finally:
+        # Always resume watcher
+        try:
+            from .watcher_globals import resume_config_watcher
+            resume_config_watcher()
+        except ImportError:
+            pass
 
 
 def update_user_in_config(user_config, config_file):

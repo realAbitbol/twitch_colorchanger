@@ -13,7 +13,7 @@ Automatically change your Twitch username color after each message you send in c
 - [Usage](#usage)
 - [Configuration](#configuration)
 - [Troubleshooting](#troubleshooting)
-- [Architecture](#architecture)
+- [Technical Documentation](#technical-documentation)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -28,8 +28,9 @@ Automatically change your Twitch username color after each message you send in c
 - **🎲 Flexible Colors**: Supports both preset Twitch colors and random hex colors (Prime/Turbo users)
 - **🔄 Universal Compatibility**: Works with Chatterino, web chat, or any IRC client
 - **🔑 Token Management**: Forced startup refresh + periodic (10 min) checks; refreshes automatically when <1h remains
-- **🐳 Docker Ready**: Multi-platform support (amd64, arm64, arm/v7, arm/v6, riscv64) with unattended mode
+- **🐳 Docker Ready**: Multi-platform support (amd64, arm64, arm/v7, arm/v6, riscv64)
 - **💾 Persistent Config**: Interactive setup with configuration file persistence
+- **👀 Live Config Reload**: Automatically detects config file changes and restarts bots without manual intervention
 
 ### Additional Features
 
@@ -51,9 +52,10 @@ Automatically change your Twitch username color after each message you send in c
 
 ### Dependencies
 
-The bot uses only one core dependency for optimal performance:
+The bot requires minimal dependencies for optimal performance:
 
-- `aiohttp>=3.9.0,<4.0.0` - Async HTTP client for Twitch API communication
+- **Core**: `aiohttp>=3.9.0,<4.0.0` - Async HTTP client for Twitch API communication
+- **Live Config**: `watchdog>=3.0.0,<4.0.0` - File system monitoring for runtime config reload
 
 All dependencies are automatically installed via `requirements.txt`.
 
@@ -229,7 +231,30 @@ Environment variables:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `DEBUG` | Enable debug logging | `false` |
-| `TWITCH_CONF_FILE` | Path to configuration file | `/app/config/twitch_colorchanger.conf` |
+| `TWITCH_CONF_FILE` | Path to configuration file | `twitch_colorchanger.conf` |
+
+### Runtime Configuration Changes
+
+The bot automatically watches for changes to the configuration file and restarts with the new settings **without requiring manual intervention**. This feature enables:
+
+- **Adding new users**: Simply add a new user to the `users` array in the config file
+- **Removing users**: Delete or comment out users from the config file  
+- **Updating settings**: Modify any user settings (channels, colors, etc.) and they'll take effect immediately
+- **Zero downtime**: Bots restart automatically when valid config changes are detected
+
+**Requirements:**
+
+- Install the `watchdog` package: `pip install watchdog` (included in `requirements.txt`)
+- Config file must contain valid JSON with at least one valid user
+
+**Example workflow:**
+
+1. Start the bot: `python main.py`
+2. Edit `twitch_colorchanger.conf` in your editor
+3. Save the file - bots automatically restart with new config
+4. Check the console output for restart confirmation
+
+**Note:** Invalid configuration changes are ignored with warnings logged to console. Bot-initiated updates (like token refreshes) do not trigger restarts to prevent infinite loops.
 
 ### Docker Configuration
 
@@ -252,6 +277,33 @@ DEBUG=true python main.py
 # Docker with debug logging
 docker run -e DEBUG=true damastah/twitch-colorchanger:latest
 ```
+
+**Debug Output Includes:**
+
+- Config file watching events
+- Token refresh operations
+- Rate limiting details
+- IRC message parsing
+- Bot restart confirmations
+
+### Monitoring Live Configuration
+
+Watch for these console messages to monitor config changes:
+
+```text
+👀 Config file watcher enabled for: twitch_colorchanger.conf
+📁 Config file changed: /path/to/twitch_colorchanger.conf
+✅ Config validation passed - 2 valid user(s)
+🔄 Config change detected, restarting bots...
+📊 Config updated: 1 → 2 users
+```
+
+**Troubleshooting Config Watching:**
+
+- **No watcher messages**: Install `watchdog` package: `pip install watchdog`
+- **Changes ignored**: Check JSON syntax and ensure at least one valid user
+- **Infinite restarts**: Bot token updates are filtered out automatically
+- **File permissions**: Ensure config file is readable by the application
 
 ---
 
@@ -301,58 +353,12 @@ If issues persist, open an issue with: platform, Python/Docker version, relevant
 
 ---
 
-## Architecture
+## Technical Documentation
 
-### Project Structure
+For developers and technical implementation details:
 
-```text
-twitch_colorchanger/
-├── main.py                     # Application entry point
-├── src/                        # Core application modules
-│   ├── __init__.py             # Package initialization
-│   ├── bot.py                  # TwitchColorBot class (core logic)
-│   ├── bot_manager.py          # Multi-bot management
-│   ├── config.py               # Configuration management
-│   ├── config_validator.py     # Configuration validation
-│   ├── simple_irc.py           # Custom IRC client
-│   ├── colors.py               # Color definitions and utilities
-│   ├── utils.py                # Utility functions
-│   ├── logger.py               # Structured logging system
-│   ├── error_handling.py       # Error handling
-│   └── rate_limiter.py         # Rate limiting for API requests
-├── requirements.txt            # Python dependencies
-├── Dockerfile                  # Container definition
-├── docker-compose.yml-sample   # Docker Compose template
-├── FUNCTIONAL_DOCUMENTATION.md # Feature specifications
-└── IMPLEMENTATION_GUIDE.md     # Technical implementation details
-```
-
-### Key Components
-
-#### Core System
-
-- **`main.py`**: Application entry point with error handling and graceful shutdown
-- **`src/config.py`**: Handles environment variables and interactive setup
-- **`src/bot.py`**: Individual bot instance with color changing logic
-- **`src/bot_manager.py`**: Manages multiple bots and handles shutdown
-- **`src/simple_irc.py`**: Custom Twitch IRC client implementation
-
-#### System Features
-
-- **`src/logger.py`**: Simple colored logging system
-- **`src/config_validator.py`**: Comprehensive configuration validation
-- **`src/error_handling.py`**: Custom exception hierarchy with retry logic
-- **`src/rate_limiter.py`**: Intelligent rate limiting for Twitch API
-
-### Design Principles
-
-- **Modular Architecture**: Clear separation of concerns for maintainability
-- **Reliability**: Error handling and automatic recovery
-- **Performance**: Efficient HTTP requests with proper resource management
-- **Observability**: Clear colored logging and rate limit monitoring
-- **Extensibility**: Easy to add features without affecting other components
-- **Security**: Secure token handling and configuration validation
-- **Simplicity**: Clean, maintainable code
+- **[FUNCTIONAL_DOCUMENTATION.md](FUNCTIONAL_DOCUMENTATION.md)** - Detailed feature specifications and behavior
+- **[IMPLEMENTATION_GUIDE.md](IMPLEMENTATION_GUIDE.md)** - Complete technical guide to rebuild this application from scratch
 
 ---
 
@@ -377,32 +383,15 @@ pip install -r requirements-dev.txt
 # Run tests
 python -m pytest
 
-# Run linting
-python -m black src/
-python -m isort src/
+# Format code
+black .
+isort .
 ```
-
-### Security Considerations
-
-- **Token Security**: Never commit tokens to version control
-- **Environment Variables**: Use secure methods to pass sensitive data
-- **Network Security**: The bot communicates securely with Twitch APIs over HTTPS
-- **Access Control**: Limit bot permissions to required scopes only
-
----
 
 ## License
 
-This project is licensed under the GNU GPL v3. See [LICENSE](LICENSE) for details.
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
 
----
+### Why GPL v3?
 
-## Acknowledgments
-
-- Twitch API for providing the color change functionality
-- The open-source community for inspiration and tools
-- Contributors who help improve this project
-
----
-
-**⭐ Star this repository** if you find it useful!
+We chose GPL v3 to ensure this software remains free and open source. Any derivative works must also be open source under compatible licenses, fostering a community of shared improvements.
