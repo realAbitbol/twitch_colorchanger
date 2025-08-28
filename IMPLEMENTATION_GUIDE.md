@@ -557,25 +557,14 @@ class BotLogger:
     def _setup_logger(self):
         # Configure based on environment
         debug_mode = os.getenv('DEBUG', 'false').lower() == 'true'
-        log_format = os.getenv('LOG_FORMAT', 'colored').lower()
-        log_file = os.getenv('LOG_FILE')
         
         level = logging.DEBUG if debug_mode else logging.INFO
         self.logger.setLevel(level)
         
-        # Console handler
+        # Console handler with colored formatter
         console_handler = logging.StreamHandler()
-        if log_format == 'json':
-            console_handler.setFormatter(self._get_json_formatter())
-        else:
-            console_handler.setFormatter(self._get_colored_formatter())
+        console_handler.setFormatter(self._get_colored_formatter())
         self.logger.addHandler(console_handler)
-        
-        # Optional file handler
-        if log_file:
-            file_handler = logging.FileHandler(log_file)
-            file_handler.setFormatter(self._get_json_formatter())
-            self.logger.addHandler(file_handler)
     
     def log_api_request(self, endpoint: str, method: str, **context):
         """Log API requests with contextual information"""

@@ -33,7 +33,7 @@ Automatically change your Twitch username color after each message you send in c
 
 ### Enhanced Features
 
-- **🏗️ Structured Logging**: JSON output for production, colored logs for development
+- **🏗️ Colored Logging**: Clean, colored console output for easy monitoring
 - **🛡️ Advanced Error Handling**: Automatic retries with exponential backoff
 - **🎯 Smart Turbo/Prime Detection**: Automatically detects non-Turbo/Prime users and falls back to preset colors
 - **💾 Persistent Fallback**: Saves Turbo/Prime limitations to config for permanent fallback behavior
@@ -237,8 +237,6 @@ Repeat with `_2`, `_3`, etc. for additional users.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `DEBUG` | Enable debug logging | `false` |
-| `LOG_FORMAT` | Log format (`json` or `colored`) | `colored` |
-| `LOG_FILE` | Path to log file | None |
 | `FORCE_COLOR` | Force colored logs | `true` |
 | `PYTHONUNBUFFERED` | Disable output buffering | `1` |
 
@@ -289,10 +287,7 @@ Enable detailed logging for troubleshooting:
 DEBUG=true python main.py
 
 # Docker with debug logging
-docker run -e DEBUG=true -e LOG_FORMAT=json damastah/twitch-colorchanger:latest
-
-# File logging
-docker run -e LOG_FILE=/app/logs/bot.log -v $PWD/logs:/app/logs damastah/twitch-colorchanger:latest
+docker run -e DEBUG=true damastah/twitch-colorchanger:latest
 ```
 
 ---
@@ -337,7 +332,7 @@ On startup the bot forces a token refresh (if a refresh token exists) for a full
 ### Logging & Debugging
 
 - Set `DEBUG=true` for verbose logs.
-- Use `LOG_FORMAT=json` for structured output in aggregators.
+- All logs are colored for easy reading.
 
 If issues persist, open an issue with: platform, Python/Docker version, relevant log snippet (exclude tokens).
 
@@ -381,7 +376,7 @@ twitch_colorchanger/
 
 #### Advanced Features
 
-- **`src/logger.py`**: Structured logging with JSON/colored output
+- **`src/logger.py`**: Simple colored logging system
 - **`src/config_validator.py`**: Comprehensive configuration validation
 - **`src/error_handling.py`**: Custom exception hierarchy with retry logic
 - **`src/rate_limiter.py`**: Intelligent rate limiting for Twitch API
@@ -391,7 +386,7 @@ twitch_colorchanger/
 - **Modular Architecture**: Clear separation of concerns for maintainability
 - **Reliability**: Advanced error handling and automatic recovery
 - **Performance**: Efficient HTTP requests with proper resource management
-- **Observability**: Comprehensive logging and rate limit monitoring
+- **Observability**: Clear colored logging and rate limit monitoring
 - **Extensibility**: Easy to add features without affecting other components
 - **Security**: Secure token handling and configuration validation
 - **Simplicity**: Clean, maintainable code without over-engineering

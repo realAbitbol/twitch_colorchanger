@@ -151,17 +151,16 @@ Canonical functional description last updated after refactor of token management
 
 ## Enhanced Features (2024 Improvements)
 
-### 1. Structured Logging System
+### 1. Simple Logging System
 
-**Purpose**: Enterprise-grade logging with JSON output and contextual information
+**Purpose**: Clean, colored logging for easy monitoring and debugging
 
 **Features**:
 
-- **Environment-Based Configuration**: `DEBUG=true` for debug logging, `LOG_FORMAT=json` for structured output
-- **Multiple Output Formats**: Colored console logs for development, JSON logs for production
-- **Contextual Information**: User, channel, API endpoint, response time tracking
-- **Specialized Methods**: API request logging, rate limit monitoring, IRC event tracking
-- **File Logging**: Optional file output with `LOG_FILE` environment variable
+- **Environment-Based Configuration**: `DEBUG=true` for debug logging
+- **Colored Console Output**: Easy-to-read colored logs for development and production
+- **Contextual Information**: User and channel context in log messages
+- **Debug Support**: Optional debug-only messages for detailed troubleshooting
 
 **Usage Examples**:
 
