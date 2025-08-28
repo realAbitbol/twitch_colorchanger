@@ -13,13 +13,14 @@ The Twitch Color Changer Bot automatically changes a user's Twitch chat color af
 1. Automatic Color Changing: Immediate trigger after each own message (no artificial delay)
 2. Multi-User Support: Multiple concurrent bot instances in one process
 3. Dual Color Modes: Random hex (Prime/Turbo) or preset Twitch colors
-4. Color Avoidance: Never repeats the last applied color consecutively
-5. Current Color Detection: Initializes from current Twitch color so first change differs
-6. Token Management: Forced startup refresh + periodic 10‑minute validation (refresh when <1h remaining or validation fails)
-7. IRC Connection: Custom client with JOIN confirmation (numeric 366) + 30s timeout and single retry
-8. Docker Support: Multi-architecture image; runs as root for broad NAS / volume compatibility
-9. Rate Limiting: Central limiter tracks Helix headers and annotates logs with remaining quota
-10. Memory Monitoring: Periodic leak detection every 5 minutes
+4. Smart Turbo/Prime Detection: Automatic fallback to preset colors with persistent settings
+5. Color Avoidance: Never repeats the last applied color consecutively
+6. Current Color Detection: Initializes from current Twitch color so first change differs
+7. Token Management: Forced startup refresh + periodic 10‑minute validation (refresh when <1h remaining or validation fails)
+8. IRC Connection: Custom client with JOIN confirmation (numeric 366) + 30s timeout and single retry
+9. Docker Support: Multi-architecture image; runs as root for broad NAS / volume compatibility
+10. Rate Limiting: Central limiter tracks Helix headers and annotates logs with remaining quota
+11. Memory Monitoring: Periodic leak detection every 5 minutes
 
 ## Token Lifecycle
 
@@ -75,6 +76,26 @@ Transitional log lines like “Changing color to …” are intentionally omitte
 - Preset mode: `get_different_twitch_color(exclude_color=last_color)` ensures change among named Twitch presets
 - 10s timeout wraps `PUT /helix/chat/color`
 - On success: updates `last_color`, increments counter, appends rate-limit summary
+
+## Turbo/Prime Error Handling & Fallback
+
+**Automatic Detection**: When a user attempts random hex colors but lacks Turbo/Prime subscription:
+
+1. **Error Detection**: API returns error containing "Turbo or Prime user" or "Hex color code"
+2. **Immediate Fallback**: Bot automatically disables random colors for this user
+3. **Persistent Configuration**: Setting is saved to config file (`use_random_colors: false`)
+4. **Seamless Continuation**: Bot retries with preset Twitch colors without user interruption
+5. **Prevention**: Future color changes use preset colors, avoiding repeated API errors
+
+**Workflow Example**:
+
+```text
+[WARNING] User username requires Turbo/Prime for hex colors. Disabling random colors and using preset colors.
+🔧 Disabled random colors for username (requires Turbo/Prime)
+💾 Configuration saved successfully
+[INFO] Disabled random colors for username in configuration
+[INFO] Color changed to chocolate [799/800 reqs]
+```
 
 ## Rate Limiting Display
 

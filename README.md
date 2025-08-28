@@ -35,6 +35,8 @@ Automatically change your Twitch username color after each message you send in c
 
 - **🏗️ Structured Logging**: JSON output for production, colored logs for development
 - **🛡️ Advanced Error Handling**: Automatic retries with exponential backoff
+- **🎯 Smart Turbo/Prime Detection**: Automatically detects non-Turbo/Prime users and falls back to preset colors
+- **💾 Persistent Fallback**: Saves Turbo/Prime limitations to config for permanent fallback behavior
 - **⚡ HTTP Optimization**: Connection pooling and resource management
 - **🔍 Memory Protection**: Automatic monitoring and cleanup
 - **✅ Configuration Validation**: Comprehensive validation with detailed error reporting
@@ -320,6 +322,13 @@ On startup the bot forces a token refresh (if a refresh token exists) for a full
 - Config not persisting: confirm volume mount `-v $PWD/config:/app/config` exists and directory is writable.
 - No users loaded: ensure environment variables use numbered suffixes (`_1`, `_2`, ...).
 - Color not changing: non‑Prime/Turbo accounts can only use preset colors.
+
+### Turbo/Prime Limitations
+
+- **Automatic Detection**: The bot automatically detects when a user lacks Turbo/Prime subscription for hex colors
+- **Smart Fallback**: Automatically switches to preset Twitch colors when hex colors fail
+- **Persistent Settings**: Saves the fallback preference to config file to avoid repeated API errors
+- **Seamless Operation**: Users continue receiving color changes without interruption
 
 ### Rate / API Issues
 

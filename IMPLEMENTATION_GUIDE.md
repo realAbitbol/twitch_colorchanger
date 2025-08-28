@@ -302,9 +302,48 @@ class TwitchColorBot:
                         print(f"✅ {self.username}: Color changed to {color}")
                     else:
                         error_text = await response.text()
-                        print(f"❌ {self.username}: Failed to change color. Status: {response.status}")
+                        # Check for Turbo/Prime requirement error
+                        if ("Turbo or Prime user" in error_text or "Hex color code" in error_text) and self.use_random_colors:
+                            print(f"⚠️ {self.username}: Requires Turbo/Prime for hex colors. Switching to preset colors.")
+                            await self._handle_turbo_prime_fallback()
+                        else:
+                            print(f"❌ {self.username}: Failed to change color. Status: {response.status}")
         except Exception as e:
             print(f"❌ {self.username}: Error changing color: {e}")
+    
+    async def _handle_turbo_prime_fallback(self):
+        """Handle fallback to preset colors when user lacks Turbo/Prime"""
+        # Disable random colors for this user
+        self.use_random_colors = False
+        
+        # Save the setting to config file
+        if self.config_file:
+            from .config import disable_random_colors_for_user
+            disable_random_colors_for_user(self.username, self.config_file)
+        
+        # Try again with preset colors
+        from .colors import get_twitch_colors
+        color = random.choice(get_twitch_colors())
+        
+        # URL encode for API
+        encoded_color = quote(color, safe='')
+        url = f'https://api.twitch.tv/helix/chat/color?user_id={self.user_id}&color={encoded_color}'
+        headers = {
+            'Authorization': f'Bearer {self.access_token}',
+            'Client-Id': self.client_id
+        }
+        
+        try:
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.put(url, headers=headers) as response:
+                    if response.status == 204:
+                        self.colors_changed += 1
+                        print(f"✅ {self.username}: Color changed to {color} (using preset colors)")
+                    else:
+                        print(f"❌ {self.username}: Failed to change color with preset. Status: {response.status}")
+        except Exception as e:
+            print(f"❌ {self.username}: Error changing color with preset: {e}")
     
     async def _periodic_token_check(self):
         while self.running:
