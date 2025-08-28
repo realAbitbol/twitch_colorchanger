@@ -8,7 +8,7 @@ import json
 from .colors import bcolors
 from .utils import print_log, process_channels
 from .logger import logger
-from .config_validator import ConfigValidator
+from .config_validator import validate_user_config as validate_user, validate_all_users
 
 # Constants for repeated messages
 INVALID_CONFIG_MSG = "❌ Invalid configuration provided!"
@@ -235,42 +235,21 @@ def get_docker_config():
 
 
 def validate_user_config(user_config):
-    """Validate that user configuration has required fields - Enhanced version"""
-    is_valid, errors = ConfigValidator.validate_user_config(user_config)
-    
-    if errors:
-        # Print validation report
-        ConfigValidator.print_validation_report(errors)
-    
-    return is_valid
+    """Validate that user configuration has required fields - Simplified version"""
+    return validate_user(user_config)
 
 
 def _validate_docker_users(users):
     """Validate Docker mode users and return valid ones"""
-    # Use enhanced validation
-    all_valid, errors = ConfigValidator.validate_all_configs(users)
+    # Use simplified validation
+    valid_users = validate_all_users(users)
     
-    if errors:
-        ConfigValidator.print_validation_report(errors)
+    if not valid_users:
+        logger.error("No valid user configurations found!")
+        sys.exit(1)
     
-    if not all_valid:
-        # Filter out users with critical errors
-        valid_users = []
-        for i, user_config in enumerate(users):
-            is_valid, _ = ConfigValidator.validate_user_config(user_config, i + 1)
-            if is_valid:
-                valid_users.append(user_config)
-            else:
-                logger.warning(f"Skipping invalid configuration for user {user_config.get('username', 'Unknown')}")
-        
-        if not valid_users:
-            logger.error("No valid user configurations found!")
-            sys.exit(1)
-        
-        users = valid_users
-    
-    logger.info(f"✅ Found {len(users)} valid user configuration(s)")
-    return users
+    logger.info(f"✅ Found {len(valid_users)} valid user configuration(s)")
+    return valid_users
 
 
 def _persist_docker_config(users, config_file):

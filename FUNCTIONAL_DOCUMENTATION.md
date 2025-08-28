@@ -169,19 +169,24 @@ logger.info("Color changed", user="streamername", channel="channelname")
 logger.log_api_request("/helix/chat/color", "PUT", user="streamername", response_time=0.245)
 ```
 
-### 2. Enhanced Configuration Validation
+### 2. Simple Configuration Validation
 
-**Purpose**: Comprehensive validation of all configuration parameters with detailed error reporting
+**Purpose**: Essential validation of configuration parameters with clear error reporting
 
-**Validation Categories**:
+**Validation Features**:
 
-- **Token Management**: Forced startup refresh plus 10‑minute validation/refresh cycle (refreshes when <1h remaining)
-- **Format Validation**: Regex patterns for usernames (3-25 chars), tokens, client credentials
-- **Security Checks**: Detects placeholder tokens, validates token formats
-- **Conflict Detection**: Duplicate usernames, overlapping channels
-- **Recommendations**: Optimization suggestions for configuration
+- **Basic Field Validation**: Required fields (username, access_token, channels)
+- **Length Checks**: Username 3-25 characters, token minimum 20 characters
+- **Placeholder Detection**: Prevents use of test/placeholder tokens
+- **Channel Validation**: Non-empty channel list with valid channel names
+- **Duplicate Prevention**: Skips duplicate usernames automatically
 
-**Error Reporting**:
+**Error Handling**:
+
+- Direct logging of validation errors
+- Invalid users are skipped with clear warnings
+- Valid users continue processing normally
+- Simple boolean validation (pass/fail)
 
 - `_change_color()`: Executes color change via Twitch API (avoids previous color, timeout + rate limit aware)
 - `_get_current_color()`: Fetch user's current color from Twitch API for initialization
