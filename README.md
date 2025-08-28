@@ -1,4 +1,4 @@
-# Multi-User Twitch ColorChanger
+# Twitch ColorChanger
 
 [![Build and Push Docker Images](https://github.com/realAbitbol/twitch_colorchanger/actions/workflows/docker-build.yml/badge.svg)](https://github.com/realAbitbol/twitch_colorchanger/actions/workflows/docker-build.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
@@ -395,3 +395,24 @@ This project is licensed under the GNU General Public License v3.0 - see the [LI
 ### Why GPL v3?
 
 We chose GPL v3 to ensure this software remains free and open source. Any derivative works must also be open source under compatible licenses, fostering a community of shared improvements.
+
+---
+
+## ⭐ Show Your Support
+
+If you found this project helpful, please consider giving it a star! ⭐
+
+Your star helps others discover this tool and motivates us to continue improving it. It's a simple way to show appreciation for the work that went into creating this bot.
+
+**[⭐ Click here to star this repository](https://github.com/realAbitbol/twitch_colorchanger)**
+
+### Why star this repo?
+
+- 🎨 **Unique functionality** - One of the few bots that automatically changes Twitch chat colors
+- 👥 **Multi-user support** - Run multiple accounts simultaneously
+- 🐳 **Docker ready** - Easy deployment with comprehensive platform support
+- 🔄 **Live config reload** - No restarts needed for configuration changes
+- 📚 **Well documented** - Complete guides for users and developers
+- 🛡️ **Actively maintained** - Regular updates and bug fixes
+
+Thank you for using Twitch ColorChanger! 🎉
