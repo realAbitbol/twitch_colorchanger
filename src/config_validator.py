@@ -348,16 +348,6 @@ class ConfigValidator:
                 "info"
             ))
         
-        # Check if user is monitoring their own channel
-        username = user_config.get('username', '').lower()
-        user_channels = [ch.lower() for ch in channels if isinstance(ch, str)]
-        if username and username not in user_channels:
-            errors.append(ValidationError(
-                f"user_{user_index}.channels",
-                f"Consider adding your own channel '{username}' to the channels list",
-                "info"
-            ))
-        
         return errors
     
     @classmethod
@@ -366,7 +356,6 @@ class ConfigValidator:
         errors = []
         
         errors.extend(cls._validate_duplicate_usernames(users_config))
-        errors.extend(cls._validate_overlapping_channels(users_config))
         
         return errors
     
@@ -387,31 +376,6 @@ class ConfigValidator:
                     ))
                 else:
                     usernames[username] = i + 1
-        
-        return errors
-    
-    @classmethod
-    def _validate_overlapping_channels(cls, users_config: List[Dict[str, Any]]) -> List[ValidationError]:
-        """Check for overlapping channels between users"""
-        errors = []
-        all_channels = {}
-        
-        for i, user_config in enumerate(users_config):
-            username = user_config.get('username', '')
-            channels = user_config.get('channels', [])
-            
-            for channel in channels:
-                if isinstance(channel, str):
-                    channel_lower = channel.lower()
-                    if channel_lower in all_channels:
-                        other_user = all_channels[channel_lower]
-                        errors.append(ValidationError(
-                            f"user_{i + 1}.channels",
-                            f"Channel '{channel}' is also monitored by user {other_user}. This is normal for multi-user setups - each bot only affects its own user.",
-                            "info"
-                        ))
-                    else:
-                        all_channels[channel_lower] = username
         
         return errors
     
