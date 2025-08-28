@@ -12,7 +12,6 @@ from src.bot_manager import run_bots
 from src.utils import print_instructions
 from src.logger import logger
 from src.error_handling import setup_error_handlers, handle_critical_error
-from src.http_client import close_http_client
 
 
 async def main():
@@ -43,7 +42,6 @@ async def main():
         handle_critical_error(e, "Main application error")
     finally:
         # Cleanup resources
-        await close_http_client()
         logger.info("🏁 Application shutdown complete")
 
 

@@ -4,6 +4,10 @@ docker-compose.*.yml
 docker-compose-*.yml
 twitch_colorchanger.conf
 
+# VS Code
+.vscode/
+.history/
+
 # Test files and temporary configurations
 *test*.yml
 *test*.yaml
@@ -12,6 +16,12 @@ test-*
 *.test.*
 test_*
 *_test.*
+debug_*.py
+*debug*.py
+simple_config_test.py
+test_config.py
+test_disable_function.py
+test_persistence.py
 
 # Python
 __pycache__/

@@ -3,8 +3,10 @@ Main bot class for Twitch color changing functionality
 """
 
 import asyncio
+import aiohttp
+import json
 from datetime import datetime, timedelta
-from typing import List
+from typing import List, Dict, Any, Optional, Tuple
 
 from .colors import bcolors, generate_random_hex_color, get_different_twitch_color
 from .utils import print_log
@@ -14,15 +16,35 @@ from .config import (
     update_user_in_config, disable_random_colors_for_user
 )
 from .rate_limiter import get_rate_limiter
-from .http_client import get_http_client
 from .error_handling import (
     with_error_handling, ErrorCategory, ErrorSeverity, 
     AuthenticationError, APIError
 )
-from .memory_monitor import check_memory_leaks
 
 # Constants
 CHAT_COLOR_ENDPOINT = 'chat/color'
+
+
+async def _make_api_request(method: str, endpoint: str, access_token: str, 
+                           client_id: str, data: Dict[str, Any] = None, 
+                           params: Dict[str, Any] = None) -> Tuple[Dict[str, Any], int, Dict[str, str]]:
+    """Make a simple HTTP request to Twitch API"""
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Client-Id': client_id,
+        'Content-Type': 'application/json'
+    }
+    
+    url = f'https://api.twitch.tv/helix/{endpoint}'
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.request(method, url, headers=headers, json=data, params=params) as response:
+            try:
+                response_data = await response.json()
+            except (aiohttp.ContentTypeError, json.JSONDecodeError):
+                response_data = {}
+            
+            return response_data, response.status, dict(response.headers)
 
 
 class TwitchColorBot:
@@ -60,33 +82,6 @@ class TwitchColorBot:
         
         # Rate limiter for API requests
         self.rate_limiter = get_rate_limiter(self.client_id, self.username)
-        
-        # Memory monitoring
-        self.last_memory_check = datetime.now()
-        self.memory_check_interval = timedelta(minutes=5)  # Check every 5 minutes
-    
-    def _should_check_memory(self) -> bool:
-        """Check if it's time to run memory leak detection"""
-        return datetime.now() - self.last_memory_check > self.memory_check_interval
-    
-    def _check_memory_leaks(self):
-        """Check for memory leaks and log results"""
-        try:
-            leak_report = check_memory_leaks()
-            self.last_memory_check = datetime.now()
-            
-            if leak_report.get('potential_leaks'):
-                logger.warning("Memory leaks detected", extra={
-                    'username': self.username,
-                    'leak_report': leak_report
-                })
-            else:
-                logger.debug("Memory check completed - no leaks detected", extra={
-                    'username': self.username,
-                    'object_count': leak_report.get('total_objects', 0)
-                })
-        except Exception as e:
-            logger.error(f"Error during memory leak check: {e}")
 
     async def start(self):
         """Start the bot"""
@@ -262,8 +257,7 @@ class TwitchColorBot:
         await self.rate_limiter.wait_if_needed('get_user_info', is_user_request=True)
         
         try:
-            http_client = get_http_client()
-            data, status_code, headers = await http_client.twitch_api_request(
+            data, status_code, headers = await _make_api_request(
                 'GET', 'users', self.access_token, self.client_id
             )
             
@@ -299,9 +293,8 @@ class TwitchColorBot:
         await self.rate_limiter.wait_if_needed('get_current_color', is_user_request=True)
         
         try:
-            http_client = get_http_client()
             params = {'user_id': self.user_id}
-            data, status_code, headers = await http_client.twitch_api_request(
+            data, status_code, headers = await _make_api_request(
                 'GET', CHAT_COLOR_ENDPOINT, self.access_token, self.client_id, params=params
             )
             
@@ -345,10 +338,6 @@ class TwitchColorBot:
     
     async def _change_color(self):
         """Change the username color via Twitch API"""
-        # Check for memory leaks periodically
-        if self._should_check_memory():
-            self._check_memory_leaks()
-        
         # Wait for rate limiting before making request  
         await self.rate_limiter.wait_if_needed('change_color', is_user_request=True)
         
@@ -374,12 +363,11 @@ class TwitchColorBot:
     async def _attempt_color_change(self, color):
         """Attempt to change color and handle the response"""
         try:
-            http_client = get_http_client()
             params = {'user_id': self.user_id, 'color': color}
             
             try:
                 _, status_code, headers = await asyncio.wait_for(
-                    http_client.twitch_api_request(
+                    _make_api_request(
                         'PUT', CHAT_COLOR_ENDPOINT, self.access_token, self.client_id, params=params
                     ),
                     timeout=10
@@ -437,11 +425,10 @@ class TwitchColorBot:
         """Try changing color with preset colors as fallback"""
         try:
             color = get_different_twitch_color(exclude_color=self.last_color)
-            http_client = get_http_client()
             params = {'user_id': self.user_id, 'color': color}
             
             _, status_code, headers = await asyncio.wait_for(
-                http_client.twitch_api_request(
+                _make_api_request(
                     'PUT', CHAT_COLOR_ENDPOINT, self.access_token, self.client_id, params=params
                 ),
                 timeout=10
@@ -501,26 +488,26 @@ class TwitchColorBot:
         }
         
         try:
-            http_client = get_http_client()
-            async with http_client.request('POST', 'https://id.twitch.tv/oauth2/token', data=token_data) as response:
-                if response.status == 200:
-                    token_response = await response.json()
-                    self.access_token = token_response['access_token']
-                    
-                    # Update refresh token if provided
-                    if 'refresh_token' in token_response:
-                        self.refresh_token = token_response['refresh_token']
-                    
-                    # Set token expiry if provided
-                    if 'expires_in' in token_response:
-                        self.token_expiry = datetime.now() + timedelta(seconds=token_response['expires_in'])
-                        logger.info(f"Token will expire at {self.token_expiry.strftime('%Y-%m-%d %H:%M:%S')}", user=self.username)
-                    
-                    return True
-                else:
-                    error_text = await response.text()
-                    logger.error(f"Token refresh failed. Status: {response.status}, Response: {error_text}", 
-                               user=self.username, status_code=response.status)
+            async with aiohttp.ClientSession() as session:
+                async with session.post('https://id.twitch.tv/oauth2/token', data=token_data) as response:
+                    if response.status == 200:
+                        token_response = await response.json()
+                        self.access_token = token_response['access_token']
+                        
+                        # Update refresh token if provided
+                        if 'refresh_token' in token_response:
+                            self.refresh_token = token_response['refresh_token']
+                        
+                        # Set token expiry if provided
+                        if 'expires_in' in token_response:
+                            self.token_expiry = datetime.now() + timedelta(seconds=token_response['expires_in'])
+                            logger.info(f"Token will expire at {self.token_expiry.strftime('%Y-%m-%d %H:%M:%S')}", user=self.username)
+                        
+                        return True
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"Token refresh failed. Status: {response.status}, Response: {error_text}", 
+                                   user=self.username, status_code=response.status)
                 return False
                 
         except Exception as e:
