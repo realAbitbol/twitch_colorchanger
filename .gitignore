@@ -23,6 +23,12 @@ test_config.py
 test_disable_function.py
 test_persistence.py
 
+# Documentation backup/temp files
+*.updated.md
+*.backup.md
+*_backup.*
+*_updated.*
+
 # Python
 __pycache__/
 *.py[cod]
