@@ -19,6 +19,4 @@ services:
     environment:
       # - DEBUG=true  # Enable debug-level logging (verbose output)
     
-    restart: unless-stopped
-    
     restart: unless-stopped  # Automatically restart unless manually stopped
