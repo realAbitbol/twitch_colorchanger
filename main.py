@@ -6,7 +6,6 @@ Main entry point for the Twitch Color Changer Bot
 import asyncio
 import sys
 import os
-import signal
 
 from src.config import get_configuration, print_config_summary
 from src.bot_manager import run_bots
@@ -35,10 +34,7 @@ async def main():
         # Get config file path for token saving
         config_file = os.environ.get('TWITCH_CONF_FILE', "twitch_colorchanger.conf")
         
-        # Setup signal handlers for graceful shutdown
-        setup_signal_handlers()
-        
-        # Run all bots
+        # Run all bots (signal handlers are set up in bot_manager)
         await run_bots(users_config, config_file)
         
     except KeyboardInterrupt:
@@ -49,20 +45,6 @@ async def main():
         # Cleanup resources
         await close_http_client()
         logger.info("🏁 Application shutdown complete")
-
-
-def setup_signal_handlers():
-    """Setup signal handlers for graceful shutdown"""
-    def signal_handler(signum, _frame):
-        logger.info(f"Received signal {signum}, initiating graceful shutdown...")
-        # This will cause KeyboardInterrupt to be raised in the main loop
-        raise KeyboardInterrupt()
-    
-    # Setup signal handlers for Unix systems
-    if hasattr(signal, 'SIGTERM'):
-        signal.signal(signal.SIGTERM, signal_handler)
-    if hasattr(signal, 'SIGINT'):
-        signal.signal(signal.SIGINT, signal_handler)
 
 
 if __name__ == "__main__":

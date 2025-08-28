@@ -59,7 +59,7 @@ class StructuredFormatter(logging.Formatter):
     def _format_colored(self, record: logging.LogRecord) -> str:
         """Format log record with colors for development"""
         if not self.use_colors:
-            return f"[{record.levelname}] {record.getMessage()}"
+            return f"{record.getMessage()}"
         
         # Color mapping
         colors = {
@@ -71,7 +71,6 @@ class StructuredFormatter(logging.Formatter):
         }
         
         color = colors.get(record.levelname, '')
-        timestamp = datetime.fromtimestamp(record.created).strftime('%H:%M:%S')
         
         # Format message with optional context
         message = record.getMessage()
@@ -87,7 +86,7 @@ class StructuredFormatter(logging.Formatter):
         else:
             context = ""
         
-        formatted = f"{color}[{timestamp}] {record.levelname}: {message}{context}{bcolors.ENDC}"
+        formatted = f"{color}{message}{context}{bcolors.ENDC}"
         
         # Add exception info if present
         if record.exc_info:
