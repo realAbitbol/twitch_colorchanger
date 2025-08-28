@@ -16,6 +16,7 @@ Automatically change your Twitch username color after each message you send in c
 - [Technical Documentation](#technical-documentation)
 - [Contributing](#contributing)
 - [License](#license)
+- [⭐ Show Your Support](#-show-your-support)
 
 ---
 
