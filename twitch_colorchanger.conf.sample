@@ -5,14 +5,14 @@
       "client_id": "your_client_id_1",
       "client_secret": "your_client_secret_1",
       "channels": ["channel1", "channel2"],
-      "use_random_colors": true
+      "is_prime_or_turbo": true
     },
     {
       "username": "your_username_2",
       "client_id": "your_client_id_2",
       "client_secret": "your_client_secret_2",
       "channels": ["channel3", "channel4"],
-      "use_random_colors": false
+      "is_prime_or_turbo": false
     }
   ]
 }

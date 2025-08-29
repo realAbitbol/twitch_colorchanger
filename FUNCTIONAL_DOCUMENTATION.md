@@ -81,7 +81,7 @@ Bot polls for completion → Receives tokens → Saves to config → Continues s
       "client_id": "twitch_client_id",
       "client_secret": "client_secret",
       "channels": ["channel1", "channel2"],
-      "use_random_colors": true
+      "is_prime_or_turbo": true
     }
   ]
 }

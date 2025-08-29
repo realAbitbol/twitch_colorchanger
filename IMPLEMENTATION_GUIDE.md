@@ -105,7 +105,7 @@ watchdog>=3.0.0,<4.0.0   # File system monitoring
     "client_id": "string",
     "client_secret": "string",
     "channels": ["array"],
-    "use_random_colors": boolean
+    "is_prime_or_turbo": boolean
   }]
 }
 ```

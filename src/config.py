@@ -76,7 +76,7 @@ def _log_save_operation(users, config_file):
     """Log the save operation details"""
     print_log(f"💾 Saving {len(users)} users to {config_file}", bcolors.OKBLUE, debug_only=True)
     for i, user in enumerate(users, 1):
-        print_log(f"  User {i}: {user['username']} -> use_random_colors: {user.get('use_random_colors', 'MISSING_FIELD')}", bcolors.OKCYAN, debug_only=True)
+        print_log(f"  User {i}: {user['username']} -> is_prime_or_turbo: {user.get('is_prime_or_turbo', 'MISSING_FIELD')}", bcolors.OKCYAN, debug_only=True)
 
 
 def _log_debug_data(save_data):
@@ -93,8 +93,8 @@ def _verify_saved_data(config_file):
         print_log(f"✅ VERIFICATION: File actually contains {len(verification_data.get('users', []))} users", bcolors.OKGREEN, debug_only=True)
         for i, user in enumerate(verification_data.get('users', []), 1):
             username = user.get('username', 'NO_USERNAME')
-            use_random_colors = user.get('use_random_colors', 'MISSING_FIELD')
-            print_log(f"  Verified User {i}: {username} -> use_random_colors: {use_random_colors}", bcolors.OKGREEN, debug_only=True)
+            is_prime_or_turbo = user.get('is_prime_or_turbo', 'MISSING_FIELD')
+            print_log(f"  Verified User {i}: {username} -> is_prime_or_turbo: {is_prime_or_turbo}", bcolors.OKGREEN, debug_only=True)
     except Exception as verify_error:
         print_log(f"❌ VERIFICATION FAILED: {verify_error}", bcolors.FAIL, debug_only=True)
 
@@ -109,11 +109,11 @@ def save_users_to_config(users, config_file):
         except ImportError:
             pass  # Watcher not available
         
-        # Ensure all users have use_random_colors field before saving
+        # Ensure all users have is_prime_or_turbo field before saving
         for user in users:
-            if 'use_random_colors' not in user:
-                user['use_random_colors'] = True  # Default value
-                print_log(f"🔧 Added missing use_random_colors field for {user.get('username', 'Unknown')}: {user['use_random_colors']}", bcolors.OKBLUE, debug_only=True)
+            if 'is_prime_or_turbo' not in user:
+                user['is_prime_or_turbo'] = True  # Default value
+                print_log(f"🔧 Added missing is_prime_or_turbo field for {user.get('username', 'Unknown')}: {user['is_prime_or_turbo']}", bcolors.OKBLUE, debug_only=True)
         
         # Set up directory and permissions
         _setup_config_directory(config_file)
@@ -157,10 +157,10 @@ def update_user_in_config(user_config, config_file):
         users = load_users_from_config(config_file)
         updated = False
         
-        # Ensure the user_config has use_random_colors field
-        if 'use_random_colors' not in user_config:
-            user_config['use_random_colors'] = True  # Default value
-            print_log(f"🔧 Added missing use_random_colors field for {user_config.get('username', 'Unknown')}: {user_config['use_random_colors']}", bcolors.OKBLUE, debug_only=True)
+        # Ensure the user_config has is_prime_or_turbo field
+        if 'is_prime_or_turbo' not in user_config:
+            user_config['is_prime_or_turbo'] = True  # Default value
+            print_log(f"🔧 Added missing is_prime_or_turbo field for {user_config.get('username', 'Unknown')}: {user_config['is_prime_or_turbo']}", bcolors.OKBLUE, debug_only=True)
         
         # Find and update existing user
         for i, user in enumerate(users):
@@ -173,7 +173,7 @@ def update_user_in_config(user_config, config_file):
                     'access_token': user_config.get('access_token', user.get('access_token')),
                     'refresh_token': user_config.get('refresh_token', user.get('refresh_token')),
                     'channels': user_config.get('channels', user.get('channels', [])),
-                    'use_random_colors': user_config.get('use_random_colors', user.get('use_random_colors', True))
+                    'is_prime_or_turbo': user_config.get('is_prime_or_turbo', user.get('is_prime_or_turbo', True))
                 }
                 # Remove any None values to keep config clean
                 merged_config = {k: v for k, v in merged_config.items() if v is not None}
@@ -200,7 +200,7 @@ def disable_random_colors_for_user(username, config_file):
         # Find and update the user
         for user in users:
             if user.get('username') == username:
-                user['use_random_colors'] = False
+                user['is_prime_or_turbo'] = False
                 print_log(f"🔧 Disabled random colors for {username} (requires Turbo/Prime)", bcolors.WARNING)
                 break
         else:
@@ -254,7 +254,7 @@ def print_config_summary(users):
         print_log(f"\n👤 User {i}:", bcolors.OKCYAN)
         print_log(f"   Username: {user['username']}")
         print_log(f"   Channels: {', '.join(user['channels'])}")
-        print_log(f"   Random Colors: {'Yes' if user.get('use_random_colors', True) else 'No'}")
+        print_log(f"   Random Colors: {'Yes' if user.get('is_prime_or_turbo', True) else 'No'}")
         print_log(f"   Has Refresh Token: {'Yes' if user.get('refresh_token') else 'No'}")
 
 
@@ -325,7 +325,7 @@ async def _validate_or_refresh_tokens(user):
             client_secret=client_secret,
             nick=username,
             channels=["temp"],  # Temporary channel for validation
-            use_random_colors=user.get('use_random_colors', True),
+            is_prime_or_turbo=user.get('is_prime_or_turbo', True),
             config_file=None  # Don't auto-save during validation
         )
         
@@ -406,7 +406,7 @@ async def _validate_new_tokens(user):
             client_secret=user['client_secret'],
             nick=username,
             channels=["temp"],  # Temporary channel for validation
-            use_random_colors=user.get('use_random_colors', True),
+            is_prime_or_turbo=user.get('is_prime_or_turbo', True),
             config_file=None  # Don't auto-save during validation
         )
         

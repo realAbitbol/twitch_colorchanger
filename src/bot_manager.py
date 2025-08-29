@@ -71,7 +71,7 @@ class BotManager:
                 client_secret=user_config.get('client_secret', ''),
                 nick=username,
                 channels=user_config['channels'],
-                use_random_colors=user_config.get('use_random_colors', True),
+                is_prime_or_turbo=user_config.get('is_prime_or_turbo', True),
                 config_file=self.config_file,
                 user_id=None  # Will be fetched by the bot itself
             )

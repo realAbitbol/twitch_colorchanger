@@ -86,7 +86,7 @@ All dependencies are automatically installed via `requirements.txt`.
 
 The bot can automatically generate tokens for you! Just provide your `client_id` and `client_secret` in the config file, and the bot will handle the rest:
 
-1. Create your config file with just client credentials:
+1. Create your config file with just client credentials, the channel you want to monitor and if your user is prime/turbo or not:
 
 ```json
 {
@@ -96,7 +96,7 @@ The bot can automatically generate tokens for you! Just provide your `client_id`
       "client_id": "your_client_id", 
       "client_secret": "your_client_secret",
       "channels": ["channel1", "channel2"],
-      "use_random_colors": true
+      "is_prime_or_turbo": true
     }
   ]
 }
@@ -243,7 +243,7 @@ Configuration file format:
       "client_id": "your_client_id",
       "client_secret": "your_client_secret",
       "channels": ["channel1", "channel2"],
-      "use_random_colors": true
+      "is_prime_or_turbo": true
     }
   ]
 }
@@ -261,7 +261,7 @@ Configuration file format:
       "client_id": "your_client_id",
       "client_secret": "your_client_secret",
       "channels": ["channel1", "channel2"],
-      "use_random_colors": true
+      "is_prime_or_turbo": true
     }
   ]
 }

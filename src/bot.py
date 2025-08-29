@@ -50,7 +50,7 @@ class TwitchColorBot:
     OAUTH_PREFIX = 'oauth:'
     
     def __init__(self, token: str, refresh_token: str, client_id: str, client_secret: str, 
-                 nick: str, channels: List[str], use_random_colors: bool = True, config_file: str = None,
+                 nick: str, channels: List[str], is_prime_or_turbo: bool = True, config_file: str = None,
                  user_id: str = None):
         # User credentials
         self.username = nick
@@ -63,7 +63,7 @@ class TwitchColorBot:
         
         # Bot settings
         self.channels = channels
-        self.use_random_colors = use_random_colors
+        self.use_random_colors = is_prime_or_turbo
         self.config_file = config_file
         
         # IRC connection
@@ -366,7 +366,7 @@ class TwitchColorBot:
                 'access_token': self.access_token,
                 'refresh_token': self.refresh_token,
                 'channels': getattr(self, 'channels', [self.username.lower()]),
-                'use_random_colors': self.use_random_colors  # Preserve the current setting
+                'is_prime_or_turbo': self.use_random_colors  # Preserve the current setting
             }
             try:
                 update_user_in_config(user_config, self.config_file)
