@@ -9,6 +9,7 @@ from .colors import bcolors
 from .utils import print_log
 from .logger import logger
 from .config_validator import validate_user_config as validate_user, validate_all_users
+from .device_flow import DeviceCodeFlow
 
 # Constants for repeated messages
 
@@ -164,9 +165,18 @@ def update_user_in_config(user_config, config_file):
         # Find and update existing user
         for i, user in enumerate(users):
             if user.get('username') == user_config['username']:
-                # Merge new config with existing config to preserve all fields
-                merged_config = user.copy()  # Start with existing config
-                merged_config.update(user_config)  # Update with new values
+                # Create a new config with proper field order
+                merged_config = {
+                    'username': user_config.get('username', user.get('username')),
+                    'client_id': user_config.get('client_id', user.get('client_id')),
+                    'client_secret': user_config.get('client_secret', user.get('client_secret')),
+                    'access_token': user_config.get('access_token', user.get('access_token')),
+                    'refresh_token': user_config.get('refresh_token', user.get('refresh_token')),
+                    'channels': user_config.get('channels', user.get('channels', [])),
+                    'use_random_colors': user_config.get('use_random_colors', user.get('use_random_colors', True))
+                }
+                # Remove any None values to keep config clean
+                merged_config = {k: v for k, v in merged_config.items() if v is not None}
                 users[i] = merged_config
                 updated = True
                 break
@@ -246,4 +256,182 @@ def print_config_summary(users):
         print_log(f"   Channels: {', '.join(user['channels'])}")
         print_log(f"   Random Colors: {'Yes' if user.get('use_random_colors', True) else 'No'}")
         print_log(f"   Has Refresh Token: {'Yes' if user.get('refresh_token') else 'No'}")
-        print_log(f"   Has Client Credentials: {'Yes' if user.get('client_id') and user.get('client_secret') else 'No'}")
+
+
+async def setup_missing_tokens(users, config_file):
+    """
+    Automatically setup tokens for users that don't have them or can't renew them.
+    Returns updated users list with new tokens.
+    """
+    updated_users = []
+    needs_config_save = False
+    
+    for user in users:
+        user_result = await _setup_user_tokens(user)
+        updated_users.append(user_result['user'])
+        if user_result['tokens_updated']:
+            needs_config_save = True
+    
+    # Save config if any tokens were updated
+    if needs_config_save:
+        _save_updated_config(updated_users, config_file)
+    
+    return updated_users
+
+
+async def _setup_user_tokens(user):
+    """Setup tokens for a single user. Returns dict with user and update status."""
+    username = user.get('username', 'Unknown')
+    client_id = user.get('client_id', '')
+    client_secret = user.get('client_secret', '')
+    
+    # Check if user has basic credentials
+    if not client_id or not client_secret:
+        print_log(f"❌ User {username} missing client_id or client_secret - skipping automatic setup", bcolors.FAIL)
+        return {'user': user, 'tokens_updated': False}
+    
+    # Check if tokens exist and are valid/renewable
+    tokens_result = await _validate_or_refresh_tokens(user)
+    if tokens_result['valid']:
+        return {'user': tokens_result['user'], 'tokens_updated': tokens_result['updated']}
+    
+    # Need new tokens via device flow
+    return await _get_new_tokens_via_device_flow(user, client_id, client_secret)
+
+
+async def _validate_or_refresh_tokens(user):
+    """
+    Validate existing tokens or refresh them using the bot's existing token management.
+    This leverages the proven token handling in bot.py to avoid code duplication.
+    """
+    username = user.get('username', 'Unknown')
+    access_token = user.get('access_token', '')
+    refresh_token = user.get('refresh_token', '')
+    client_id = user.get('client_id', '')
+    client_secret = user.get('client_secret', '')
+    
+    if not access_token:
+        print_log(f"🔑 {username}: No access token found", bcolors.WARNING, debug_only=True)
+        return {'valid': False, 'user': user, 'updated': False}
+    
+    try:
+        # Create a temporary bot instance to leverage existing token management
+        from .bot import TwitchColorBot
+        
+        temp_bot = TwitchColorBot(
+            token=access_token,
+            refresh_token=refresh_token,
+            client_id=client_id,
+            client_secret=client_secret,
+            nick=username,
+            channels=["temp"],  # Temporary channel for validation
+            use_random_colors=user.get('use_random_colors', True),
+            config_file=None  # Don't auto-save during validation
+        )
+        
+        # Use bot's proactive token checking with more aggressive refresh threshold
+        # This checks if token expires in <24 hours (instead of <1 hour) for proactive refresh
+        original_hours_method = temp_bot._hours_until_expiry
+        def proactive_hours_check():
+            hours = original_hours_method()
+            return hours if hours < 24 else 0.5  # Trigger refresh if <24 hours remaining
+        temp_bot._hours_until_expiry = proactive_hours_check
+        
+        # Use the bot's proven token validation and refresh logic
+        token_valid = await temp_bot._check_and_refresh_token(force=False)
+        
+        if token_valid:
+            # Check if tokens were updated during the process
+            if (temp_bot.access_token != access_token or 
+                temp_bot.refresh_token != refresh_token):
+                # Update user config with refreshed tokens
+                user['access_token'] = temp_bot.access_token
+                user['refresh_token'] = temp_bot.refresh_token
+                print_log(f"✅ {username}: Tokens proactively refreshed", bcolors.OKGREEN, debug_only=True)
+                return {'valid': True, 'user': user, 'updated': True}
+            else:
+                print_log(f"✅ {username}: Tokens are valid", bcolors.OKGREEN, debug_only=True)
+                return {'valid': True, 'user': user, 'updated': False}
+        else:
+            print_log(f"⚠️ {username}: Token validation/refresh failed", bcolors.WARNING, debug_only=True)
+            return {'valid': False, 'user': user, 'updated': False}
+        
+    except Exception as e:
+        print_log(f"⚠️ Token validation failed for {username}: {e}", bcolors.WARNING, debug_only=True)
+        return {'valid': False, 'user': user, 'updated': False}
+
+
+async def _get_new_tokens_via_device_flow(user, client_id, client_secret):
+    """Get new tokens using device flow and ensure they're saved to config."""
+    username = user.get('username', 'Unknown')
+    print_log(f"\n🔑 User {username} needs new tokens", bcolors.WARNING)
+    
+    device_flow = DeviceCodeFlow(client_id, client_secret)
+    try:
+        token_result = await device_flow.get_user_tokens(username)
+        if token_result:
+            new_access_token, new_refresh_token = token_result
+            user['access_token'] = new_access_token
+            user['refresh_token'] = new_refresh_token
+            
+            # Immediately validate the new tokens to ensure they work
+            # and get expiry information for proactive refresh
+            validation_result = await _validate_new_tokens(user)
+            if validation_result['valid']:
+                print_log(f"✅ Successfully obtained and validated new tokens for {username}", bcolors.OKGREEN)
+                return {'user': validation_result['user'], 'tokens_updated': True}
+            else:
+                print_log(f"⚠️ New tokens for {username} failed validation", bcolors.WARNING)
+                return {'user': user, 'tokens_updated': True}  # Still save them, might work later
+        else:
+            print_log(f"❌ Failed to obtain tokens for {username}", bcolors.FAIL)
+            return {'user': user, 'tokens_updated': False}
+    except Exception as e:
+        print_log(f"❌ Error during token setup for {username}: {e}", bcolors.FAIL)
+        return {'user': user, 'tokens_updated': False}
+
+
+async def _validate_new_tokens(user):
+    """Validate newly obtained tokens and get expiry information."""
+    username = user.get('username', 'Unknown')
+    
+    try:
+        # Create a temporary bot instance to validate and get token expiry
+        from .bot import TwitchColorBot
+        
+        temp_bot = TwitchColorBot(
+            token=user['access_token'],
+            refresh_token=user['refresh_token'],
+            client_id=user['client_id'],
+            client_secret=user['client_secret'],
+            nick=username,
+            channels=["temp"],  # Temporary channel for validation
+            use_random_colors=user.get('use_random_colors', True),
+            config_file=None  # Don't auto-save during validation
+        )
+        
+        # Validate the new tokens
+        valid = await temp_bot._validate_token_via_api()
+        
+        if valid:
+            # Update user with any token information the bot might have gathered
+            user['access_token'] = temp_bot.access_token
+            user['refresh_token'] = temp_bot.refresh_token
+            print_log(f"✅ New tokens for {username} validated successfully", bcolors.OKGREEN, debug_only=True)
+            return {'valid': True, 'user': user}
+        else:
+            print_log(f"⚠️ New tokens for {username} validation failed", bcolors.WARNING, debug_only=True)
+            return {'valid': False, 'user': user}
+            
+    except Exception as e:
+        print_log(f"⚠️ Error validating new tokens for {username}: {e}", bcolors.WARNING, debug_only=True)
+        return {'valid': False, 'user': user}
+
+
+def _save_updated_config(updated_users, config_file):
+    """Save updated configuration to file."""
+    try:
+        save_users_to_config(updated_users, config_file)
+        print_log("💾 Configuration updated with new tokens", bcolors.OKGREEN)
+    except Exception as e:
+        print_log(f"❌ Failed to save updated configuration: {e}", bcolors.FAIL)

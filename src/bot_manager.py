@@ -5,7 +5,7 @@ Bot manager for handling multiple Twitch bots
 import asyncio
 import os
 import signal
-from typing import List, Dict, Any, Callable
+from typing import List, Dict, Any
 
 from .bot import TwitchColorBot
 from .colors import bcolors

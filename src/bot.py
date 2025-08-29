@@ -159,8 +159,9 @@ class TwitchColorBot:
         """Periodically check and refresh token if needed"""
         while self.running:
             try:
-                # Check token every 10 minutes
-                await asyncio.sleep(600)  # 10 minutes
+                # Dynamic check interval based on token expiry
+                check_interval = self._get_token_check_interval()
+                await asyncio.sleep(check_interval)
                 
                 if self.running:  # Check if still running after sleep
                     await self._check_and_refresh_token()
@@ -172,6 +173,24 @@ class TwitchColorBot:
                 print_log(f'⚠️ Error in periodic token check for {self.username}: {e}', bcolors.WARNING)
                 # Wait 5 minutes before retrying
                 await asyncio.sleep(300)
+    
+    def _get_token_check_interval(self) -> int:
+        """Get dynamic check interval based on token expiry time"""
+        try:
+            if self._has_token_expiry():
+                hours_remaining = self._hours_until_expiry()
+                if hours_remaining < 0.5:  # Less than 30 minutes
+                    return 180  # Check every 3 minutes if <30 minutes remaining
+                elif hours_remaining < 1:  # Less than 1 hour
+                    return 300  # Check every 5 minutes if <1 hour remaining
+                elif hours_remaining < 2:  # Less than 2 hours
+                    return 600  # Check every 10 minutes if <2 hours remaining
+                else:
+                    return 1800  # Check every 30 minutes if >2 hours remaining
+            else:
+                return 600  # Default 10 minutes if no expiry known
+        except Exception:
+            return 600  # Default 10 minutes on error
     
     async def _check_and_refresh_token(self, force: bool = False):
         """Public coordinator for token validation / refresh.
@@ -220,22 +239,31 @@ class TwitchColorBot:
 
     async def _check_expiring_token(self) -> bool:
         hours_remaining = self._hours_until_expiry()
-        print_log(f"🔑 {self.username}: Token expires in {hours_remaining:.1f} hours")
+        print_log(f"🔑 {self.username}: Token expires in {hours_remaining:.1f} hours", debug_only=True)
+        
+        # Refresh when less than 1 hour remaining (for ~4 hour tokens)
+        # This gives us plenty of buffer while not refreshing too early
         if hours_remaining < 1:
-            print_log(f"⏰ {self.username}: Token expires in less than 1 hour, refreshing...", bcolors.WARNING)
+            if hours_remaining < 0.25:  # Less than 15 minutes
+                print_log(f"⏰ {self.username}: Token expires in {hours_remaining*60:.0f} minutes, refreshing urgently...", bcolors.FAIL)
+            else:
+                print_log(f"⏰ {self.username}: Token expires in {hours_remaining:.1f} hours, refreshing proactively...", bcolors.WARNING)
             return await self._attempt_standard_refresh()
-        print_log(f"✅ {self.username}: Token is valid and has sufficient time remaining", bcolors.OKGREEN)
+        
+        print_log(f"✅ {self.username}: Token is valid and has sufficient time remaining ({hours_remaining:.1f}h)", bcolors.OKGREEN, debug_only=True)
         return True
 
     async def _validate_token_via_api(self) -> bool:
         try:
             user_info = await self._get_user_info()
             if user_info:
-                print_log(f"✅ {self.username}: Token is still valid (API check)")
+                print_log(f"✅ {self.username}: Token is valid (API check)", bcolors.OKGREEN, debug_only=True)
                 return True
-            return False
+            else:
+                print_log(f"🔍 {self.username}: Token validation failed, attempting refresh...", bcolors.WARNING, debug_only=True)
+                return False
         except Exception as e:  # Broad by design; upstream already categorized.
-            print_log(f"🔍 {self.username}: Token validation failed ({e}), attempting refresh...", bcolors.WARNING)
+            print_log(f"🔍 {self.username}: Token validation failed ({e}), attempting refresh...", bcolors.WARNING, debug_only=True)
             return False
 
     async def _attempt_standard_refresh(self) -> bool:
@@ -268,6 +296,10 @@ class TwitchColorBot:
                 return data['data'][0]
             elif status_code == 429:
                 self.rate_limiter.handle_429_error(headers, is_user_request=True)
+                return None
+            elif status_code == 401:
+                # Don't log 401 as error - it's expected when tokens are expired
+                # The calling function will handle the refresh
                 return None
             else:
                 logger.error(f"Failed to get user info: {status_code}", user=self.username, status_code=status_code)
@@ -312,6 +344,9 @@ class TwitchColorBot:
             elif status_code == 429:
                 self.rate_limiter.handle_429_error(headers, is_user_request=True)
                 return None
+            elif status_code == 401:
+                # Token might be expired - let the exception handler deal with refresh
+                return None
             
             # If no color set or API call fails, return None
             logger.info("No current color set (using default)", user=self.username)
@@ -326,10 +361,10 @@ class TwitchColorBot:
         if hasattr(self, 'config_file') and self.config_file:
             user_config = {
                 'username': self.username,
-                'access_token': self.access_token,
-                'refresh_token': self.refresh_token,
                 'client_id': self.client_id,
                 'client_secret': self.client_secret,
+                'access_token': self.access_token,
+                'refresh_token': self.refresh_token,
                 'channels': getattr(self, 'channels', [self.username.lower()]),
                 'use_random_colors': self.use_random_colors  # Preserve the current setting
             }

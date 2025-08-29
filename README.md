@@ -29,7 +29,8 @@ Automatically change your Twitch username color after each message you send in c
 - **👥 Multi-User Support**: Run multiple bots for different Twitch accounts simultaneously
 - **🎲 Flexible Colors**: Supports both preset Twitch colors and random hex colors (Prime/Turbo users)
 - **🔄 Universal Compatibility**: Works with Chatterino, web chat, or any IRC client
-- **🔑 Token Management**: Forced startup refresh + periodic (10 min) checks; refreshes automatically when <1h remains
+- **🔑 Automatic Token Setup**: Smart token management with automatic authorization flow - just provide client credentials!
+- **🔄 Token Refresh**: Automatic token validation and refresh with fallback to authorization flow when needed
 - **🐳 Docker Ready**: Multi-platform support (amd64, arm64, arm/v7, arm/v6, riscv64)
 - **💾 Persistent Config**: Interactive setup with configuration file persistence
 - **👀 Live Config Reload**: Automatically detects config file changes and restarts bots without manual intervention
@@ -40,7 +41,7 @@ Automatically change your Twitch username color after each message you send in c
 - **🛡️ Error Handling**: Automatic retries with exponential backoff
 - **🎯 Smart Turbo/Prime Detection**: Automatically detects non-Turbo/Prime users and falls back to preset colors
 - **💾 Persistent Fallback**: Saves Turbo/Prime limitations to config for permanent fallback behavior
-- **⚡ HTTP Client**: Simple and reliable HTTP client for API communication
+- **⚡ Unattended Operation**: No user interaction required after initial authorization
 - **✅ Configuration Validation**: Comprehensive validation with detailed error reporting
 - **📊 Rate Limiting**: Smart rate limiting with quota tracking and logging
 
@@ -72,14 +73,44 @@ All dependencies are automatically installed via `requirements.txt`.
 1. Go to [Twitch Dev Console](https://dev.twitch.tv/console/apps) and sign in
 2. Click **Register Your Application**
 3. Name your app (e.g., `TwitchColorBot`)
-4. Set **OAuth Redirect URLs** to: `https://twitchtokengenerator.com`
+4. Set **OAuth Redirect URLs** to: `https://localhost` (or any valid URL - not used for automatic setup)
 5. Set **Category** to `Chat Bot` or `Other`
 6. Click **Create** and copy your **Client ID**
 7. Click **Manage** → **New Secret** to generate a **Client Secret**
 
+> **Note**: For automatic setup (Option 1), the redirect URL is not used since we use device flow. For manual setup (Option 2), you'll need `https://twitchtokengenerator.com`.
+
 #### Generate Tokens
 
+##### Option 1: Automatic Setup (Recommended)
+
+The bot can automatically generate tokens for you! Just provide your `client_id` and `client_secret` in the config file, and the bot will handle the rest:
+
+1. Create your config file with just client credentials:
+
+```json
+{
+  "users": [
+    {
+      "username": "your_username",
+      "client_id": "your_client_id", 
+      "client_secret": "your_client_secret",
+      "channels": ["channel1", "channel2"],
+      "use_random_colors": true
+    }
+  ]
+}
+```
+
+1. Run the bot - it will automatically prompt for authorization when needed
+1. Follow the displayed URL and enter the code
+1. Bot continues automatically once authorized
+
+##### Option 2: Manual Token Generation
+
 Use [twitchtokengenerator.com](https://twitchtokengenerator.com):
+
+> **Important**: If using this method, make sure your Twitch app's OAuth Redirect URL is set to `https://twitchtokengenerator.com`
 
 - Enter your Client ID and Client Secret
 - Select scopes: `chat:read`, `user:manage:chat_color` (optional: `chat:edit`)
@@ -202,6 +233,24 @@ docker run -e TWITCH_CONF_FILE=/app/config/my-config.conf \
 
 Configuration file format:
 
+**Automatic Setup (Recommended):**
+
+```json
+{
+  "users": [
+    {
+      "username": "your_username",
+      "client_id": "your_client_id",
+      "client_secret": "your_client_secret",
+      "channels": ["channel1", "channel2"],
+      "use_random_colors": true
+    }
+  ]
+}
+```
+
+**Manual Token Setup:**
+
 ```json
 {
   "users": [
@@ -218,9 +267,16 @@ Configuration file format:
 }
 ```
 
-Features:
+### Token Management Features
 
-- **Automatic token lifecycle**: Forced refresh at startup then every 10 minutes if expiring (<1h) or validation fails
+- **🔄 Automatic Authorization**: Missing or invalid tokens trigger automatic device flow authorization
+- **🔑 Smart Token Validation**: Checks existing tokens on startup and validates/refreshes as needed
+- **💾 Persistent Token Storage**: Successfully authorized tokens are automatically saved to config
+- **🛡️ Fallback Handling**: Seamlessly falls back to device flow when refresh tokens fail
+- **⚡ Unattended Operation**: No user interaction required after initial authorization
+
+### Configuration Features
+
 - **Multi-user support**: Add multiple users to the same config file
 - **Simple configuration**: Single configuration file for all settings
 - **Custom config file**: Use `TWITCH_CONF_FILE` environment variable to specify custom config file path

@@ -21,6 +21,7 @@ twitch_colorchanger/
     ├── config.py               # Configuration management
     ├── config_validator.py     # Configuration validation
     ├── config_watcher.py       # Live config reload
+    ├── device_flow.py          # OAuth Device Authorization Grant
     ├── error_handling.py       # Exception handling
     ├── logger.py               # Structured logging
     ├── rate_limiter.py         # API rate limiting
@@ -43,6 +44,7 @@ watchdog>=3.0.0,<4.0.0   # File system monitoring
 **Architecture Pattern**: Simple async main with error handling
 
 - **Configuration Loading**: `get_configuration()` loads users from JSON config
+- **Automatic Token Setup**: `setup_missing_tokens()` handles device flow for missing/invalid tokens
 - **Bot Orchestration**: `run_bots(users_config, config_file)` manages all bot instances
 - **Health Check Mode**: `--health-check` flag for Docker health checks
 - **Graceful Shutdown**: Keyboard interrupt and exception handling
@@ -113,8 +115,33 @@ watchdog>=3.0.0,<4.0.0   # File system monitoring
 - `get_configuration()`: Loads from file only (no environment)
 - `get_docker_config()`: Extracts config from environment variables
 - `update_user_in_config()`: Updates specific user after token refresh
+- `setup_missing_tokens()`: Automatic token setup via device flow integration
 
-### 5. Live Configuration Reload (`src/config_watcher.py`)
+### 5. Device Flow Token Setup (`src/device_flow.py`)
+
+**Architecture Pattern**: OAuth Device Authorization Grant implementation
+
+**Key Class**: `DeviceCodeFlow`
+
+- **Device Code Request**: Generates device code and user verification URL
+- **Unattended Polling**: Automated polling for authorization completion
+- **User Interface**: Clear instructions with expiry tracking
+- **Error Handling**: Handles authorization denial, timeouts, and rate limiting
+
+**Core Methods**:
+
+- `request_device_code()`: Requests device code from Twitch OAuth endpoint
+- `poll_for_tokens()`: Polls for authorization completion with exponential backoff
+- `get_user_tokens()`: Complete flow returning access/refresh tokens
+- `_handle_polling_error()`: Processes various OAuth error responses
+
+**Integration Points**:
+
+- Called by `setup_missing_tokens()` when existing tokens are invalid
+- Automatically triggered on bot startup for users without valid tokens
+- Results saved to configuration file for future use
+
+### 6. Live Configuration Reload (`src/config_watcher.py`)
 
 **Architecture Pattern**: File system event handling with coordination
 

@@ -5,7 +5,7 @@ Configuration file watcher for runtime config changes
 import asyncio
 import os
 import threading
-from typing import Callable, Dict, List, Any
+from typing import Callable
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 

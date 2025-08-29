@@ -30,11 +30,28 @@ Generate new color (avoiding current) → API call to Twitch → Color changed
 
 ## Token Lifecycle Management
 
+### Automatic Token Setup
+
+- **Device Flow Integration**: Uses OAuth Device Authorization Grant for automatic token generation
+- **Missing Token Detection**: Automatically detects users without valid tokens on startup
+- **Unattended Authorization**: User authorizes once via browser, bot handles all polling and token retrieval
+- **Smart Fallback**: Only triggers device flow when existing tokens are invalid or can't be refreshed
+- **Config Integration**: Automatically saves new tokens to configuration file
+
+### Device Flow Process
+
+```text
+Bot startup → Check token validity → If invalid/missing → Generate device code →
+Display authorization URL + code → User authorizes in browser → 
+Bot polls for completion → Receives tokens → Saves to config → Continues startup
+```
+
 ### Startup Behavior
 
-- **Force Refresh**: Immediately refreshes tokens on startup if refresh token exists
-- **Token Validation**: Validates access token against Twitch API
-- **Expiry Tracking**: Records token expiry time for proactive refresh
+- **Token Validation**: Checks existing tokens first before triggering device flow
+- **Force Refresh**: Attempts token refresh if refresh token exists
+- **Device Flow Fallback**: Only used when validation and refresh both fail
+- **Config Persistence**: Automatically updates config with new tokens
 
 ### Periodic Maintenance
 
@@ -47,6 +64,7 @@ Generate new color (avoiding current) → API call to Twitch → Color changed
 
 - **Automatic Retry**: Exponential backoff for temporary failures
 - **Token Invalidation**: Handles revoked or expired tokens gracefully
+- **Device Flow Recovery**: Falls back to device flow for completely invalid tokens
 - **Fallback Strategy**: Continues operation with available valid tokens
 
 ## Configuration System

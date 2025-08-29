@@ -14,13 +14,22 @@ def validate_user_config(user_config):
         logger.error(f"Username must be 3-25 characters: '{username}'")
         return False
     
-    # Basic token validation
+    # Token validation - allow missing tokens if client credentials are present
     access_token = user_config.get('access_token', '').strip()
-    if not access_token or len(access_token) < 20:
-        logger.error(f"Access token too short for {username}")
+    client_id = user_config.get('client_id', '').strip()
+    client_secret = user_config.get('client_secret', '').strip()
+    
+    # Check if we have either:
+    # 1. Valid access token, OR
+    # 2. Client credentials for device flow
+    has_access_token = access_token and len(access_token) >= 20 and access_token.lower() not in ['test', 'placeholder', 'your_token_here', 'fake_token']
+    has_client_credentials = client_id and client_secret and len(client_id) >= 10 and len(client_secret) >= 10
+    
+    if not has_access_token and not has_client_credentials:
+        logger.error(f"User {username} needs either access_token OR (client_id + client_secret) for automatic setup")
         return False
     
-    if access_token.lower() in ['test', 'placeholder', 'your_token_here', 'fake_token']:
+    if has_access_token and access_token.lower() in ['test', 'placeholder', 'your_token_here', 'fake_token']:
         logger.error(f"Please use a real token for {username}")
         return False
     

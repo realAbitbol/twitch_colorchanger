@@ -7,7 +7,7 @@ import asyncio
 import sys
 import os
 
-from src.config import get_configuration, print_config_summary
+from src.config import get_configuration, print_config_summary, setup_missing_tokens
 from src.bot_manager import run_bots
 from src.utils import print_instructions
 from src.logger import logger
@@ -22,14 +22,17 @@ async def main():
         # Print welcome message and instructions
         print_instructions()
         
+        # Get config file path for token saving
+        config_file = os.environ.get('TWITCH_CONF_FILE', "twitch_colorchanger.conf")
+        
         # Get configuration from config file
         users_config = get_configuration()
         
+        # Setup missing tokens automatically (device flow fallback)
+        users_config = await setup_missing_tokens(users_config, config_file)
+        
         # Print configuration summary
         print_config_summary(users_config)
-        
-        # Get config file path for token saving
-        config_file = os.environ.get('TWITCH_CONF_FILE', "twitch_colorchanger.conf")
         
         # Run all bots (signal handlers are set up in bot_manager)
         await run_bots(users_config, config_file)

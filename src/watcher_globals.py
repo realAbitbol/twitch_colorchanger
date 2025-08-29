@@ -9,10 +9,6 @@ def set_global_watcher(watcher):
     global _global_watcher
     _global_watcher = watcher
 
-def get_global_watcher():
-    """Get the global config watcher instance"""
-    return _global_watcher
-
 def pause_config_watcher():
     """Pause the global config watcher if it exists"""
     if _global_watcher:
