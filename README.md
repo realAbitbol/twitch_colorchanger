@@ -125,7 +125,31 @@ Use [twitchtokengenerator.com](https://twitchtokengenerator.com):
 
 ### 2. Run the Bot
 
-#### Option A: Direct Run
+#### Option A: Easy Startup Scripts (Recommended)
+
+For the easiest setup, use the provided startup scripts that handle dependency installation and error checking:
+
+**Windows:**
+
+```cmd
+start_bot.bat
+```
+
+**macOS/Linux:**
+
+```bash
+./start_bot.sh
+```
+
+These scripts will:
+
+- Check if Python is installed and version compatible
+- Verify your config file exists
+- Install/update dependencies automatically
+- Start the bot with proper error handling
+- Keep the window open if there are errors
+
+#### Option B: Direct Run
 
 Create a config file from the sample:
 
@@ -135,7 +159,7 @@ cp twitch_colorchanger.conf.sample twitch_colorchanger.conf
 python main.py
 ```
 
-#### Option B: Docker
+#### Option C: Docker
 
 Create a config file from the sample:
 
@@ -471,6 +495,50 @@ This project is licensed under the GNU General Public License v3.0 - see the [LI
 ### Why GPL v3?
 
 We chose GPL v3 to ensure this software remains free and open source. Any derivative works must also be open source under compatible licenses, fostering a community of shared improvements.
+
+---
+
+---
+
+## 🔧 Troubleshooting
+
+### Startup Script Issues
+
+**Windows (`start_bot.bat`):**
+
+- If you get "Python is not installed", install Python from [python.org](https://python.org) and make sure "Add to PATH" is checked
+- If you get permission errors, run Command Prompt as Administrator
+- For dependency installation issues, the script will automatically create a virtual environment
+
+**macOS/Linux (`start_bot.sh`):**
+
+- If you get "Permission denied", run: `chmod +x start_bot.sh`
+- If Python version is too old, update using your package manager (brew, apt, yum, etc.)
+- The script handles externally-managed environments by creating a virtual environment automatically
+
+### Common Issues
+
+**"Configuration file not found":**
+
+```bash
+cp twitch_colorchanger.conf.sample twitch_colorchanger.conf
+```
+
+**"Bot exits immediately":**
+
+- Check your Client ID and Client Secret are correct
+- Verify your OAuth Redirect URL is set to `https://twitchtokengenerator.com`
+- Make sure you have the required scopes: `chat:read`, `user:manage:chat_color`
+
+**Virtual Environment:**
+If you prefer to manage your own virtual environment:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate.bat
+pip install -r requirements.txt
+python main.py
+```
 
 ---
 
