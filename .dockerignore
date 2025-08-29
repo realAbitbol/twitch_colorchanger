@@ -1,0 +1,107 @@
+# Git
+.git
+.gitignore
+.github/
+
+# Documentation (keep README.md and LICENSE for image documentation)
+FUNCTIONAL_DOCUMENTATION.md
+IMPLEMENTATION_GUIDE.md
+
+# Configuration files
+docker-compose.yml
+docker-compose.yml-sample
+twitch_colorchanger.conf
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# Linting and formatting caches
+.ruff_cache/
+.mypy_cache/
+.black_cache/
+.isort_cache/
+
+# Package managers
+poetry.lock
+Pipfile.lock
+requirements-dev.txt
+
+# Backup files
+*.bak
+*.backup
+*.tmp
+
+# Runtime files
+*.pid
+*.pid.lock
+*.seed
+
+# Other
+node_modules/
+npm-debug.log*

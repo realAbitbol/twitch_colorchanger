@@ -1,0 +1,129 @@
+# Configuration files with sensitive data
+docker-compose.yml
+docker-compose.*.yml
+docker-compose-*.yml
+twitch_colorchanger.conf
+
+# VS Code
+.vscode/
+.history/
+
+# Test files and temporary configurations
+*test*.yml
+*test*.yaml
+test-*
+*-test.*
+*.test.*
+test_*
+*_test.*
+debug_*.py
+*debug*.py
+simple_config_test.py
+test_config.py
+test_disable_function.py
+test_persistence.py
+
+# Documentation backup/temp files
+*.updated.md
+*.backup.md
+*_backup.*
+*_updated.*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.python-version
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Testing
+.tox/
+.nox/
+.coverage
+.pytest_cache/
+cover/
+htmlcov/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Linting and formatting caches
+.ruff_cache/
+.mypy_cache/
+.black_cache/
+.isort_cache/
+
+# Package managers
+poetry.lock
+Pipfile.lock
+requirements-dev.txt
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Backup files
+*.bak
+*.backup
+*.tmp
+
+# Runtime files
+*.pid
+*.pid.lock
+*.seed
+

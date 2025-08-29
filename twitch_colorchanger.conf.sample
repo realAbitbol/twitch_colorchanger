@@ -1,0 +1,43 @@
+{
+  "users": [
+    {
+      "username": "your_username_1",
+      "client_id": "your_client_id_1",
+      "client_secret": "your_client_secret_1",
+      "channels": ["channel1", "channel2"],
+      "is_prime_or_turbo": true
+    },
+    {
+      "username": "your_username_2",
+      "client_id": "your_client_id_2",
+      "client_secret": "your_client_secret_2",
+      "channels": ["channel3", "channel4"],
+      "is_prime_or_turbo": false
+    }
+  ]
+}
+
+// ====================================================================
+// AUTOMATIC TOKEN SETUP (RECOMMENDED)
+// ====================================================================
+// Just provide your client_id and client_secret above.
+// The bot will automatically guide you through token authorization!
+// 
+// When you run the bot, it will:
+// 1. Check if you have valid tokens
+// 2. If not, display an authorization URL and code
+// 3. You visit the URL, enter the code, and authorize
+// 4. Bot automatically receives tokens and saves them to this file
+// 5. Bot continues running normally
+//
+// No manual token generation needed!
+
+// ====================================================================
+// MANUAL TOKEN SETUP (ALTERNATIVE)
+// ====================================================================
+// If you prefer to generate tokens manually, add these fields:
+//   "access_token": "your_access_token",
+//   "refresh_token": "your_refresh_token",
+//
+// Generate tokens at: https://twitchtokengenerator.com
+// Required scopes: chat:read, user:manage:chat_color

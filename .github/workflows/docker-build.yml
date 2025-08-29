@@ -1,0 +1,143 @@
+name: Build and Push Docker Images
+
+"on":
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:  # Allow manual triggers
+
+env:
+  DOCKER_REGISTRY: docker.io
+  DOCKER_IMAGE_NAME: damastah/twitch-colorchanger
+  GHCR_REGISTRY: ghcr.io
+  GHCR_IMAGE_NAME: ghcr.io/realabitbol/twitch-colorchanger
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write  # For signing images
+    
+    # Note: DOCKER_USERNAME and DOCKER_PASSWORD are repository secrets
+    # SonarQube may flag these as "potentially invalid" but this is a false positive
+    # These secrets are standard GitHub Actions repository secrets
+    env:
+      DOCKER_HUB_PUSH_ENABLED: ${{ github.repository_owner == 'realAbitbol' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6,linux/riscv64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6,linux/riscv64
+
+      # Log in to Docker Hub (requires DOCKER_USERNAME and DOCKER_PASSWORD secrets)
+      # These secrets should be configured in repository settings
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request' && env.DOCKER_HUB_PUSH_ENABLED == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GHCR_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ github.repository_owner == 'realAbitbol' && env.DOCKER_IMAGE_NAME || '' }}
+            ${{ env.GHCR_IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=Twitch ColorChanger Bot
+            org.opencontainers.image.description=Multi-user Twitch chat color changer bot
+            org.opencontainers.image.vendor=realAbitbol
+            org.opencontainers.image.licenses=GPL-3.0
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6,linux/riscv64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+      - name: Generate build summary
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "## 🐳 Docker Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Images Built:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.repository_owner }}" == "realAbitbol" ]; then
+            echo "**Docker Hub:** \`${{ env.DOCKER_IMAGE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "**GitHub Container Registry:** \`${{ env.GHCR_IMAGE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Platforms:" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ linux/amd64 (x86_64)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ linux/arm64 (ARM64, Apple Silicon)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ linux/arm/v7 (32-bit ARM, Raspberry Pi 2/3/4)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ linux/arm/v6 (ARMv6, Raspberry Pi Zero/1)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ linux/riscv64 (RISC-V 64-bit)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Tags:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.GHCR_IMAGE_NAME }}:latest
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
