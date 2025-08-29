@@ -2,6 +2,13 @@
 
 [![Build and Push Docker Images](https://github.com/realAbitbol/twitch_colorchanger/actions/workflows/docker-build.yml/badge.svg)](https://github.com/realAbitbol/twitch_colorchanger/actions/workflows/docker-build.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Python](https://img.shields.io/badge/Python-3.13+-blue.svg)](https://www.python.org/downloads/)
+[![Docker](https://img.shields.io/badge/Docker-Multi--Platform-blue.svg)](https://hub.docker.com/r/damastah/twitch-colorchanger)
+![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)
+[![Twitch](https://img.shields.io/badge/Twitch-Bot-purple.svg)](https://dev.twitch.tv/)
+![IRC](https://img.shields.io/badge/Protocol-IRC-green.svg)
+![Multi-User](https://img.shields.io/badge/Multi--User-Supported-brightgreen.svg)
+![Auto-Token](https://img.shields.io/badge/Token%20Setup-Automatic-orange.svg)
 [![Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/realabitbol)
 
 Automatically change your Twitch username color after each message you send in chat. Supports both preset Twitch colors and random hex colors (for Prime/Turbo users). **Supports multiple users and Docker deployment!**
