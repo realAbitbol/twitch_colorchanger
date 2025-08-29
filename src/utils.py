@@ -9,16 +9,35 @@ from .colors import bcolors
 DEBUG = os.environ.get('DEBUG', 'false').lower() in ('true', '1', 'yes')
 
 
+SENSITIVE_KEYS = {"client_secret", "access_token", "refresh_token"}
+
+def sanitize_for_log(data):
+    """Redact sensitive fields from dict/list objects before logging."""
+    if isinstance(data, dict):
+        return {k: ("<REDACTED>" if k in SENSITIVE_KEYS else sanitize_for_log(v)) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [sanitize_for_log(item) for item in data]
+    # allow other base types to pass through unchanged
+    return data
+
 def print_log(message, color="", debug_only=False):
     """Print log with ANSI colors. If debug_only=True, only print when DEBUG=True"""
     if debug_only and not DEBUG:
         return
         
+    # Sanitization: for dict/list messages, redact secrets
+    if isinstance(message, (dict, list)):
+        from pprint import pformat
+        sanitized = sanitize_for_log(message)
+        message_str = pformat(sanitized)
+    else:
+        message_str = str(message)
+
     use_colors = os.environ.get('FORCE_COLOR', 'true').lower() != 'false'
     if use_colors:
-        print(f"{color}{message}{bcolors.ENDC}")
+        print(f"{color}{message_str}{bcolors.ENDC}")
     else:
-        print(message)
+        print(message_str)
 
 
 def print_instructions():

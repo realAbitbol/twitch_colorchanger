@@ -75,14 +75,18 @@ def _set_file_permissions(config_file):
 def _log_save_operation(users, config_file):
     """Log the save operation details"""
     print_log(f"💾 Saving {len(users)} users to {config_file}", bcolors.OKBLUE, debug_only=True)
+    from .utils import sanitize_for_log
     for i, user in enumerate(users, 1):
-        print_log(f"  User {i}: {user['username']} -> is_prime_or_turbo: {user.get('is_prime_or_turbo', 'MISSING_FIELD')}", bcolors.OKCYAN, debug_only=True)
-
+        safe_user = sanitize_for_log({"username": user.get('username'), "is_prime_or_turbo": user.get('is_prime_or_turbo', 'MISSING_FIELD')})
+        print_log(f"  User {i}: {safe_user['username']} -> is_prime_or_turbo: {safe_user.get('is_prime_or_turbo', 'MISSING_FIELD')}", bcolors.OKCYAN, debug_only=True)
 
 def _log_debug_data(save_data):
     """Log debug information about the data being saved"""
+    from .utils import sanitize_for_log
     print_log("🔍 DEBUG: Exact JSON being written:", bcolors.HEADER, debug_only=True)
-    print_log(json.dumps(save_data, indent=2), bcolors.OKCYAN, debug_only=True)
+    safe_data = sanitize_for_log(save_data)
+    import json
+    print_log(json.dumps(safe_data, indent=2), bcolors.OKCYAN, debug_only=True)
 
 
 def _verify_saved_data(config_file):
