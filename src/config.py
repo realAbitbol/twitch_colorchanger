@@ -254,7 +254,7 @@ def print_config_summary(users):
         print_log(f"\n👤 User {i}:", bcolors.OKCYAN)
         print_log(f"   Username: {user['username']}")
         print_log(f"   Channels: {', '.join(user['channels'])}")
-        print_log(f"   Random Colors: {'Yes' if user.get('is_prime_or_turbo', True) else 'No'}")
+        print_log(f"   Is Prime or Turbo: {'Yes' if user.get('is_prime_or_turbo', True) else 'No'}")
         print_log(f"   Has Refresh Token: {'Yes' if user.get('refresh_token') else 'No'}")
 
 
