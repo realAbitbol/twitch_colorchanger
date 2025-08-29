@@ -80,10 +80,11 @@ def _log_save_operation(users, config_file):
 
 
 def _log_debug_data(save_data):
-    """Log debug information about the data being saved"""
-    print_log("🔍 DEBUG: Exact JSON being written:", bcolors.HEADER, debug_only=True)
-    print_log(json.dumps(save_data, indent=2), bcolors.OKCYAN, debug_only=True)
-
+    """Log debug information about the data being saved (redacted)."""
+    from .utils import redact_sensitive
+    import json
+    print_log("🔍 DEBUG: Exact JSON being written (redacted):", bcolors.HEADER, debug_only=True)
+    print_log(json.dumps(redact_sensitive(save_data), indent=2), bcolors.OKCYAN, debug_only=True)
 
 def _verify_saved_data(config_file):
     """Verify that the data was saved correctly"""

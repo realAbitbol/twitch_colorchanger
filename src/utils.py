@@ -5,21 +5,39 @@ Utility functions for logging, user input, and common operations
 import os
 from .colors import bcolors
 
+SENSITIVE_KEYS = {
+    "client_secret", "access_token", "refresh_token", "password", "secret", "api_key"
+}
+
+def redact_sensitive(data):
+    """
+    Recursively redact sensitive fields in a dictionary/list before logging.
+    """
+    if isinstance(data, dict):
+        return {k: ("[REDACTED]" if k in SENSITIVE_KEYS else redact_sensitive(v)) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [redact_sensitive(v) for v in data]
+    return data
 # Global debug flag
 DEBUG = os.environ.get('DEBUG', 'false').lower() in ('true', '1', 'yes')
 
 
 def print_log(message, color="", debug_only=False):
-    """Print log with ANSI colors. If debug_only=True, only print when DEBUG=True"""
+    """Print log with ANSI colors. If debug_only=True, only print when DEBUG=True.
+    This will redact sensitive fields in dicts/lists before logging."""
     if debug_only and not DEBUG:
         return
+    # Redact if input is dict/list (but leave simple strings untouched)
+    safe_message = message
+    if isinstance(message, (dict, list)):
+        import json
+        safe_message = json.dumps(redact_sensitive(message), indent=2)
         
     use_colors = os.environ.get('FORCE_COLOR', 'true').lower() != 'false'
     if use_colors:
-        print(f"{color}{message}{bcolors.ENDC}")
+        print(f"{color}{safe_message}{bcolors.ENDC}")
     else:
-        print(message)
-
+        print(safe_message)
 
 def print_instructions():
     """Display essential setup instructions"""
