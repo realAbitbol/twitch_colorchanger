@@ -323,13 +323,24 @@ The bot automatically watches for changes to the configuration file and restarts
 
 ### Docker Configuration
 
-The container runs as root for compatibility with mounted volumes. Mount your config file directly:
+The container runs as a non-root user (`appuser`) for enhanced security. Mount your config file directly:
 
 ```bash
 docker run -v $PWD/twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf damastah/twitch-colorchanger:latest
 ```
 
-If you encounter permission issues, ensure the mounted config file is readable by the container.
+**Important**: The config file must be readable and writable by the container for token management:
+
+```bash
+# Make config file accessible by container user (UID 1000)
+chmod 666 twitch_colorchanger.conf
+```
+
+This allows the bot to:
+
+- Read your configuration on startup
+- Save new tokens from automatic authorization
+- Update tokens during refresh operations
 
 ### Debug Mode
 
