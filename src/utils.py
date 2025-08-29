@@ -11,11 +11,14 @@ DEBUG = os.environ.get('DEBUG', 'false').lower() in ('true', '1', 'yes')
 
 def print_log(message, color="", debug_only=False):
     """Print log with ANSI colors. If debug_only=True, only print when DEBUG=True"""
-    if debug_only and not DEBUG:
-        return
+    if debug_only:
+        # Check DEBUG environment variable dynamically
+        debug_enabled = os.environ.get('DEBUG', 'false').lower() in ('true', '1', 'yes')
+        if not debug_enabled:
+            return
         
     use_colors = os.environ.get('FORCE_COLOR', 'true').lower() != 'false'
-    if use_colors:
+    if use_colors and color:
         print(f"{color}{message}{bcolors.ENDC}")
     else:
         print(message)

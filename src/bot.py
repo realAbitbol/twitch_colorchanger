@@ -70,6 +70,10 @@ class TwitchColorBot:
         self.irc = None
         self.running = False
         
+        # Background tasks
+        self.token_task = None
+        self.irc_task = None
+        
         # Statistics
         self.messages_sent = 0
         self.colors_changed = 0
@@ -115,15 +119,15 @@ class TwitchColorBot:
         self.irc.set_message_handler(self.handle_irc_message)
         
         # Start background tasks
-        token_task = asyncio.create_task(self._periodic_token_check())
+        self.token_task = asyncio.create_task(self._periodic_token_check())
         
         # Run IRC listening in executor since it's not async
         loop = asyncio.get_event_loop()
-        irc_task = loop.run_in_executor(None, self.irc.listen)
+        self.irc_task = loop.run_in_executor(None, self.irc.listen)
         
         try:
             # Wait for either task to complete
-            await asyncio.gather(token_task, irc_task, return_exceptions=True)
+            await asyncio.gather(self.token_task, self.irc_task, return_exceptions=True)
         except KeyboardInterrupt:
             print_log("🛑 Shutting down bot...", bcolors.WARNING)
         finally:
@@ -134,8 +138,26 @@ class TwitchColorBot:
         print_log(f"⏹️ Stopping bot for {self.username}", bcolors.WARNING)
         self.running = False
         
+        # Cancel background tasks
+        if self.token_task and not self.token_task.done():
+            self.token_task.cancel()
+            try:
+                await self.token_task
+            except asyncio.CancelledError:
+                pass
+        
+        # Disconnect IRC (this sets running=False on IRC object)
         if self.irc:
             self.irc.disconnect()
+        
+        # Wait for IRC task to finish (disconnect should cause it to exit)
+        if self.irc_task and not self.irc_task.done():
+            try:
+                await asyncio.wait_for(self.irc_task, timeout=2.0)
+            except asyncio.TimeoutError:
+                print_log(f"⚠️ IRC task didn't finish within timeout for {self.username}", bcolors.WARNING)
+            except Exception as e:
+                print_log(f"⚠️ Error waiting for IRC task: {e}", bcolors.WARNING)
         
         # Add a small delay to ensure cleanup
         await asyncio.sleep(0.1)
@@ -148,12 +170,16 @@ class TwitchColorBot:
             # Schedule color change in the event loop (no more fixed delays!)
             try:
                 loop = asyncio.get_event_loop()
-                _ = asyncio.run_coroutine_threadsafe(self._change_color(), loop)
+                task = asyncio.run_coroutine_threadsafe(self._change_color(), loop)
                 # Don't wait for completion to avoid blocking the IRC thread
             except RuntimeError:
                 # Fallback: run in new thread
                 import threading
                 threading.Thread(target=lambda: asyncio.run(self._change_color()), daemon=True).start()
+    
+    def _handle_message(self, sender: str, message: str, channel: str):
+        """Handle message (for testing compatibility)"""
+        self.handle_irc_message(sender, channel, message)
     
     async def _periodic_token_check(self):
         """Periodically check and refresh token if needed"""
@@ -374,20 +400,27 @@ class TwitchColorBot:
             except Exception as e:
                 print_log(f"⚠️ {self.username}: Failed to save token changes: {e}", bcolors.WARNING)
     
-    async def _change_color(self):
+    async def _change_color(self, hex_color=None):
         """Change the username color via Twitch API"""
         # Wait for rate limiting before making request  
         await self.rate_limiter.wait_if_needed('change_color', is_user_request=True)
         
-        color = self._select_color()
+        if hex_color:
+            # Use the provided hex color
+            color = hex_color
+        else:
+            # Select color based on user settings
+            color = self._select_color()
         
         try:
             success = await self._attempt_color_change(color)
-            if not success and self.use_random_colors:
+            if not success and self.use_random_colors and not hex_color:
                 # Try fallback to preset colors if random colors failed due to Turbo/Prime requirement
-                await self._try_preset_color_fallback()
+                success = await self._try_preset_color_fallback()
+            return success
         except Exception as e:
             logger.error(f"Error changing color: {e}", exc_info=True, user=self.username)
+            return False
 
     def _select_color(self):
         """Select the appropriate color based on user settings"""
@@ -480,11 +513,14 @@ class TwitchColorBot:
                 self.last_color = color
                 rate_status = self._get_rate_limit_display()
                 logger.info(f"Color changed to {color} (using preset colors){rate_status}", user=self.username)
+                return True
             else:
                 logger.error(f"Failed to change color with preset color. Status: {status_code}", user=self.username, status_code=status_code)
+                return False
                 
         except Exception as fallback_e:
             logger.error(f"Error changing color with preset color fallback: {fallback_e}", exc_info=True, user=self.username)
+            return False
 
     def _get_rate_limit_display(self):
         """Get rate limit information for display in messages"""

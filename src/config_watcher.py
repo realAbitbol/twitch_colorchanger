@@ -11,7 +11,7 @@ from watchdog.events import FileSystemEventHandler
 
 from .logger import logger
 from .config import load_users_from_config
-from .config_validator import validate_all_users
+from .config_validator import get_valid_users
 
 
 class ConfigFileHandler(FileSystemEventHandler):
@@ -112,7 +112,7 @@ class ConfigWatcher:
                 return
                 
             # Validate new configuration
-            valid_users = validate_all_users(new_users_config)
+            valid_users = get_valid_users(new_users_config)
             
             if not valid_users:
                 logger.error("❌ New config contains no valid users, ignoring changes")
@@ -135,4 +135,11 @@ async def create_config_watcher(config_file: str, restart_callback: Callable) ->
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, watcher.start)
     
+    return watcher
+
+
+def start_config_watcher(config_file: str, restart_callback: Callable) -> ConfigWatcher:
+    """Create and start a config file watcher (synchronous version for testing)"""
+    watcher = ConfigWatcher(config_file, restart_callback)
+    watcher.start()
     return watcher

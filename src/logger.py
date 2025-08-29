@@ -54,8 +54,9 @@ class ColoredFormatter(logging.Formatter):
 class BotLogger:
     """Simple logging system with colored output"""
     
-    def __init__(self, name: str = "twitch_colorchanger"):
+    def __init__(self, name: str = "twitch_colorchanger", log_file: str = None):
         self.logger = logging.getLogger(name)
+        self.log_file = log_file
         
         # Clear any existing handlers
         self.logger.handlers.clear()
@@ -71,6 +72,18 @@ class BotLogger:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(ColoredFormatter())
         self.logger.addHandler(console_handler)
+        
+        # Setup file handler if log_file is specified
+        if log_file:
+            file_handler = logging.FileHandler(log_file)
+            file_handler.setFormatter(logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            ))
+            self.logger.addHandler(file_handler)
+    
+    def set_level(self, level: int):
+        """Set the logging level"""
+        self.logger.setLevel(level)
     
     def debug(self, message: str, **kwargs):
         """Log debug message with optional context"""

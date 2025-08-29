@@ -8,20 +8,30 @@ twitch_colorchanger.conf
 .vscode/
 .history/
 
-# Test files and temporary configurations
+# Temporary test configurations (NOT legitimate test files)
 *test*.yml
 *test*.yaml
-test-*
-*-test.*
-*.test.*
-test_*
-*_test.*
+test-*.yml
+test-*.yaml
+*-test.yml
+*-test.yaml
+*.test.yml
+*.test.yaml
 debug_*.py
 *debug*.py
+
+# Specific temporary test files (NOT in tests/ directory)
 simple_config_test.py
-test_config.py
 test_disable_function.py
 test_persistence.py
+
+# Testing artifacts
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+.tox/
+.cache/
 
 # Documentation backup/temp files
 *.updated.md
@@ -108,7 +118,6 @@ coverage.xml
 # Package managers
 poetry.lock
 Pipfile.lock
-requirements-dev.txt
 
 # IDEs and editors
 .vscode/

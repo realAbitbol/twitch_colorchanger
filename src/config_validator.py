@@ -8,8 +8,14 @@ from .logger import logger
 def validate_user_config(user_config):
     """Validate user configuration - returns True if valid"""
     
+    # Type check
+    if not isinstance(user_config, dict):
+        logger.error(f"User config must be a dict, got {type(user_config)}")
+        return False
+    
     # Required fields
-    username = user_config.get('username', '').strip()
+    username_raw = user_config.get('username', '')
+    username = str(username_raw).strip() if username_raw is not None else ''
     if not username or len(username) < 3 or len(username) > 25:
         logger.error(f"Username must be 3-25 characters: '{username}'")
         return False
@@ -48,30 +54,56 @@ def validate_user_config(user_config):
 
 
 def validate_all_users(users_config):
-    """Validate all users - returns list of valid users"""
+    """Validate all users - returns True if ALL users are valid, False otherwise"""
+    if not isinstance(users_config, list):
+        logger.error("Users config must be a list")
+        return False
+    
     if not users_config:
         logger.error("No users configured")
+        return False
+
+    for user_config in users_config:
+        if not isinstance(user_config, dict):
+            logger.error(f"User config must be a dict, got {type(user_config)}")
+            return False
+            
+        if not validate_user_config(user_config):
+            username = user_config.get('username', 'Unknown')
+            logger.warning(f"Skipping invalid config for {username}")
+            return False
+
+    return True
+
+
+def get_valid_users(users_config):
+    """Get list of valid users from config"""
+    if not isinstance(users_config, list):
         return []
     
+    if not users_config:
+        return []
+
     valid_users = []
     usernames_seen = set()
-    
+
     for user_config in users_config:
+        if not isinstance(user_config, dict):
+            logger.error(f"User config must be a dict, got {type(user_config)}")
+            continue
+            
         if validate_user_config(user_config):
             username = user_config.get('username', '').strip().lower()
-            
+
             # Check for duplicates
             if username in usernames_seen:
                 logger.warning(f"Duplicate username '{username}' - skipping")
                 continue
-            
+
             usernames_seen.add(username)
             valid_users.append(user_config)
         else:
             username = user_config.get('username', 'Unknown')
             logger.warning(f"Skipping invalid config for {username}")
-    
-    if not valid_users:
-        logger.error("No valid user configurations found!")
-    
+
     return valid_users

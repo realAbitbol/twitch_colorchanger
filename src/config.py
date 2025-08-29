@@ -8,7 +8,7 @@ import json
 from .colors import bcolors
 from .utils import print_log
 from .logger import logger
-from .config_validator import validate_user_config as validate_user, validate_all_users
+from .config_validator import validate_user_config as validate_user, validate_all_users, get_valid_users
 from .device_flow import DeviceCodeFlow
 
 # Constants for repeated messages
@@ -235,7 +235,7 @@ def get_configuration():
         sys.exit(1)
     
     # Validate users
-    valid_users = validate_all_users(users)
+    valid_users = get_valid_users(users)
     
     if not valid_users:
         logger.error("No valid user configurations found!")

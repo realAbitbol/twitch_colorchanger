@@ -118,6 +118,18 @@ class BotManager:
         self.running = False
         print_log("✅ All bots stopped", bcolors.OKGREEN)
     
+    def stop(self):
+        """Public method to stop the bot manager"""
+        self.shutdown_initiated = True
+        # Create a task to stop bots (don't await in sync context)
+        if hasattr(asyncio, '_get_running_loop'):
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._stop_all_bots())
+            except RuntimeError:
+                # No running loop, this is fine for testing
+                pass
+    
     def request_restart(self, new_users_config: List[Dict[str, Any]]):
         """Request a restart with new configuration"""
         print_log("🔄 Config change detected, restarting bots...", bcolors.OKCYAN)
@@ -250,6 +262,12 @@ async def _run_main_loop(manager: BotManager):
     """Run the main bot loop handling restarts and monitoring"""
     while manager.running:
         await asyncio.sleep(1)
+        
+        # Check for shutdown
+        if manager.shutdown_initiated:
+            print_log("\n🛑 Shutdown initiated, stopping bots...", bcolors.WARNING)
+            await manager._stop_all_bots()
+            break
         
         # Check for restart requests
         if manager.restart_requested:
