@@ -34,7 +34,8 @@ filterwarnings = [
 
 # Coverage configuration
 [tool.coverage.run]
-source = ["src"]
+source = ["src", "main"]
+branch = true
 omit = [
     "*/tests/*",
     "*/test_*",
