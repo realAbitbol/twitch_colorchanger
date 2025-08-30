@@ -294,7 +294,7 @@ class TwitchColorBot:
         return bool(getattr(self, 'token_expiry', None))
 
     def _hours_until_expiry(self) -> float:
-        if not self._has_token_expiry():
+        if not self._has_token_expiry() or self.token_expiry is None:
             return float('inf')
         return (self.token_expiry - datetime.now()).total_seconds() / 3600
 
