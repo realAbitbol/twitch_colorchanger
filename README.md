@@ -469,6 +469,14 @@ For developers and technical implementation details:
 
 We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
 
+### CI/CD Setup
+
+For maintainers setting up GitHub Actions with full functionality, see [CI/CD Setup Guide](.github/CI_SETUP.md) for configuring:
+
+- **Docker Hub Credentials**: For automatic Docker image builds and publishing
+- **Codecov Token**: For test coverage reporting and badges
+- **Safety API Key**: For comprehensive security vulnerability scanning
+
 ### Development Setup
 
 ```bash

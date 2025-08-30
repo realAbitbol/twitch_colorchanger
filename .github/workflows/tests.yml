@@ -36,6 +36,9 @@ jobs:
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
+        env:
+          # GitHub secret configured in repository settings
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
           files: coverage.xml
           flags: unittests
@@ -125,4 +128,7 @@ jobs:
       - name: Run bandit
         run: bandit -q -r src || (echo "Bandit issues found" && exit 1)
       - name: Run safety
+        env:
+          # GitHub secret configured in repository settings
+          SAFETY_API_KEY: ${{ secrets.SAFETY_API_KEY }}
         run: safety scan --detailed-output
