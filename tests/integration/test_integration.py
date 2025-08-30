@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from src.bot_manager import run_bots
-from src.config import get_configuration
 from tests.fixtures.api_responses import TOKEN_REFRESH_SUCCESS, USER_INFO_SUCCESS
 from tests.fixtures.sample_configs import MULTI_USER_CONFIG
 
@@ -40,26 +39,22 @@ class TestBotManagerIntegration:
         """Test running multiple bots simultaneously"""
         with patch('src.bot_manager.BotManager._start_all_bots', return_value=True) as mock_start:
             with patch('src.bot_manager._run_main_loop') as mock_main_loop:
-                with patch('src.config.get_configuration') as mock_get_config:
-                    # Mock the main loop to set shutdown flag and return
-                    def mock_main_loop_impl(manager):
-                        manager.shutdown_initiated = True
+                # Mock the main loop to set shutdown flag and return
+                def mock_main_loop_impl(manager):
+                    manager.shutdown_initiated = True
 
-                    mock_main_loop.side_effect = mock_main_loop_impl
+                mock_main_loop.side_effect = mock_main_loop_impl
 
-                    # Mock get_configuration to return test config
-                    mock_get_config.return_value = MULTI_USER_CONFIG['users']
+                with patch('src.config_watcher.start_config_watcher'):
+                    # Instead of calling get_configuration, use the test config directly
+                    users_config = MULTI_USER_CONFIG['users']
 
-                    with patch('src.config_watcher.start_config_watcher'):
-                        # Load config and start bots
-                        users_config = get_configuration()
+                    # This should start and complete quickly
+                    await run_bots(users_config, temp_config_file)
 
-                        # This should start and complete quickly
-                        await run_bots(users_config, temp_config_file)
-
-                        # Verify that bot manager was created and start was called
-                        mock_start.assert_called_once()
-                        mock_main_loop.assert_called_once()
+                    # Verify that bot manager was created and start was called
+                    mock_start.assert_called_once()
+                    mock_main_loop.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_config_reload_integration(self):
@@ -79,31 +74,28 @@ class TestBotManagerIntegration:
             with patch('src.config_watcher.start_config_watcher', side_effect=mock_start_watcher):
                 with patch('src.bot_manager.BotManager._start_all_bots', return_value=True):
                     with patch('src.bot_manager._run_main_loop') as mock_main_loop:
-                        with patch('src.config.get_configuration') as mock_get_config:
-                            # Mock the main loop to set shutdown flag and return
-                            def mock_main_loop_impl(manager):
-                                manager.shutdown_initiated = True
-                                return
+                        # Mock the main loop to set shutdown flag and return
+                        def mock_main_loop_impl(manager):
+                            manager.shutdown_initiated = True
+                            return
 
-                            mock_main_loop.side_effect = mock_main_loop_impl
+                        mock_main_loop.side_effect = mock_main_loop_impl
 
-                            # Mock get_configuration to return test config
-                            mock_get_config.return_value = MULTI_USER_CONFIG['users']
+                        # Use test config directly instead of calling get_configuration
+                        users_config = MULTI_USER_CONFIG['users']
 
-                            users_config = get_configuration()
+                        # Start bots and complete quickly
+                        await run_bots(users_config, config_file)
 
-                            # Start bots and complete quickly
-                            await run_bots(users_config, config_file)
+                        # Simulate config change
+                        if watcher_callback:
+                            # Modify and save config using helper
+                            modified_config = MULTI_USER_CONFIG.copy()
+                            modified_config['users'][0]['channels'] = ['newchannel']
+                            _update_config_file(config_file, modified_config)
 
-                            # Simulate config change
-                            if watcher_callback:
-                                # Modify and save config using helper
-                                modified_config = MULTI_USER_CONFIG.copy()
-                                modified_config['users'][0]['channels'] = ['newchannel']
-                                _update_config_file(config_file, modified_config)
-
-                                # Trigger callback
-                                await watcher_callback(config_file)
+                            # Trigger callback
+                            await watcher_callback(config_file)
         finally:
             if os.path.exists(config_file):
                 os.unlink(config_file)
