@@ -29,7 +29,7 @@ def _validate_token_credentials(user_config, username):
     # Check if token is a placeholder
     placeholder_tokens = [
         'test', 'placeholder', 'your_token_here', 'fake_token', 'example_token_twenty_chars']
-    
+
     if has_token_with_length and access_token.lower() in placeholder_tokens:
         logger.error(f"Please use a real token for {username}")
         return False
