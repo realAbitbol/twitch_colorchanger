@@ -5,16 +5,19 @@ This project uses pytest for comprehensive testing with coverage reporting and q
 ## Quick Start
 
 ### Run all tests
+
 ```bash
 make test
 ```
 
 ### Run tests with coverage
+
 ```bash
 make test-cov
 ```
 
 ### Format and lint code
+
 ```bash
 make format
 make lint
@@ -22,7 +25,7 @@ make lint
 
 ## Testing Structure
 
-```
+```text
 tests/
 ├── conftest.py                      # Pytest configuration and shared fixtures
 ├── fixtures/
@@ -63,6 +66,7 @@ tests/
 ## Individual Tool Usage
 
 ### Testing
+
 ```bash
 # Run specific test file
 pytest tests/test_colors.py
@@ -78,6 +82,7 @@ pytest --cov=src --cov-report=html
 ```
 
 ### Code Quality
+
 ```bash
 # Format code
 black src/ tests/
@@ -104,6 +109,7 @@ safety check
 - **Test Count**: 551 tests passing
 
 ### Current Coverage Status (100% across all modules)
+
 - `main.py`: 100% coverage (24/24 lines)
 - `src/bot.py`: 100% coverage (358/358 lines, 102/102 branches)
 - `src/bot_manager.py`: 100% coverage (208/208 lines, 54/54 branches)
@@ -122,16 +128,19 @@ safety check
 ## Test Categories
 
 ### Unit Tests
+
 - Individual function testing
 - Isolated component validation
 - Mock external dependencies
 
 ### Integration Tests
+
 - Multi-component interaction
 - API integration testing
 - End-to-end workflows
 
 ### Performance Tests
+
 - Color generation speed
 - Memory usage validation
 - Concurrent operation testing
