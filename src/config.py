@@ -45,7 +45,8 @@ def _setup_config_directory(config_file):
         os.makedirs(config_dir, exist_ok=True)
         # Try to set directory permissions if possible
         try:
-            os.chmod(config_dir, 0o755)
+            # Using 755 for cross-platform readability; not sensitive content stored here. # nosec B103
+            os.chmod(config_dir, 0o755)  # nosec B103
         except PermissionError:
             pass  # Ignore permission errors on directories
 

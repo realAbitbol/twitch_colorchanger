@@ -2,7 +2,7 @@
 Color definitions and utilities for console output
 """
 
-import random
+import random  # nosec B311 - non-cryptographic randomness acceptable for color selection
 
 
 class bcolors:
@@ -33,13 +33,15 @@ def get_different_twitch_color(exclude_color=None):
 
     # If no excluded color or only one color available, return random choice
     if exclude_color is None or len(colors) <= 1:
-        return random.choice(colors)
+        # nosec B311 - UI-only randomness (not security sensitive)
+        return random.choice(colors)  # nosec B311
 
     # Filter out the excluded color
     available_colors = [color for color in colors if color != exclude_color]
 
     # available_colors will never be empty since colors are unique and len(colors) > 1
-    return random.choice(available_colors)
+    # nosec B311 - UI-only randomness
+    return random.choice(available_colors)  # nosec B311
 
 
 def generate_random_hex_color(exclude_color=None):
@@ -48,9 +50,10 @@ def generate_random_hex_color(exclude_color=None):
     attempts = 0
 
     while attempts < max_attempts:
-        hue = random.randint(0, 359)
-        saturation = random.randint(60, 100)
-        lightness = random.randint(35, 75)
+        # nosec B311 - pseudo-random values are fine for generating display colors
+        hue = random.randint(0, 359)  # nosec B311
+        saturation = random.randint(60, 100)  # nosec B311
+        lightness = random.randint(35, 75)  # nosec B311
         c = (1 - abs(2 * lightness / 100 - 1)) * saturation / 100
         x = c * (1 - abs((hue / 60) % 2 - 1))
         m = lightness / 100 - c / 2
