@@ -25,6 +25,9 @@ simple_config_test.py
 test_disable_function.py
 test_persistence.py
 
+# Allow GitHub Actions workflow despite broad patterns above
+!.github/workflows/tests.yml
+
 # Testing artifacts
 .pytest_cache/
 htmlcov/

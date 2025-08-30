@@ -175,6 +175,18 @@ class TestDeviceCodeFlow:
         )
         assert result is None  # Should continue polling
 
+    def test_handle_polling_error_authorization_pending_with_log(self, device_flow):
+        """Test authorization_pending branch when poll_count triggers status log (covers wait message)."""
+        # poll_count % 6 == 0 should trigger the informational log line
+        with patch('src.device_flow.print_log') as mock_print:
+            result = device_flow._handle_polling_error(
+                {"message": "authorization_pending"}, 42, 6
+            )
+            assert result is None
+            # Verify the waiting message was logged
+            logged = "".join(call_args[0][0] for call_args in mock_print.call_args_list)
+            assert "Still waiting for authorization" in logged
+
     def test_handle_polling_error_slow_down(self, device_flow):
         """Test handling slow_down error"""
         initial_interval = device_flow.poll_interval
@@ -204,6 +216,19 @@ class TestDeviceCodeFlow:
             {"message": "unknown_error", "error_description": "Something went wrong"}, 10, 1
         )
         assert result == {}  # Should stop polling
+
+    @pytest.mark.asyncio
+    async def test_poll_for_tokens_unexpected_response(self, device_flow):
+        """Test polling path with an unexpected (non-200/400) status to cover else branch."""
+        from aioresponses import aioresponses
+        with aioresponses() as m:
+            m.post(
+                'https://id.twitch.tv/oauth2/token',
+                payload={"error": "server_error"},
+                status=500
+            )
+            result = await device_flow.poll_for_tokens("test_device_code", 5)
+            assert result is None
 
     @pytest.mark.asyncio
     async def test_get_user_tokens_success(self, device_flow):
