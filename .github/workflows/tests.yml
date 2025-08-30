@@ -1,4 +1,6 @@
 name: Tests and Coverage
+permissions:
+  contents: read
 
 on:
   push:
@@ -9,6 +11,8 @@ on:
 
 jobs:
   test:
+    permissions:
+      contents: write
     name: Python Tests
     runs-on: ubuntu-latest
     steps:
