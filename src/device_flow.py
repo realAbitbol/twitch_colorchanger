@@ -16,10 +16,12 @@ class DeviceCodeFlow:
     """Handles OAuth Device Authorization Grant flow for automatic token generation"""
 
     def __init__(self, client_id: str, client_secret: str):
+        """Initialize device flow state."""
         self.client_id = client_id
         self.client_secret = client_secret
+        # OAuth endpoints (constant URLs, not secrets). # nosec B105
         self.device_code_url = "https://id.twitch.tv/oauth2/device"
-        self.token_url = "https://id.twitch.tv/oauth2/token"
+        self.token_url = "https://id.twitch.tv/oauth2/token"  # nosec B105
         self.poll_interval = 5  # seconds
 
     async def request_device_code(self) -> Optional[Dict]:
