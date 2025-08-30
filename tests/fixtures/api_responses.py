@@ -96,7 +96,7 @@ UNAUTHORIZED_RESPONSE = {
 }
 
 FORBIDDEN_RESPONSE = {
-    "error": "Forbidden", 
+    "error": "Forbidden",
     "status": 403,
     "message": "Missing required scope"
 }

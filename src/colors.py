@@ -30,18 +30,15 @@ def get_twitch_colors():
 def get_different_twitch_color(exclude_color=None):
     """Get a random Twitch preset color, avoiding the excluded color"""
     colors = get_twitch_colors()
-    
+
     # If no excluded color or only one color available, return random choice
     if exclude_color is None or len(colors) <= 1:
         return random.choice(colors)
-    
+
     # Filter out the excluded color
     available_colors = [color for color in colors if color != exclude_color]
-    
-    # If all colors are excluded (shouldn't happen), return random choice
-    if not available_colors:
-        return random.choice(colors)
-    
+
+    # available_colors will never be empty since colors are unique and len(colors) > 1
     return random.choice(available_colors)
 
 
@@ -49,15 +46,15 @@ def generate_random_hex_color(exclude_color=None):
     """Generate random hex color for Prime/Turbo users, avoiding the excluded color"""
     max_attempts = 10  # Prevent infinite loops
     attempts = 0
-    
+
     while attempts < max_attempts:
         hue = random.randint(0, 359)
         saturation = random.randint(60, 100)
         lightness = random.randint(35, 75)
-        c = (1 - abs(2 * lightness/100 - 1)) * saturation/100
+        c = (1 - abs(2 * lightness / 100 - 1)) * saturation / 100
         x = c * (1 - abs((hue / 60) % 2 - 1))
-        m = lightness/100 - c/2
-        
+        m = lightness / 100 - c / 2
+
         if 0 <= hue < 60:
             r, g, b = c, x, 0
         elif 60 <= hue < 120:
@@ -70,18 +67,18 @@ def generate_random_hex_color(exclude_color=None):
             r, g, b = x, 0, c
         else:
             r, g, b = c, 0, x
-        
+
         r = int((r + m) * 255)
         g = int((g + m) * 255)
         b = int((b + m) * 255)
-        
+
         color = f"#{r:02x}{g:02x}{b:02x}"
-        
+
         # If no excluded color or the new color is different, return it
         if exclude_color is None or color != exclude_color:
             return color
-            
+
         attempts += 1
-    
+
     # Fallback: return a color even if it might be the same (very unlikely)
     return f"#{r:02x}{g:02x}{b:02x}"

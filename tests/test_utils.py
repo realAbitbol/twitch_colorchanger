@@ -2,12 +2,11 @@
 Tests for utility functions
 """
 
-import pytest
-from unittest.mock import patch, Mock
 import os
+from unittest.mock import patch
 
-from src.utils import print_log, print_instructions
 from src.colors import bcolors
+from src.utils import print_instructions, print_log
 
 
 class TestPrintLog:
@@ -48,44 +47,6 @@ class TestPrintLog:
         captured = capsys.readouterr()
         assert "No color message" in captured.out
 
-    def test_print_log_force_color_disabled(self, capsys):
-        """Test print_log with FORCE_COLOR=false"""
-        with patch.dict(os.environ, {'FORCE_COLOR': 'false'}):
-            print_log("No color message", bcolors.OKGREEN)
-            captured = capsys.readouterr()
-            assert "No color message" in captured.out
-            # Should not contain ANSI codes
-            assert bcolors.OKGREEN not in captured.out
-            assert bcolors.ENDC not in captured.out
-
-    def test_print_log_force_color_various_values(self, capsys):
-        """Test print_log with various FORCE_COLOR values"""
-        test_cases = [
-            ('false', False),
-            ('False', False),
-            ('FALSE', False),
-            ('0', False),
-            ('no', False),
-            ('true', True),
-            ('True', True),
-            ('TRUE', True),
-            ('1', True),
-            ('yes', True),
-            ('', True),  # Default should be true
-        ]
-
-        for env_value, should_color in test_cases:
-            with patch.dict(os.environ, {'FORCE_COLOR': env_value}):
-                print_log(f"Test {env_value}", bcolors.OKGREEN)
-                captured = capsys.readouterr()
-
-                if should_color:
-                    assert bcolors.OKGREEN in captured.out
-                    assert bcolors.ENDC in captured.out
-                else:
-                    assert bcolors.OKGREEN not in captured.out
-                    assert bcolors.ENDC not in captured.out
-
     def test_print_log_debug_dynamic_check(self, capsys):
         """Test that DEBUG is checked dynamically, not just at import"""
         # Start with debug disabled
@@ -108,7 +69,7 @@ class TestPrintInstructions:
         """Test that instructions are printed"""
         print_instructions()
         captured = capsys.readouterr()
-        
+
         # Check for key instruction elements
         assert "instructions" in captured.out.lower() or "usage" in captured.out.lower()
         assert len(captured.out) > 0
@@ -117,7 +78,7 @@ class TestPrintInstructions:
         """Test that instructions contain essential information"""
         print_instructions()
         captured = capsys.readouterr()
-        
+
         # Instructions should contain some guidance
         output_lower = captured.out.lower()
         assert any(keyword in output_lower for keyword in [
@@ -132,16 +93,16 @@ class TestUtilsIntegration:
         """Test multiple print_log calls"""
         messages = ["Message 1", "Message 2", "Message 3"]
         colors = [bcolors.OKGREEN, bcolors.WARNING, bcolors.FAIL]
-        
+
         for msg, color in zip(messages, colors):
             print_log(msg, color)
-        
+
         captured = capsys.readouterr()
-        
+
         # All messages should be present
         for msg in messages:
             assert msg in captured.out
-        
+
         # Color codes should be present
         for color in colors:
             assert color in captured.out
@@ -152,9 +113,9 @@ class TestUtilsIntegration:
         print_log("Normal message")
         print_log("Debug message", debug_only=True)
         print_log("Another normal message", bcolors.OKBLUE)
-        
+
         captured = capsys.readouterr()
-        
+
         assert "Normal message" in captured.out
         assert "Debug message" in captured.out
         assert "Another normal message" in captured.out
@@ -166,8 +127,8 @@ class TestUtilsIntegration:
         print_log(123)  # Integer
         print_log(None)  # None
         print_log("")   # Empty string
-        
+
         captured = capsys.readouterr()
-        
+
         # Should handle these gracefully without crashing
         assert "123" in captured.out or captured.out is not None

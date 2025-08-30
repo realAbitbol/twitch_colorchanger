@@ -2,10 +2,12 @@
 Tests for simple_irc.py module
 """
 
-import pytest
 import socket
 import time
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
+
+import pytest
+
 from src.simple_irc import SimpleTwitchIRC
 
 
@@ -77,7 +79,11 @@ class TestSimpleTwitchIRC:
             assert call[0][0] == expected
 
     @patch('socket.socket')
-    def test_connect_with_oauth_prefix(self, mock_socket_class, irc_client, mock_socket):
+    def test_connect_with_oauth_prefix(
+            self,
+            mock_socket_class,
+            irc_client,
+            mock_socket):
         """Test connection with oauth: prefix already present"""
         mock_socket_class.return_value = mock_socket
 
@@ -113,7 +119,8 @@ class TestSimpleTwitchIRC:
         irc_client.join_channel("TestChannel")
 
         # Verify JOIN command was sent
-        mock_socket.send.assert_called_once_with("JOIN #testchannel\r\n".encode('utf-8'))
+        mock_socket.send.assert_called_once_with(
+            "JOIN #testchannel\r\n".encode('utf-8'))
 
         # Verify channel was added to tracking
         assert "testchannel" in irc_client.joined_channels
@@ -127,7 +134,8 @@ class TestSimpleTwitchIRC:
 
         irc_client.join_channel("#TestChannel")
 
-        mock_socket.send.assert_called_once_with("JOIN #testchannel\r\n".encode('utf-8'))
+        mock_socket.send.assert_called_once_with(
+            "JOIN #testchannel\r\n".encode('utf-8'))
         assert "testchannel" in irc_client.joined_channels
 
     def test_join_channel_retry(self, irc_client, mock_socket):
@@ -224,7 +232,8 @@ class TestSimpleTwitchIRC:
 
         irc_client._handle_ping(ping_line)
 
-        mock_socket.send.assert_called_once_with("PONG :tmi.twitch.tv\r\n".encode('utf-8'))
+        mock_socket.send.assert_called_once_with(
+            "PONG :tmi.twitch.tv\r\n".encode('utf-8'))
 
     def test_handle_privmsg_own_message(self, irc_client):
         """Test handling own PRIVMSG"""
@@ -417,7 +426,8 @@ class TestSimpleTwitchIRC:
         irc_client.sock = mock_socket
         irc_client.connected = True
 
-        # Add a pending join that's confirmed (this would normally be removed by _parse_message)
+        # Add a pending join that's confirmed (this would normally be removed by
+        # _parse_message)
         past_time = time.time() - 35  # Past timeout
         irc_client.pending_joins["testchannel"] = {
             'sent_at': past_time,
@@ -425,7 +435,8 @@ class TestSimpleTwitchIRC:
         }
         # Simulate what happens when RPL_ENDOFNAMES is received
         irc_client.confirmed_channels.add("testchannel")
-        irc_client.pending_joins.pop("testchannel", None)  # This is what _parse_message does
+        # This is what _parse_message does
+        irc_client.pending_joins.pop("testchannel", None)
 
         with patch('src.simple_irc.print_log'):
             irc_client._check_join_timeouts()
@@ -509,7 +520,8 @@ class TestSimpleTwitchIRC:
             result = irc_client._handle_single_join_timeout("testchannel", info, now)
 
         assert result is False  # Should retry
-        mock_socket.send.assert_called_once_with("JOIN #testchannel\r\n".encode('utf-8'))
+        mock_socket.send.assert_called_once_with(
+            "JOIN #testchannel\r\n".encode('utf-8'))
         assert info['attempts'] == 2
 
     def test_handle_single_join_timeout_retry_failure(self, irc_client, mock_socket):

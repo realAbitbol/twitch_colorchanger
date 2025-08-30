@@ -1,16 +1,37 @@
+"""Pytest conftest for test-time shims and fixtures.
+
+This file preloads certain package modules to ensure a canonical
+import identity (prevents coverage from recording the same file under
+two different module names like `simple_irc.py` and `src/simple_irc.py`).
+"""
+import asyncio
+import json
+import os
+import sys
+import tempfile
+from unittest.mock import AsyncMock, Mock
+
+import pytest
+
+try:
+    # Import the canonical package module early in collection
+    import src.simple_irc as _simple_irc
+
+    # Ensure aliases exist so imports under either name refer to the same module
+    if 'simple_irc' not in sys.modules:
+        sys.modules['simple_irc'] = _simple_irc
+    if 'src.simple_irc' not in sys.modules:
+        sys.modules['src.simple_irc'] = _simple_irc
+except Exception:
+    # Be defensive: don't fail test collection if import fails for any reason
+    pass
 """
 Pytest configuration and shared fixtures for the Twitch ColorChanger Bot tests
 """
 
-import pytest
-import asyncio
-import json
-import tempfile
-import os
-from unittest.mock import Mock, AsyncMock, patch
-from typing import Dict, Any, List
 
 # Test event loop configuration for async tests
+
 @pytest.fixture(scope="function")
 def event_loop():
     """Create an instance of the default event loop for each test function."""
@@ -62,7 +83,7 @@ def sample_multi_user_config(sample_user_config):
         "access_token": "test_access_token_def",
         "is_prime_or_turbo": False
     })
-    
+
     return {
         "users": [sample_user_config, user2]
     }
@@ -74,9 +95,9 @@ def temp_config_file(sample_multi_user_config):
     with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False) as f:
         json.dump(sample_multi_user_config, f, indent=2)
         temp_file = f.name
-    
+
     yield temp_file
-    
+
     # Cleanup
     if os.path.exists(temp_file):
         os.unlink(temp_file)
@@ -88,9 +109,9 @@ def invalid_config_file():
     with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False) as f:
         f.write("invalid json content {")
         temp_file = f.name
-    
+
     yield temp_file
-    
+
     # Cleanup
     if os.path.exists(temp_file):
         os.unlink(temp_file)
@@ -114,7 +135,7 @@ def mock_twitch_api_response():
         response.json = AsyncMock(return_value=data or {})
         response.headers = headers or {}
         return response
-    
+
     return _mock_response
 
 
@@ -195,14 +216,14 @@ def bot_config():
 def clean_environment():
     """Clean environment variables for testing"""
     original_env = os.environ.copy()
-    
+
     # Remove any environment variables that might affect tests
     env_vars_to_remove = ['TWITCH_CONF_FILE', 'DEBUG']
     for var in env_vars_to_remove:
         os.environ.pop(var, None)
-    
+
     yield
-    
+
     # Restore original environment
     os.environ.clear()
     os.environ.update(original_env)
@@ -257,14 +278,14 @@ def pytest_configure(config):
 def cleanup_test_files():
     """Automatically clean up any test files created during testing"""
     yield
-    
+
     # Cleanup any test files that might have been created
     test_files = [
         "test_config.conf",
         "test_config.conf.backup",
         "debug_test.py"
     ]
-    
+
     for file in test_files:
         if os.path.exists(file):
             try:

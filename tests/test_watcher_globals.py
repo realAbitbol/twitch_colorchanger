@@ -2,9 +2,13 @@
 Tests for watcher_globals.py module
 """
 
-import pytest
-from unittest.mock import MagicMock, patch
-from src.watcher_globals import set_global_watcher, pause_config_watcher, resume_config_watcher
+from unittest.mock import MagicMock
+
+from src.watcher_globals import (
+    pause_config_watcher,
+    resume_config_watcher,
+    set_global_watcher,
+)
 
 
 class TestWatcherGlobals:

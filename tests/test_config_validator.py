@@ -2,16 +2,22 @@
 Tests for configuration validator functionality
 """
 
-import pytest
-from src.config_validator import validate_user_config, validate_all_users, get_valid_users
+import unittest
+from unittest.mock import patch
+
+from src.config_validator import (
+    get_valid_users,
+    validate_all_users,
+    validate_user_config,
+)
 from tests.fixtures.sample_configs import (
-    SINGLE_USER_CONFIG,
+    MINIMAL_CONFIG,
     MULTI_USER_CONFIG,
-    MINIMAL_CONFIG
+    SINGLE_USER_CONFIG,
 )
 
 
-class TestValidateUserConfig:
+class TestValidateUserConfig(unittest.TestCase):
     """Test validate_user_config functionality"""
 
     def test_validate_user_config_valid_single(self):
@@ -171,6 +177,97 @@ class TestValidateUserConfig:
         result = validate_user_config(invalid_user)
         assert result is False
 
+    def test_validate_user_config_needs_token_or_credentials_error(self):
+        """Test validation when user has neither token nor credentials (covers lines 39-40)"""
+        user_config = {
+            "username": "test_user",
+            "channels": ["channel1"]
+            # Missing both access_token and client_id/client_secret
+        }
+
+        with patch('src.config_validator.logger') as mock_logger:
+            result = validate_user_config(user_config)
+
+            assert result is False
+            mock_logger.error.assert_called_once()
+            error_msg = mock_logger.error.call_args[0][0]
+            assert "needs either access_token OR (client_id + client_secret)" in error_msg
+
+    def test_validate_user_config_no_credentials_error(self):
+        """Test validation when no valid credentials provided"""
+        with patch('src.config_validator.logger') as mock_logger:
+            user_config = {
+                'username': 'test_user',
+                'access_token': 'placeholder',
+                'channels': ['test_channel']
+            }
+            result = validate_user_config(user_config)
+            self.assertFalse(result)
+            mock_logger.error.assert_called_with(
+                "User test_user needs either access_token OR (client_id + client_secret) for automatic setup")
+
+    def test_validate_user_config_placeholder_token_with_valid_credentials(self):
+        """Test validation with valid length token that's not a placeholder"""
+        user_config = {
+            'username': 'test_user',
+            'access_token': 'test' + 'x' * 17,  # 21 chars, long enough and not in placeholder list
+            'channels': ['test_channel']
+        }
+        result = validate_user_config(user_config)
+        self.assertTrue(result)
+
+    def test_validate_user_config_placeholder_token_error(self):
+        """Test validation when token has valid length but is exactly a placeholder"""
+        with patch('src.config_validator.logger') as mock_logger:
+            user_config = {
+                'username': 'test_user',
+                'access_token': 'example_token_twenty_chars',  # Exactly matches our 27-char placeholder
+                'channels': ['test_channel']
+            }
+            result = validate_user_config(user_config)
+            self.assertFalse(result)
+            mock_logger.error.assert_called_with(
+                "Please use a real token for test_user")
+
+    def test_validate_user_config_missing_channels(self):
+        """Test validation when channels are missing"""
+        with patch('src.config_validator.logger') as mock_logger:
+            user_config = {
+                'username': 'test_user',
+                'access_token': 'valid_token_with_20_chars'
+            }
+            result = validate_user_config(user_config)
+            self.assertFalse(result)
+            mock_logger.error.assert_called_with("Channels list required for test_user")
+
+    def test_validate_user_config_empty_channels_list(self):
+        """Test validation when channels list is empty"""
+        with patch('src.config_validator.logger') as mock_logger:
+            user_config = {
+                'username': 'test_user',
+                'access_token': 'valid_token_with_20_chars',
+                'channels': []
+            }
+            result = validate_user_config(user_config)
+            self.assertFalse(result)
+            mock_logger.error.assert_called_with("Channels list required for test_user")
+
+    def test_validate_user_config_invalid_channel_error(self):
+        """Test validation with invalid channel (covers lines 50-51)"""
+        user_config = {
+            "username": "test_user",
+            "access_token": "oauth:real_token_here",
+            "channels": ["ab"]  # Too short channel name
+        }
+
+        with patch('src.config_validator.logger') as mock_logger:
+            result = validate_user_config(user_config)
+
+            assert result is False
+            mock_logger.error.assert_called_once()
+            error_msg = mock_logger.error.call_args[0][0]
+            assert "Invalid channel name" in error_msg
+
 
 class TestValidateAllUsers:
     """Test validate_all_users functionality"""
@@ -230,7 +327,9 @@ class TestValidateAllUsers:
         users = [
             SINGLE_USER_CONFIG,  # Valid dict
             "not a dict",        # Invalid type
-            {'username': 'valid', 'oauth_token': 'oauth:test', 'client_id': 'test'}  # Valid dict
+            {'username': 'valid',
+             'oauth_token': 'oauth:test',
+             'client_id': 'test'}  # Valid dict
         ]
         result = validate_all_users(users)
         assert result is False
@@ -384,7 +483,7 @@ class TestConfigValidatorIntegration:
             MULTI_USER_CONFIG['users'][0],
             MULTI_USER_CONFIG['users'][1]
         ]
-        
+
         for config in configs_to_test:
             result = validate_user_config(config)
             assert result is True, f"Config should be valid: {config}"
@@ -394,14 +493,14 @@ class TestConfigValidatorIntegration:
         # Create a large list of valid users
         base_user = SINGLE_USER_CONFIG.copy()
         users = []
-        
+
         for i in range(100):
             user = base_user.copy()
             user['username'] = f'user{i}'
             user['oauth_token'] = f'oauth:token{i}'
             user['client_id'] = f'client{i}'
             users.append(user)
-        
+
         result = validate_all_users(users)
         assert result is True
 
@@ -430,7 +529,7 @@ class TestConfigValidatorIntegration:
                 'is_prime_or_turbo': True
             }
         ]
-        
+
         for case in edge_cases:
             result = validate_user_config(case)
             # Should not crash, result depends on implementation
@@ -453,7 +552,7 @@ class TestConfigValidatorIntegration:
                 'is_prime_or_turbo': 'true'  # String instead of boolean
             }
         ]
-        
+
         for case in type_test_cases:
             result = validate_user_config(case)
             # Should handle gracefully without crashing

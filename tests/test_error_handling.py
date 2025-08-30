@@ -2,10 +2,12 @@
 Tests for error_handling.py module
 """
 
-import pytest
 import asyncio
-from unittest.mock import Mock, patch, AsyncMock
-from src.error_handling import APIError, simple_retry, log_error
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from src.error_handling import APIError, log_error, simple_retry
 
 
 class TestAPIError:
@@ -133,7 +135,10 @@ class TestSimpleRetry:
     async def test_different_exception_types(self):
         """Test retry works with different exception types"""
         mock_func = AsyncMock()
-        mock_func.side_effect = [ValueError("Value error"), RuntimeError("Runtime error"), "success"]
+        mock_func.side_effect = [
+            ValueError("Value error"),
+            RuntimeError("Runtime error"),
+            "success"]
 
         with patch('asyncio.sleep'):
             result = await simple_retry(mock_func, max_retries=3)
@@ -234,7 +239,10 @@ class TestIntegration:
     async def test_retry_with_api_error(self):
         """Test retry mechanism with APIError"""
         mock_func = AsyncMock()
-        mock_func.side_effect = [APIError("API Error", 500), APIError("API Error", 502), "success"]
+        mock_func.side_effect = [
+            APIError(
+                "API Error", 500), APIError(
+                "API Error", 502), "success"]
 
         with patch('src.error_handling.logger') as mock_logger:
             with patch('asyncio.sleep'):
