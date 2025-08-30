@@ -5,7 +5,7 @@ Bot manager for handling multiple Twitch bots
 import asyncio
 import os
 import signal
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from .bot import TwitchColorBot
 from .colors import bcolors
@@ -18,12 +18,12 @@ class BotManager:
     def __init__(self, users_config: List[Dict[str, Any]], config_file: str = None):
         self.users_config = users_config
         self.config_file = config_file
-        self.bots = []
-        self.tasks = []
+        self.bots: List[Any] = []
+        self.tasks: List[Any] = []
         self.running = False
         self.shutdown_initiated = False
         self.restart_requested = False
-        self.new_config = None
+        self.new_config: Optional[List[Dict[str, Any]]] = None
 
     async def _start_all_bots(self):
         """Start all bots and return success status"""
@@ -254,7 +254,7 @@ class BotManager:
         signal.signal(signal.SIGTERM, signal_handler)
 
 
-async def _setup_config_watcher(config_file: str, manager: BotManager):
+async def _setup_config_watcher(manager: BotManager, config_file: str = None):
     """Setup config file watcher if available"""
     if not config_file or not os.path.exists(config_file):
         return None
@@ -339,7 +339,7 @@ async def run_bots(users_config: List[Dict[str, Any]], config_file: str = None):
     manager.setup_signal_handlers()
 
     # Setup config watcher
-    watcher = await _setup_config_watcher(config_file, manager)
+    watcher = await _setup_config_watcher(manager, config_file)
 
     try:
         # Start all bots

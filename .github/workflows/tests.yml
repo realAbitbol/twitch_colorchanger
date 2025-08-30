@@ -125,4 +125,4 @@ jobs:
       - name: Run bandit
         run: bandit -q -r src || (echo "Bandit issues found" && exit 1)
       - name: Run safety
-        run: safety scan --full-report
+        run: safety scan --detailed-output

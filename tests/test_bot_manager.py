@@ -667,7 +667,7 @@ class TestBotManagerHelperFunctions:
             mock_create.return_value = mock_watcher
 
             # Call _setup_config_watcher
-            await _setup_config_watcher(config_file, manager)
+            await _setup_config_watcher(manager, config_file)
 
             # Get the restart callback that was passed to create_config_watcher
             mock_create.assert_called_once()
@@ -779,7 +779,7 @@ class TestRunBots:
             mock_manager_class.return_value = mock_manager
             # Make _start_all_bots async and return True
             mock_manager._start_all_bots = AsyncMock(return_value=True)
-            # Set running to False so _run_main_loop exits immediately  
+            # Set running to False so _run_main_loop exits immediately
             mock_manager.running = False
             # ensure stop_all_bots is awaitable
             mock_manager._stop_all_bots = AsyncMock()
@@ -792,7 +792,7 @@ class TestRunBots:
             mock_manager._start_all_bots.assert_called_once()
             mock_manager._stop_all_bots.assert_called_once()
             mock_manager.print_statistics.assert_called_once()
-            
+
             # Verify the success print_log calls were made (lines 350-355)
             expected_calls = [
                 call("\n🎮 Bots are running! Press Ctrl+C to stop.", bcolors.HEADER),
