@@ -4,7 +4,7 @@ Tests for bot_manager.py module
 
 import asyncio
 import signal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, call
 
 import pytest
 
@@ -773,12 +773,14 @@ class TestRunBots:
         config_file = "/path/to/config.json"
 
         with patch('src.bot_manager.BotManager') as mock_manager_class, \
-                patch('src.bot_manager._setup_config_watcher', return_value=None), \
-                patch('src.bot_manager._run_main_loop'):
+                patch('src.bot_manager._setup_config_watcher', return_value=None):
 
             mock_manager = MagicMock()
             mock_manager_class.return_value = mock_manager
-            mock_manager._start_all_bots.return_value = True
+            # Make _start_all_bots async and return True
+            mock_manager._start_all_bots = AsyncMock(return_value=True)
+            # Set running to False so _run_main_loop exits immediately  
+            mock_manager.running = False
             # ensure stop_all_bots is awaitable
             mock_manager._stop_all_bots = AsyncMock()
 
@@ -790,6 +792,14 @@ class TestRunBots:
             mock_manager._start_all_bots.assert_called_once()
             mock_manager._stop_all_bots.assert_called_once()
             mock_manager.print_statistics.assert_called_once()
+            
+            # Verify the success print_log calls were made (lines 350-355)
+            expected_calls = [
+                call("\n🎮 Bots are running! Press Ctrl+C to stop.", bcolors.HEADER),
+                call("💬 Start chatting in your channels to see color changes!", bcolors.OKBLUE),
+                call("⚠️ Note: If bots exit quickly, check your Twitch credentials", bcolors.WARNING)
+            ]
+            mock_print_log.assert_has_calls(expected_calls, any_order=False)
 
     @patch('src.bot_manager.print_log')
     @patch('src.bot_manager._cleanup_watcher')
