@@ -66,7 +66,7 @@ class TestBotManagerIntegration:
             # Mock the config watcher
             watcher_callback = None
 
-            def mock_start_watcher(callback, filepath):
+            def mock_start_watcher(callback, _filepath):
                 nonlocal watcher_callback
                 watcher_callback = callback
                 return Mock()

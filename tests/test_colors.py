@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from src.colors import (
-    bcolors,
+    BColors,
     generate_random_hex_color,
     get_different_twitch_color,
     get_twitch_colors,
@@ -167,30 +167,30 @@ class TestColorConstants:
     """Test color constants and terminal formatting"""
 
     def test_bcolors_constants(self):
-        """Test that bcolors constants are defined"""
+        """Test that BColors constants are defined"""
         required_colors = [
             'HEADER', 'OKBLUE', 'OKCYAN', 'OKGREEN',
             'WARNING', 'FAIL', 'ENDC', 'BOLD', 'PURPLE'
         ]
 
         for color in required_colors:
-            assert hasattr(bcolors, color)
-            assert isinstance(getattr(bcolors, color), str)
+            assert hasattr(BColors, color)
+            assert isinstance(getattr(BColors, color), str)
 
     def test_bcolors_ansi_codes(self):
-        """Test that bcolors contain proper ANSI escape codes"""
+        """Test that BColors contain proper ANSI escape codes"""
         # Most colors should contain ANSI escape sequences
         color_codes = [
-            bcolors.HEADER, bcolors.OKBLUE, bcolors.OKCYAN,
-            bcolors.OKGREEN, bcolors.WARNING, bcolors.FAIL,
-            bcolors.BOLD, bcolors.PURPLE
+            BColors.HEADER, BColors.OKBLUE, BColors.OKCYAN,
+            BColors.OKGREEN, BColors.WARNING, BColors.FAIL,
+            BColors.BOLD, BColors.PURPLE
         ]
 
         for code in color_codes:
             assert code.startswith('\033[') or code.startswith('\x1b[')
 
         # ENDC should be a reset code
-        assert bcolors.ENDC in ['\033[0m', '\x1b[0m']
+        assert BColors.ENDC in ['\033[0m', '\x1b[0m']
 
 
 class TestColorValidation:
@@ -244,7 +244,8 @@ def test_hex_color_generation_parameterized(current_color, expected_different):
     new_color = generate_random_hex_color(current_color)
 
     if current_color and current_color.startswith('#') and len(current_color) == 7:
-        assert new_color != current_color
+        if expected_different:
+            assert new_color != current_color
 
     assert new_color.startswith('#')
     assert len(new_color) == 7

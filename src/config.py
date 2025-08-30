@@ -6,7 +6,7 @@ import json
 import os
 import sys
 
-from .colors import bcolors
+from .colors import BColors
 from .config_validator import get_valid_users
 from .config_validator import validate_user_config as validate_user
 from .device_flow import DeviceCodeFlow
@@ -34,7 +34,7 @@ def load_users_from_config(config_file):
     except FileNotFoundError:
         return []
     except Exception as e:
-        print_log(f"⚠️ Error loading config: {e}", bcolors.FAIL)
+        print_log(f"⚠️ Error loading config: {e}", BColors.FAIL)
         return []
 
 
@@ -80,7 +80,7 @@ def _log_save_operation(users, config_file):
     print_log(
         f"💾 Saving {
             len(users)} users to {config_file}",
-        bcolors.OKBLUE,
+        BColors.OKBLUE,
         debug_only=True)
     for i, user in enumerate(users, 1):
         print_log(
@@ -89,14 +89,14 @@ def _log_save_operation(users, config_file):
                 user.get(
                     'is_prime_or_turbo',
                     'MISSING_FIELD')}",
-            bcolors.OKCYAN,
+            BColors.OKCYAN,
             debug_only=True)
 
 
 def _log_debug_data(save_data):
     """Log debug information about the data being saved"""
-    print_log("🔍 DEBUG: Exact JSON being written:", bcolors.HEADER, debug_only=True)
-    print_log(json.dumps(save_data, indent=2), bcolors.OKCYAN, debug_only=True)
+    print_log("🔍 DEBUG: Exact JSON being written:", BColors.HEADER, debug_only=True)
+    print_log(json.dumps(save_data, indent=2), BColors.OKCYAN, debug_only=True)
 
 
 def _verify_saved_data(config_file):
@@ -110,19 +110,19 @@ def _verify_saved_data(config_file):
                     verification_data.get(
                         'users',
                         []))} users",
-            bcolors.OKGREEN,
+            BColors.OKGREEN,
             debug_only=True)
         for i, user in enumerate(verification_data.get('users', []), 1):
             username = user.get('username', 'NO_USERNAME')
             is_prime_or_turbo = user.get('is_prime_or_turbo', 'MISSING_FIELD')
             print_log(
                 f"  Verified User {i}: {username} -> is_prime_or_turbo: {is_prime_or_turbo}",
-                bcolors.OKGREEN,
+                BColors.OKGREEN,
                 debug_only=True)
     except Exception as verify_error:
         print_log(
             f"❌ VERIFICATION FAILED: {verify_error}",
-            bcolors.FAIL,
+            BColors.FAIL,
             debug_only=True)
 
 
@@ -146,7 +146,7 @@ def save_users_to_config(users, config_file):
                             'username',
                             'Unknown')}: {
                         user['is_prime_or_turbo']}",
-                    bcolors.OKBLUE,
+                    BColors.OKBLUE,
                     debug_only=True)
 
         # Set up directory and permissions
@@ -164,7 +164,7 @@ def save_users_to_config(users, config_file):
 
         with open(config_file, 'w') as f:
             json.dump(save_data, f, indent=2)
-        print_log("💾 Configuration saved successfully", bcolors.OKGREEN)
+        print_log("💾 Configuration saved successfully", BColors.OKGREEN)
 
         # Verify the save
         _verify_saved_data(config_file)
@@ -174,7 +174,7 @@ def save_users_to_config(users, config_file):
         time.sleep(0.5)
 
     except Exception as e:
-        print_log(f"⚠️ Failed to save configuration: {e}", bcolors.FAIL)
+        print_log(f"⚠️ Failed to save configuration: {e}", BColors.FAIL)
         raise
     finally:
         # Always resume watcher
@@ -200,7 +200,7 @@ def update_user_in_config(user_config, config_file):
                         'username',
                         'Unknown')}: {
                     user_config['is_prime_or_turbo']}",
-                bcolors.OKBLUE,
+                BColors.OKBLUE,
                 debug_only=True)
 
         # Find and update existing user
@@ -232,7 +232,7 @@ def update_user_in_config(user_config, config_file):
         save_users_to_config(users, config_file)
         return True
     except Exception as e:
-        print_log(f"⚠️ Failed to update user configuration: {e}", bcolors.FAIL)
+        print_log(f"⚠️ Failed to update user configuration: {e}", BColors.FAIL)
         return False
 
 
@@ -247,13 +247,13 @@ def disable_random_colors_for_user(username, config_file):
                 user['is_prime_or_turbo'] = False
                 print_log(
                     f"🔧 Disabled random colors for {username} (requires Turbo/Prime)",
-                    bcolors.WARNING)
+                    BColors.WARNING)
                 break
         else:
             # User not found in config - this shouldn't happen but handle gracefully
             print_log(
                 f"⚠️ User {username} not found in config when trying to disable random colors",
-                bcolors.WARNING)
+                BColors.WARNING)
             return False
 
         save_users_to_config(users, config_file)
@@ -261,7 +261,7 @@ def disable_random_colors_for_user(username, config_file):
     except Exception as e:
         print_log(
             f"⚠️ Failed to disable random colors for {username}: {e}",
-            bcolors.FAIL)
+            BColors.FAIL)
         return False
 
 
@@ -278,9 +278,9 @@ def get_configuration():
     users = load_users_from_config(config_file)
 
     if not users:
-        print_log("❌ No configuration file found!", bcolors.FAIL)
-        print_log(f"Please create a config file: {config_file}", bcolors.FAIL)
-        print_log("Use the sample file: twitch_colorchanger.conf.sample", bcolors.FAIL)
+        print_log("❌ No configuration file found!", BColors.FAIL)
+        print_log(f"Please create a config file: {config_file}", BColors.FAIL)
+        print_log("Use the sample file: twitch_colorchanger.conf.sample", BColors.FAIL)
         sys.exit(1)
 
     # Validate users
@@ -296,11 +296,11 @@ def get_configuration():
 
 def print_config_summary(users):
     """Print a summary of the loaded configuration"""
-    print_log("\n📊 Configuration Summary:", bcolors.HEADER)
-    print_log(f"👥 Total Users: {len(users)}", bcolors.OKBLUE)
+    print_log("\n📊 Configuration Summary:", BColors.HEADER)
+    print_log(f"👥 Total Users: {len(users)}", BColors.OKBLUE)
 
     for i, user in enumerate(users, 1):
-        print_log(f"\n👤 User {i}:", bcolors.OKCYAN)
+        print_log(f"\n👤 User {i}:", BColors.OKCYAN)
         print_log(f"   Username: {user['username']}")
         print_log(f"   Channels: {', '.join(user['channels'])}")
         print_log(
@@ -344,7 +344,7 @@ async def _setup_user_tokens(user):
     if not client_id or not client_secret:
         print_log(
             f"❌ User {username} missing client_id or client_secret - skipping automatic setup",
-            bcolors.FAIL)
+            BColors.FAIL)
         return {'user': user, 'tokens_updated': False}
 
     # Check if tokens exist and are valid/renewable
@@ -371,7 +371,7 @@ async def _validate_or_refresh_tokens(user):
     if not access_token:
         print_log(
             f"🔑 {username}: No access token found",
-            bcolors.WARNING,
+            BColors.WARNING,
             debug_only=True)
         return {'valid': False, 'user': user, 'updated': False}
 
@@ -406,26 +406,26 @@ async def _validate_or_refresh_tokens(user):
                 user['refresh_token'] = temp_bot.refresh_token
                 print_log(
                     f"✅ {username}: Tokens proactively refreshed",
-                    bcolors.OKGREEN,
+                    BColors.OKGREEN,
                     debug_only=True)
                 return {'valid': True, 'user': user, 'updated': True}
             else:
                 print_log(
                     f"✅ {username}: Tokens are valid",
-                    bcolors.OKGREEN,
+                    BColors.OKGREEN,
                     debug_only=True)
                 return {'valid': True, 'user': user, 'updated': False}
         else:
             print_log(
                 f"⚠️ {username}: Token validation/refresh failed",
-                bcolors.WARNING,
+                BColors.WARNING,
                 debug_only=True)
             return {'valid': False, 'user': user, 'updated': False}
 
     except Exception as e:
         print_log(
             f"⚠️ Token validation failed for {username}: {e}",
-            bcolors.WARNING,
+            BColors.WARNING,
             debug_only=True)
         return {'valid': False, 'user': user, 'updated': False}
 
@@ -433,7 +433,7 @@ async def _validate_or_refresh_tokens(user):
 async def _get_new_tokens_via_device_flow(user, client_id, client_secret):
     """Get new tokens using device flow and ensure they're saved to config."""
     username = user.get('username', 'Unknown')
-    print_log(f"\n🔑 User {username} needs new tokens", bcolors.WARNING)
+    print_log(f"\n🔑 User {username} needs new tokens", BColors.WARNING)
 
     device_flow = DeviceCodeFlow(client_id, client_secret)
     try:
@@ -449,19 +449,19 @@ async def _get_new_tokens_via_device_flow(user, client_id, client_secret):
             if validation_result['valid']:
                 print_log(
                     f"✅ Successfully obtained and validated new tokens for {username}",
-                    bcolors.OKGREEN)
+                    BColors.OKGREEN)
                 return {'user': validation_result['user'], 'tokens_updated': True}
             else:
                 print_log(
                     f"⚠️ New tokens for {username} failed validation",
-                    bcolors.WARNING)
+                    BColors.WARNING)
                 # Still save them, might work later
                 return {'user': user, 'tokens_updated': True}
         else:
-            print_log(f"❌ Failed to obtain tokens for {username}", bcolors.FAIL)
+            print_log(f"❌ Failed to obtain tokens for {username}", BColors.FAIL)
             return {'user': user, 'tokens_updated': False}
     except Exception as e:
-        print_log(f"❌ Error during token setup for {username}: {e}", bcolors.FAIL)
+        print_log(f"❌ Error during token setup for {username}: {e}", BColors.FAIL)
         return {'user': user, 'tokens_updated': False}
 
 
@@ -493,20 +493,20 @@ async def _validate_new_tokens(user):
             user['refresh_token'] = temp_bot.refresh_token
             print_log(
                 f"✅ New tokens for {username} validated successfully",
-                bcolors.OKGREEN,
+                BColors.OKGREEN,
                 debug_only=True)
             return {'valid': True, 'user': user}
         else:
             print_log(
                 f"⚠️ New tokens for {username} validation failed",
-                bcolors.WARNING,
+                BColors.WARNING,
                 debug_only=True)
             return {'valid': False, 'user': user}
 
     except Exception as e:
         print_log(
             f"⚠️ Error validating new tokens for {username}: {e}",
-            bcolors.WARNING,
+            BColors.WARNING,
             debug_only=True)
         return {'valid': False, 'user': user}
 
@@ -515,6 +515,6 @@ def _save_updated_config(updated_users, config_file):
     """Save updated configuration to file."""
     try:
         save_users_to_config(updated_users, config_file)
-        print_log("💾 Configuration updated with new tokens", bcolors.OKGREEN)
+        print_log("💾 Configuration updated with new tokens", BColors.OKGREEN)
     except Exception as e:
-        print_log(f"❌ Failed to save updated configuration: {e}", bcolors.FAIL)
+        print_log(f"❌ Failed to save updated configuration: {e}", BColors.FAIL)

@@ -8,7 +8,7 @@ from typing import Dict, Optional, Tuple
 
 import aiohttp
 
-from .colors import bcolors
+from .colors import BColors
 from .utils import print_log
 
 
@@ -38,17 +38,17 @@ class DeviceCodeFlow:
                         result = await response.json()
                         print_log(
                             "✅ Device code generated successfully",
-                            bcolors.OKGREEN)
+                            BColors.OKGREEN)
                         return result
                     else:
                         error_data = await response.json()
                         print_log(
                             f"❌ Failed to get device code: {error_data}",
-                            bcolors.FAIL)
+                            BColors.FAIL)
                         return None
 
             except Exception as e:
-                print_log(f"❌ Error requesting device code: {e}", bcolors.FAIL)
+                print_log(f"❌ Error requesting device code: {e}", BColors.FAIL)
                 return None
 
     async def poll_for_tokens(
@@ -78,7 +78,7 @@ class DeviceCodeFlow:
                         if response.status == 200:
                             print_log(
                                 "✅ Authorization successful! Tokens received.",
-                                bcolors.OKGREEN)
+                                BColors.OKGREEN)
                             return result
 
                         elif response.status == 400:
@@ -90,17 +90,17 @@ class DeviceCodeFlow:
                             print_log(
                                 f"❌ Unexpected response: {
                                     response.status} - {result}",
-                                bcolors.FAIL)
+                                BColors.FAIL)
                             return None
 
                 except Exception as e:
-                    print_log(f"❌ Error during polling: {e}", bcolors.FAIL)
+                    print_log(f"❌ Error during polling: {e}", BColors.FAIL)
                     return None
 
                 # Wait before next poll
                 await asyncio.sleep(self.poll_interval)
 
-        print_log(f"❌ Device code flow timed out after {expires_in}s", bcolors.FAIL)
+        print_log(f"❌ Device code flow timed out after {expires_in}s", BColors.FAIL)
         return None
 
     def _handle_polling_error(
@@ -117,7 +117,7 @@ class DeviceCodeFlow:
         if error != "authorization_pending":
             print_log(
                 f"🔍 Device flow error details: {result}",
-                bcolors.WARNING,
+                BColors.WARNING,
                 debug_only=True)
 
         if error == "authorization_pending":
@@ -125,7 +125,7 @@ class DeviceCodeFlow:
             if poll_count % 6 == 0:  # Show message every 30 seconds
                 print_log(
                     f"⏳ Still waiting for authorization... ({elapsed}s elapsed)",
-                    bcolors.OKCYAN)
+                    BColors.OKCYAN)
             return None  # Continue polling
 
         elif error == "slow_down":
@@ -134,24 +134,24 @@ class DeviceCodeFlow:
             print_log(
                 f"⚠️ Slowing down polling to {
                     self.poll_interval}s",
-                bcolors.WARNING)
+                BColors.WARNING)
             return None  # Continue polling
 
         elif error == "expired_token":
-            print_log(f"❌ Device code expired after {elapsed}s", bcolors.FAIL)
+            print_log(f"❌ Device code expired after {elapsed}s", BColors.FAIL)
             return {}  # Stop polling
 
         elif error == "access_denied":
-            print_log("❌ User denied authorization", bcolors.FAIL)
+            print_log("❌ User denied authorization", BColors.FAIL)
             return {}  # Stop polling
 
         else:
             if error_description:
                 print_log(
                     f"❌ Device flow error: {error} - {error_description}",
-                    bcolors.FAIL)
+                    BColors.FAIL)
             else:
-                print_log(f"❌ Unknown device flow error: {error}", bcolors.FAIL)
+                print_log(f"❌ Unknown device flow error: {error}", BColors.FAIL)
             return {}  # Stop polling
 
     async def get_user_tokens(self, username: str) -> Optional[Tuple[str, str]]:
@@ -161,8 +161,8 @@ class DeviceCodeFlow:
         """
         print_log(
             f"\n🔧 Starting automatic token setup for user: {username}",
-            bcolors.HEADER)
-        print_log("📱 You will need to authorize this bot on Twitch", bcolors.OKCYAN)
+            BColors.HEADER)
+        print_log("📱 You will need to authorize this bot on Twitch", BColors.OKCYAN)
 
         # Step 1: Request device code
         device_data = await self.request_device_code()
@@ -175,17 +175,17 @@ class DeviceCodeFlow:
         expires_in = device_data["expires_in"]
 
         # Step 2: Display instructions to user
-        print_log("\n" + "=" * 60, bcolors.PURPLE)
-        print_log(f"🎯 AUTHORIZATION REQUIRED FOR: {username.upper()}", bcolors.PURPLE)
-        print_log("=" * 60, bcolors.PURPLE)
-        print_log(f"📱 Visit: {verification_uri}", bcolors.OKGREEN)
-        print_log(f"🔑 Enter code: {user_code}", bcolors.OKGREEN)
-        print_log(f"⏰ Code expires in: {expires_in // 60} minutes", bcolors.WARNING)
-        print_log("=" * 60, bcolors.PURPLE)
+        print_log("\n" + "=" * 60, BColors.PURPLE)
+        print_log(f"🎯 AUTHORIZATION REQUIRED FOR: {username.upper()}", BColors.PURPLE)
+        print_log("=" * 60, BColors.PURPLE)
+        print_log(f"📱 Visit: {verification_uri}", BColors.OKGREEN)
+        print_log(f"🔑 Enter code: {user_code}", BColors.OKGREEN)
+        print_log(f"⏰ Code expires in: {expires_in // 60} minutes", BColors.WARNING)
+        print_log("=" * 60, BColors.PURPLE)
         print_log(
             f"⏳ Waiting for authorization... (checking every {
                 self.poll_interval}s)",
-            bcolors.OKCYAN)
+            BColors.OKCYAN)
 
         # Step 3: Poll for authorization
         token_data = await self.poll_for_tokens(device_code, expires_in)
@@ -195,5 +195,5 @@ class DeviceCodeFlow:
         access_token = token_data["access_token"]
         refresh_token = token_data.get("refresh_token", "")
 
-        print_log(f"🎉 Successfully obtained tokens for {username}!", bcolors.OKGREEN)
+        print_log(f"🎉 Successfully obtained tokens for {username}!", BColors.OKGREEN)
         return access_token, refresh_token

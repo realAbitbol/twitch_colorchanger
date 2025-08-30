@@ -279,59 +279,61 @@ class TestIntegration:
 # Branch Coverage Tests - targeting specific uncovered branches
 class TestErrorHandlingBranchCoverage:
     """Test missing branch coverage in error_handling.py"""
-    
+
     @pytest.mark.asyncio
     async def test_simple_retry_asyncio_cancelled_error_not_retried(self):
         """Test that asyncio.CancelledError is not retried and exits immediately"""
-        
+
         attempt_count = 0
-        
+
         async def failing_func():
             nonlocal attempt_count
             attempt_count += 1
+            await asyncio.sleep(0)  # Make it properly async
             raise asyncio.CancelledError("Operation cancelled")
-        
+
         with pytest.raises(asyncio.CancelledError):
             await simple_retry(failing_func, max_retries=3, delay=0.01)
-        
+
         # Should have only tried once, not retried
         assert attempt_count == 1
 
     @pytest.mark.asyncio
     async def test_simple_retry_success_on_first_attempt_early_loop_exit(self):
         """Test exact branch when function succeeds on first attempt - line 20->exit"""
-        
+
         call_count = 0
-        
+
         async def successful_func():
             nonlocal call_count
             call_count += 1
+            await asyncio.sleep(0)  # Make it properly async
             return "success_value"
-        
+
         # Should succeed immediately and exit the for loop early
         result = await simple_retry(successful_func, max_retries=5, delay=0.1)
-        
+
         assert result == "success_value"
         assert call_count == 1  # Only called once
-        
+
         # Test with different parameters to ensure it's the loop exit branch
         call_count = 0
         result2 = await simple_retry(successful_func, max_retries=0, delay=0.5)
         assert result2 == "success_value"
         assert call_count == 1
 
-    @pytest.mark.asyncio 
+    @pytest.mark.asyncio
     async def test_simple_retry_for_loop_normal_exit(self):
         """Test for loop completion without exception - hitting the normal range exit"""
         attempts = []
-        
+
         async def track_attempts():
             await asyncio.sleep(0.001)  # Make it actually async
             attempts.append(len(attempts))
             if len(attempts) <= 2:  # Fail first 2 attempts
                 raise ValueError("Test error")
             return "success"  # Succeed on 3rd attempt
-        
+
         # With max_retries=3, range(4) = [0,1,2,3]
         # Should succeed on attempt 2 (3rd call) and exit the for loop normally
         result = await simple_retry(track_attempts, max_retries=3)

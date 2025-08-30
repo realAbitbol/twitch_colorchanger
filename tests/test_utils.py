@@ -5,7 +5,7 @@ Tests for utility functions
 import os
 from unittest.mock import patch
 
-from src.colors import bcolors
+from src.colors import BColors
 from src.utils import print_instructions, print_log
 
 
@@ -20,12 +20,12 @@ class TestPrintLog:
 
     def test_print_log_with_color(self, capsys):
         """Test message printing with color"""
-        print_log("Colored message", bcolors.OKGREEN)
+        print_log("Colored message", BColors.OKGREEN)
         captured = capsys.readouterr()
         assert "Colored message" in captured.out
         # ANSI color codes should be present
-        assert bcolors.OKGREEN in captured.out
-        assert bcolors.ENDC in captured.out
+        assert BColors.OKGREEN in captured.out
+        assert BColors.ENDC in captured.out
 
     def test_print_log_debug_mode_enabled(self, capsys):
         """Test debug message when debug mode is enabled"""
@@ -92,7 +92,7 @@ class TestUtilsIntegration:
     def test_print_log_multiple_calls(self, capsys):
         """Test multiple print_log calls"""
         messages = ["Message 1", "Message 2", "Message 3"]
-        colors = [bcolors.OKGREEN, bcolors.WARNING, bcolors.FAIL]
+        colors = [BColors.OKGREEN, BColors.WARNING, BColors.FAIL]
 
         for msg, color in zip(messages, colors):
             print_log(msg, color)
@@ -112,14 +112,14 @@ class TestUtilsIntegration:
         """Test combination of debug and normal messages"""
         print_log("Normal message")
         print_log("Debug message", debug_only=True)
-        print_log("Another normal message", bcolors.OKBLUE)
+        print_log("Another normal message", BColors.OKBLUE)
 
         captured = capsys.readouterr()
 
         assert "Normal message" in captured.out
         assert "Debug message" in captured.out
         assert "Another normal message" in captured.out
-        assert bcolors.OKBLUE in captured.out
+        assert BColors.OKBLUE in captured.out
 
     def test_error_handling_in_print_log(self, capsys):
         """Test error handling in print_log"""

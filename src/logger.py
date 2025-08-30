@@ -6,7 +6,7 @@ import logging
 import os
 import sys
 
-from .colors import bcolors
+from .colors import BColors
 
 
 class ColoredFormatter(logging.Formatter):
@@ -19,11 +19,11 @@ class ColoredFormatter(logging.Formatter):
         """Format log record with colors"""
         # Color mapping
         colors = {
-            'DEBUG': bcolors.OKBLUE,
-            'INFO': bcolors.OKGREEN,
-            'WARNING': bcolors.WARNING,
-            'ERROR': bcolors.FAIL,
-            'CRITICAL': bcolors.FAIL + bcolors.BOLD
+            'DEBUG': BColors.OKBLUE,
+            'INFO': BColors.OKGREEN,
+            'WARNING': BColors.WARNING,
+            'ERROR': BColors.FAIL,
+            'CRITICAL': BColors.FAIL + BColors.BOLD
         }
 
         color = colors.get(record.levelname, '')
@@ -42,7 +42,7 @@ class ColoredFormatter(logging.Formatter):
         else:
             context = ""
 
-        formatted = f"{color}{message}{context}{bcolors.ENDC}"
+        formatted = f"{color}{message}{context}{BColors.ENDC}"
 
         # Add exception info if present
         if record.exc_info:

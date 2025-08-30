@@ -5,7 +5,7 @@ Color definitions and utilities for console output
 import random  # nosec B311 - non-cryptographic randomness acceptable for color selection
 
 
-class bcolors:
+class BColors:
     """ANSI color codes for console output"""
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'

@@ -4,10 +4,10 @@ Tests for simple_irc.py module
 
 import socket
 import time
-from unittest.mock import Mock, MagicMock, patch, AsyncMock
+from unittest.mock import Mock, MagicMock, patch
 
 import pytest
-from src.logger import bcolors
+from src.logger import BColors
 
 from src.simple_irc import SimpleTwitchIRC
 
@@ -634,10 +634,10 @@ class TestSimpleIRCBranchCoverage:
         # Don't connect, so self.connected will be False
         irc.connected = False
         irc.sock = None
-        
+
         # Should not raise exception and exit early
         irc.join_channel('testchannel')
-        
+
         # Should not have added the channel to joined_channels
         assert 'testchannel' not in irc.joined_channels
 
@@ -647,7 +647,7 @@ class TestSimpleIRCBranchCoverage:
         irc.connected = True
         irc.sock = MagicMock()
         irc.username = 'testuser'
-        
+
         # Create timeout info with max attempts reached (max is 2, so attempts = 2)
         # Also ensure timeout has passed (join_timeout = 30 seconds)
         channel = 'testchannel'
@@ -656,16 +656,16 @@ class TestSimpleIRCBranchCoverage:
             'attempts': 2  # Max attempts reached (max_join_attempts = 2)
         }
         current_time = time.time()
-        
+
         with patch('src.simple_irc.print_log') as mock_print:
             result = irc._handle_single_join_timeout(channel, timeout_info, current_time)
-            
+
             # Should return True when max attempts reached (remove from pending)
             assert result is True
-            # Should log failure message  
+            # Should log failure message
             mock_print.assert_called_with(
                 f"❌ testuser failed to join #{channel} after 2 attempts (timeout)",
-                bcolors.FAIL
+                BColors.FAIL
             )
 
     def test_parse_message_rpl_endofnames_branch(self):
@@ -673,31 +673,33 @@ class TestSimpleIRCBranchCoverage:
         irc = SimpleTwitchIRC()
         irc.username = "testuser"
         irc.token = "oauth:token123"
-        
+
         # Add a pending join to test the success path
         irc.pending_joins["testchannel"] = {
             "timestamp": time.time(),
             "attempts": 1
         }
-        
+
         # Test RPL_ENDOFNAMES message (366)
         message = ":tmi.twitch.tv 366 testuser #testchannel :End of /NAMES list"
-        
+
         with patch('src.simple_irc.print_log') as mock_log:
             result = irc._parse_message(message)
-            
+
             # Should process the message successfully
             assert result is None  # _parse_message returns None for 366
-            
+
             # Channel should be added to confirmed channels
             assert "testchannel" in irc.confirmed_channels
-            
+
             # Should be removed from pending joins
             assert "testchannel" not in irc.pending_joins
-            
+
             # Should log success
-            success_calls = [call for call in mock_log.call_args_list 
-                           if "successfully joined" in str(call)]
+            success_calls = [
+                call for call in mock_log.call_args_list
+                if "successfully joined" in str(call)
+            ]
             assert len(success_calls) > 0
 
     def test_parse_message_non_366_command_skip_branch(self):
@@ -705,12 +707,12 @@ class TestSimpleIRCBranchCoverage:
         irc = SimpleTwitchIRC()
         irc.username = "testuser"
         irc.token = "oauth:token123"
-        
+
         # Test with a different command (not 366)
         message = ":tmi.twitch.tv 001 testuser :Welcome to TMI"
-        
+
         result = irc._parse_message(message)
-        
+
         # Should process normally but skip the 366-specific logic
         # _parse_message always returns None
         assert result is None
@@ -721,23 +723,23 @@ class TestSimpleIRCBranchCoverage:
         irc.username = "testuser"
         irc.token = "oauth:token123"
         irc.connected = True
-        
+
         # Create test data with empty lines
         test_data = "PING :tmi.twitch.tv\r\n\r\nPONG :reply\r\n"
-        
+
         # Mock the handlers
         with patch.object(irc, '_process_line') as mock_process, \
              patch('src.simple_irc.print_log'):
-            
+
             # Simulate the buffer processing logic directly
             buffer = test_data
-            
+
             while '\r\n' in buffer:
                 line, buffer = buffer.split('\r\n', 1)
                 if line:  # This is the branch we want to test
                     mock_process(line)
                 # Empty lines are skipped (line 180->178 branch)
-            
+
             # Should only process the non-empty lines
             assert mock_process.call_count == 2  # "PING :tmi.twitch.tv" and "PONG :reply"
             call_args_1 = mock_process.call_args_list[0][0][0]
@@ -749,20 +751,20 @@ class TestSimpleIRCBranchCoverage:
         """Test simple_irc.py line 180: if line -> False for empty lines"""
         # Test the buffer processing logic directly matching the exact code
         buffer = "\r\nvalid_line\r\n"
-        
+
         # Split the buffer exactly like in listen()
         first_line, remaining_buffer = buffer.split('\r\n', 1)
-        
+
         # First line is empty string - this tests the False branch of line 180
         assert first_line == ""  # This would make 'if line:' False
         assert not first_line    # Explicitly test the falsiness
-        
+
         # Continue processing to verify the loop continues after the False branch
         assert '\r\n' in remaining_buffer  # While condition continues
-        
+
         second_line, _ = remaining_buffer.split('\r\n', 1)
         assert second_line == "valid_line"  # This would make 'if line:' True
-        
+
         # Verify we handled both the False and True branches of line 180
 
     def test_listen_leading_empty_line_executes_false_branch_runtime(self):
