@@ -414,3 +414,94 @@ def test_get_rate_limiter_function():
 
     # Should be different from user limiter
     assert app_limiter is not limiter1
+
+
+# Branch Coverage Tests - targeting specific uncovered branches
+class TestRateLimiterBranchCoverage:
+    """Test missing branch coverage in rate_limiter.py"""
+
+    @pytest.mark.asyncio
+    async def test_wait_if_needed_brief_delay_no_log_branch(self):
+        """Test branch when delay < 1 second - lines 236->254"""
+        limiter = TwitchRateLimiter('client123', username='testuser')
+        
+        # Set up rate limit bucket with very small delay
+        limiter.user_bucket = RateLimitInfo(
+            limit=100,
+            remaining=99,
+            reset_timestamp=time.time() + 0.1,  # Very small delay
+            last_updated=time.time()
+        )
+        
+        with patch('asyncio.sleep'), \
+             patch('src.rate_limiter.print_log') as mock_log:
+            
+            # This should create a very small delay (< 1 second)
+            await limiter.wait_if_needed(endpoint='test', is_user_request=True, points_cost=1)
+            
+            # Should not log for brief delays since delay < 1 second
+            mock_log.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_wait_if_needed_no_bucket_early_exit(self):
+        """Test early exit when no bucket exists - lines 223->224"""
+        limiter = TwitchRateLimiter('client123', username='testuser')
+        
+        # Ensure no bucket exists
+        limiter.user_bucket = None
+        limiter.app_bucket = None
+        
+        with patch('asyncio.sleep'):
+            # This should exit early since no bucket exists
+            await limiter.wait_if_needed(endpoint='test', is_user_request=True, points_cost=1)
+            
+            # Should not raise any exception, just return early
+            assert limiter.user_bucket is None
+
+    @pytest.mark.asyncio 
+    async def test_wait_if_needed_no_bucket_prediction_update(self):
+        """Test branch when bucket is None in prediction update - line 254->exit"""
+        limiter = TwitchRateLimiter('client123', username='testuser')
+        
+        # Set up rate limiter with no bucket for user requests
+        limiter.user_bucket = None
+        
+        with patch('time.time', return_value=1000.0):
+            # Should not crash and should handle missing bucket gracefully
+            await limiter.wait_if_needed(endpoint='test', is_user_request=True, points_cost=1)
+            
+        # Test with app bucket as None too
+        limiter.app_bucket = None
+        await limiter.wait_if_needed(endpoint='test', is_user_request=False, points_cost=1)
+
+    @pytest.mark.asyncio
+    async def test_wait_if_needed_bucket_none_line_254(self):
+        """Test rate_limiter.py line 254: if bucket -> False when bucket is None"""
+        limiter = TwitchRateLimiter("test_client")
+        limiter.user_bucket = None  # Make bucket None/False
+        
+        # This should hit line 254 and take the False branch
+        await limiter.wait_if_needed(endpoint="test", is_user_request=True, points_cost=1)
+
+    @pytest.mark.asyncio
+    async def test_wait_if_needed_falsy_bucket_object_line_254(self):
+        """Provide a bucket object that evaluates False to hit 'if bucket:' false branch at line 254."""
+        limiter = TwitchRateLimiter("client_id", username="user")
+
+        class FalsyBucket:
+            limit = 100
+            remaining = 40
+            reset_timestamp = time.time() + 5
+            last_updated = time.time()
+            def __bool__(self):
+                return False
+
+        fb = FalsyBucket()
+        limiter.user_bucket = fb
+
+        with patch.object(limiter, "_calculate_delay", return_value=0), \
+             patch("src.rate_limiter.print_log"):
+            await limiter.wait_if_needed(endpoint="ep", is_user_request=True, points_cost=5)
+
+        # Because bucket evaluated False, prediction update block skipped
+        assert fb.remaining == 40

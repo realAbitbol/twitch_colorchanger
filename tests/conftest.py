@@ -9,21 +9,22 @@ import json
 import os
 import sys
 import tempfile
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-try:
-    # Import the canonical package module early in collection
-    import src.simple_irc as _simple_irc
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    # Prepend project root so 'src' and 'main' are importable
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-    # Ensure aliases exist so imports under either name refer to the same module
-    if 'simple_irc' not in sys.modules:
-        sys.modules['simple_irc'] = _simple_irc
-    if 'src.simple_irc' not in sys.modules:
-        sys.modules['src.simple_irc'] = _simple_irc
-except Exception:
-    # Be defensive: don't fail test collection if import fails for any reason
+try:  # pragma: no cover - setup utility
+    import src.simple_irc as _simple_irc  # noqa: F401
+    # Ensure alias if direct name used elsewhere
+    sys.modules.setdefault('simple_irc', _simple_irc)
+    sys.modules.setdefault('src.simple_irc', _simple_irc)
+except Exception:  # pragma: no cover - defensive
     pass
 """
 Pytest configuration and shared fixtures for the Twitch ColorChanger Bot tests
