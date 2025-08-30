@@ -18,25 +18,24 @@ async def main():
     """Main function"""
     try:
         logger.info("🚀 Starting Twitch Color Changer Bot")
-        
+
         # Print welcome message and instructions
         print_instructions()
-        
+
         # Get config file path for token saving
         config_file = os.environ.get('TWITCH_CONF_FILE', "twitch_colorchanger.conf")
-        
+
         # Get configuration from config file
         users_config = get_configuration()
-        
+
         # Setup missing tokens automatically (device flow fallback)
         users_config = await setup_missing_tokens(users_config, config_file)
-        
+
         # Print configuration summary
         print_config_summary(users_config)
-        
+
         # Run all bots (signal handlers are set up in bot_manager)
         await run_bots(users_config, config_file)
-        
     except KeyboardInterrupt:
         logger.warning("⌨️ Interrupted by user")
     except Exception as e:
@@ -59,7 +58,7 @@ if __name__ == "__main__":
         except Exception as e:
             logger.error(f"❌ Health check failed: {e}")
             sys.exit(1)
-    
+
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

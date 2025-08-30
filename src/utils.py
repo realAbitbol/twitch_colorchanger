@@ -4,7 +4,7 @@ Utility functions for logging, user input, and common operations
 
 import os
 
-from .colors import bcolors
+from .colors import BColors
 
 # Global debug flag
 DEBUG = os.environ.get('DEBUG', 'false').lower() in ('true', '1', 'yes')
@@ -19,16 +19,16 @@ def print_log(message, color="", debug_only=False):
             return
 
     if color:
-        print(f"{color}{message}{bcolors.ENDC}")
+        print(f"{color}{message}{BColors.ENDC}")
     else:
         print(message)
 
 
 def print_instructions():
     """Display essential setup instructions"""
-    print_log("=" * 60, bcolors.PURPLE)
-    print_log("🎨 TWITCH COLORCHANGER BOT - Multi-User Support", bcolors.PURPLE)
-    print_log("=" * 60, bcolors.PURPLE)
+    print_log("=" * 60, BColors.PURPLE)
+    print_log("🎨 TWITCH COLORCHANGER BOT - Multi-User Support", BColors.PURPLE)
+    print_log("=" * 60, BColors.PURPLE)
 
     print_log("\n🔧 Setup Instructions:")
     print_log("1. Create a Twitch application at: https://dev.twitch.tv/console/apps")

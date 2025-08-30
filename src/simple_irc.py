@@ -6,7 +6,7 @@ import socket
 import time
 from typing import Optional
 
-from .colors import bcolors
+from .colors import BColors
 from .utils import print_log
 
 
@@ -57,11 +57,11 @@ class SimpleTwitchIRC:
 
             self.connected = True
             self.running = True  # Enable the listening loop
-            print_log(f"✅ Connected to Twitch IRC as {self.username}", bcolors.OKGREEN)
+            print_log(f"✅ Connected to Twitch IRC as {self.username}", BColors.OKGREEN)
             return True
 
         except Exception as e:
-            print_log(f"❌ IRC connection failed: {e}", bcolors.FAIL)
+            print_log(f"❌ IRC connection failed: {e}", BColors.FAIL)
             return False
 
     def set_message_handler(self, handler):
@@ -118,17 +118,17 @@ class SimpleTwitchIRC:
                 print_log(
                     f"✅ {
                         self.username} successfully joined #{channel}",
-                    bcolors.OKGREEN)
+                    BColors.OKGREEN)
             return None
         except Exception as e:
-            print_log(f"⚠️ Parse error: {e}", bcolors.WARNING)
+            print_log(f"⚠️ Parse error: {e}", BColors.WARNING)
             return None
 
     def _handle_ping(self, line: str):
         """Handle PING messages"""
         pong = line.replace('PING', 'PONG')
         self.sock.send(f"{pong}\r\n".encode('utf-8'))
-        print_log("🏓 Responded to PING", bcolors.OKCYAN, debug_only=True)
+        print_log("🏓 Responded to PING", BColors.OKCYAN, debug_only=True)
 
     def _handle_privmsg(self, parsed: dict):
         """Handle PRIVMSG messages"""
@@ -140,7 +140,7 @@ class SimpleTwitchIRC:
         display_msg = message[:50] + ('...' if len(message) > 50 else '')
         is_own_message = sender.lower() == self.username.lower()
         debug_only = not is_own_message  # Only show other users' messages in debug mode
-        color = bcolors.OKCYAN if is_own_message else bcolors.OKBLUE
+        color = BColors.OKCYAN if is_own_message else BColors.OKBLUE
 
         print_log(f"#{channel} - {sender}: {display_msg}", color, debug_only=debug_only)
 
@@ -162,17 +162,17 @@ class SimpleTwitchIRC:
     def listen(self):
         """Main listening loop"""
         buffer = ""
-        print_log("🎧 IRC listening loop started", bcolors.OKBLUE, debug_only=True)
+        print_log("🎧 IRC listening loop started", BColors.OKBLUE, debug_only=True)
 
         while self.running and self.connected:
             try:
                 data = self.sock.recv(4096).decode('utf-8', errors='ignore')
                 if not data:
-                    print_log("❌ IRC connection lost", bcolors.FAIL)
+                    print_log("❌ IRC connection lost", BColors.FAIL)
                     break
 
                 print_log(
-                    f"📡 IRC received data: {repr(data[:100])}{'...' if len(data) > 100 else ''}", bcolors.OKCYAN, debug_only=True)
+                    f"📡 IRC received data: {repr(data[:100])}{'...' if len(data) > 100 else ''}", BColors.OKCYAN, debug_only=True)
                 buffer += data
 
                 while '\r\n' in buffer:
@@ -181,7 +181,7 @@ class SimpleTwitchIRC:
                         print_log(
                             f"📝 Processing IRC line: {
                                 repr(line)}",
-                            bcolors.OKGREEN,
+                            BColors.OKGREEN,
                             debug_only=True)
                         self._process_line(line)
                 # After processing batch, check for join timeouts
@@ -190,7 +190,7 @@ class SimpleTwitchIRC:
             except socket.timeout:
                 continue
             except Exception as e:
-                print_log(f"❌ Listen error: {e}", bcolors.FAIL)
+                print_log(f"❌ Listen error: {e}", BColors.FAIL)
                 break
 
     def _check_join_timeouts(self):
@@ -220,7 +220,7 @@ class SimpleTwitchIRC:
                     self.username} retrying join for #{channel} (attempt {
                     attempts +
                     1})",
-                bcolors.WARNING)
+                BColors.WARNING)
             try:
                 self.sock.send(f"JOIN #{channel}\r\n".encode('utf-8'))
                 info['sent_at'] = now
@@ -230,17 +230,17 @@ class SimpleTwitchIRC:
                 print_log(
                     f"❌ {
                         self.username} failed to resend JOIN for #{channel}: {e}",
-                    bcolors.FAIL)
+                    BColors.FAIL)
         elif can_retry and not connected:
             print_log(
                 f"❌ {
                     self.username} cannot retry join for #{channel} (not connected)",
-                bcolors.FAIL)
+                BColors.FAIL)
         # Failure path
         print_log(
             f"❌ {
                 self.username} failed to join #{channel} after {attempts} attempts (timeout)",
-            bcolors.FAIL)
+            BColors.FAIL)
         return True
 
     def disconnect(self):
@@ -253,4 +253,4 @@ class SimpleTwitchIRC:
             except (OSError, AttributeError):
                 pass
             self.sock = None
-        print_log("🔌 Disconnected from IRC", bcolors.WARNING)
+        print_log("🔌 Disconnected from IRC", BColors.WARNING)

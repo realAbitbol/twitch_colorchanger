@@ -329,10 +329,10 @@ class TestDeviceCodeFlow:
 
             assert result is None
             # Verify the error was logged
-            from src.device_flow import bcolors
+            from src.device_flow import BColors
             mock_print_log.assert_any_call(
                 "❌ Error during polling: Network connection error",
-                bcolors.FAIL
+                BColors.FAIL
             )
 
     @pytest.mark.asyncio
@@ -356,10 +356,10 @@ class TestDeviceCodeFlow:
 
                 assert result is None
                 # Verify the exception was caught and logged
-                from src.device_flow import bcolors
+                from src.device_flow import BColors
                 mock_print_log.assert_any_call(
                     "❌ Error during polling: Simulated network error",
-                    bcolors.FAIL
+                    BColors.FAIL
                 )
 
     @pytest.mark.asyncio
@@ -399,10 +399,10 @@ class TestDeviceCodeFlow:
 
                 assert result is None
                 # Verify timeout message was logged
-                from src.device_flow import bcolors
+                from src.device_flow import BColors
                 mock_print_log.assert_any_call(
                     "❌ Device code flow timed out after 0.1s",
-                    bcolors.FAIL
+                    BColors.FAIL
                 )
 
     @pytest.mark.asyncio

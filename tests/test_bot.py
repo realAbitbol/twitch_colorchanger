@@ -1,5 +1,6 @@
 import asyncio
 import time
+import unittest.mock
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -1914,15 +1915,12 @@ class TestBotBranchCoverage:
             nick='testuser',
             channels=['testchannel']
         )
-        
+
         # Mock the user info response to not contain 'id'
         with patch.object(bot, '_check_and_refresh_token', return_value=None), \
              patch.object(bot, '_get_user_info', return_value={'login': 'testuser', 'display_name': 'TestUser'}), \
              patch('src.bot.print_log') as mock_print:
-            
             await bot.start()
-            
-            # Should print failure message and return early
             mock_print.assert_any_call(
                 "❌ testuser: Failed to retrieve user_id",
                 unittest.mock.ANY
@@ -1939,14 +1937,11 @@ class TestBotBranchCoverage:
             nick='testuser',
             channels=['testchannel']
         )
-        
+
         with patch.object(bot, '_check_and_refresh_token', return_value=None), \
              patch.object(bot, '_get_user_info', return_value=None), \
              patch('src.bot.print_log') as mock_print:
-            
             await bot.start()
-            
-            # Should print failure message and return early
             mock_print.assert_any_call(
                 "❌ testuser: Failed to retrieve user_id",
                 unittest.mock.ANY
@@ -1964,31 +1959,28 @@ class TestBotBranchCoverage:
             channels=['testchannel']
         )
         bot.user_id = 'user123'
-        
+
         with patch.object(bot, '_check_and_refresh_token', return_value=None), \
              patch.object(bot, '_get_current_color', return_value=None), \
              patch('src.bot.SimpleTwitchIRC') as mock_irc_class, \
              patch('asyncio.create_task') as mock_create_task, \
              patch('asyncio.get_event_loop') as mock_get_loop, \
              patch('asyncio.gather', side_effect=KeyboardInterrupt):
-            
             mock_irc = Mock()
             mock_irc_class.return_value = mock_irc
-            
-            # Mock the background tasks to avoid them actually running
+
             mock_task = Mock()
             mock_create_task.return_value = mock_task
-            
+
             mock_loop = Mock()
             mock_loop.run_in_executor.return_value = Mock()
             mock_get_loop.return_value = mock_loop
-            
+
             try:
                 await bot.start()
             except KeyboardInterrupt:
-                pass  # Expected due to our patch
-            
-            # Should continue without setting last_color (None branch)
+                pass
+
             assert bot.last_color is None
             mock_irc.connect.assert_called_once()
             mock_irc.join_channel.assert_called_once_with('testchannel')
@@ -2004,29 +1996,29 @@ class TestBotBranchCoverage:
             nick='testuser',
             channels=['testchannel']
         )
-        
+
         # Mock the JSON response without refresh_token
         mock_response_data = {
             'access_token': 'new_token',
             'expires_in': 14400
             # Note: no refresh_token in response
         }
-        
+
         # Patch the entire aiohttp method call chain with MagicMock
         with patch('aiohttp.ClientSession') as mock_session_cls:
             mock_session = MagicMock()
             mock_session_cls.return_value.__aenter__.return_value = mock_session
             mock_session_cls.return_value.__aexit__.return_value = None
-            
+
             mock_response = MagicMock()
             mock_response.status = 200
             mock_response.json = AsyncMock(return_value=mock_response_data)
-            
+
             mock_session.post.return_value.__aenter__.return_value = mock_response
             mock_session.post.return_value.__aexit__.return_value = None
-            
+
             result = await bot._refresh_access_token_impl()
-            
+
             assert result is True
             assert bot.access_token == 'new_token'
             # refresh_token should remain unchanged since not in response
@@ -2043,34 +2035,31 @@ class TestBotBranchCoverage:
             nick='testuser',
             channels=['testchannel']
         )
-        
+
         # Mock the JSON response without expires_in
         mock_response_data = {
             'access_token': 'new_token',
             'refresh_token': 'new_refresh'
             # Note: no expires_in in response
         }
-        
+
         # Patch the entire aiohttp method call chain with MagicMock
         with patch('aiohttp.ClientSession') as mock_session_cls:
             mock_session = MagicMock()
             mock_session_cls.return_value.__aenter__.return_value = mock_session
             mock_session_cls.return_value.__aexit__.return_value = None
-            
+
             mock_response = MagicMock()
             mock_response.status = 200
             mock_response.json = AsyncMock(return_value=mock_response_data)
-            
+
             mock_session.post.return_value.__aenter__.return_value = mock_response
             mock_session.post.return_value.__aexit__.return_value = None
-            
+
             result = await bot._refresh_access_token_impl()
-            
+
             assert result is True
             assert bot.access_token == 'new_token'
             assert bot.refresh_token == 'new_refresh'
             # token_expiry should remain None since expires_in not in response
             assert bot.token_expiry is None
-
-
-import unittest.mock

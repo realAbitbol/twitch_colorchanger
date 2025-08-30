@@ -33,7 +33,9 @@ test:
 	pytest
 
 test-coverage:
-	pytest --cov=src --cov-report=html --cov-report=term --cov-report=xml
+	pytest --cov=src --cov=main --cov-report=html --cov-report=term --cov-report=xml
+
+test-cov: test-coverage
 
 test-unit:
 	pytest tests/ -m "not integration and not slow"
@@ -47,35 +49,34 @@ test-slow:
 # Code quality
 lint:
 	@echo "Running flake8..."
-	flake8 src/ tests/
+	flake8 src/ tests/ main.py
 	@echo "Running mypy..."
-	mypy src/
+	mypy src/ main.py
 	@echo "Running bandit..."
-	bandit -r src/
+	bandit -r src/ main.py
 	@echo "Running safety..."
 	safety check
 
 format:
 	@echo "Formatting with black..."
-	black src/ tests/
+	black src/ tests/ main.py
 	@echo "Sorting imports with isort..."
-	isort src/ tests/
+	isort src/ tests/ main.py
 
 format-check:
-	black --check src/ tests/
-	isort --check-only src/ tests/
+	black --check src/ tests/ main.py
+	isort --check-only src/ tests/ main.py
 
 security:
-	bandit -r src/
+	bandit -r src/ main.py
 	safety check
 
 # Comprehensive checks
 check-all: format-check lint test-coverage security
 	@echo "All checks passed!"
 
-# Cleanup
 # Run comprehensive checks (tests + coverage + linting)
-check: test-cov lint
+check: test-coverage lint
 	@echo "✅ All checks passed!"
 
 # Clean testing artifacts
@@ -84,7 +85,7 @@ clean:
 	find . -type d -name __pycache__ -delete
 	find . -type f -name "*.pyc" -delete
 
-.PHONY: help install test test-cov test-html format lint type-check security-check check clean
+.PHONY: help install install-dev test test-coverage test-cov test-unit test-integration test-slow lint format format-check security check-all check clean build docker-build docker-run dev-setup pre-commit dev-check ci perf-test generate-fixtures validate-config docs docs-serve profile version check-env
 
 # Build
 build: clean

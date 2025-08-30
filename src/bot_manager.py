@@ -8,7 +8,7 @@ import signal
 from typing import Any, Dict, List, Optional
 
 from .bot import TwitchColorBot
-from .colors import bcolors
+from .colors import BColors
 from .utils import print_log
 
 
@@ -27,9 +27,9 @@ class BotManager:
 
     async def _start_all_bots(self):
         """Start all bots and return success status"""
-        print_log(f"🚀 Starting {len(self.users_config)} bot(s)...", bcolors.HEADER)
+        print_log(f"🚀 Starting {len(self.users_config)} bot(s)...", BColors.HEADER)
 
-        for i, user_config in enumerate(self.users_config, 1):
+        for user_config in self.users_config:
             try:
                 bot = self._create_bot(user_config)
                 if bot:
@@ -39,15 +39,15 @@ class BotManager:
                 print_log(
                     f"❌ Failed to create bot for user {
                         user_config['username']}: {e}",
-                    bcolors.FAIL)
+                    BColors.FAIL)
                 continue
 
         if not self.bots:
-            print_log("❌ No bots could be started!", bcolors.FAIL)
+            print_log("❌ No bots could be started!", BColors.FAIL)
             return False
 
         # Start all bot tasks
-        print_log(f"🎯 Launching {len(self.bots)} bot task(s)...", bcolors.OKGREEN)
+        print_log(f"🎯 Launching {len(self.bots)} bot task(s)...", BColors.OKGREEN)
 
         for bot in self.bots:
             task = asyncio.create_task(bot.start())
@@ -58,7 +58,7 @@ class BotManager:
 
         self.running = True
         self.shutdown_initiated = False  # Reset shutdown flag for new run
-        print_log("✅ All bots started successfully!", bcolors.OKGREEN)
+        print_log("✅ All bots started successfully!", BColors.OKGREEN)
         return True
 
     def _create_bot(self, user_config: Dict[str, Any]) -> TwitchColorBot:
@@ -79,11 +79,11 @@ class BotManager:
                 user_id=None  # Will be fetched by the bot itself
             )
 
-            print_log(f"✅ Bot created for {username}", bcolors.OKGREEN)
+            print_log(f"✅ Bot created for {username}", BColors.OKGREEN)
             return bot
 
         except Exception as e:
-            print_log(f"❌ Failed to create bot for {username}: {e}", bcolors.FAIL)
+            print_log(f"❌ Failed to create bot for {username}: {e}", BColors.FAIL)
             raise
 
     async def _stop_all_bots(self):
@@ -91,7 +91,7 @@ class BotManager:
         if not self.running:
             return
 
-        print_log("\n🛑 Stopping all bots...", bcolors.WARNING)
+        print_log("\n🛑 Stopping all bots...", BColors.WARNING)
 
         # Cancel all tasks
         self._cancel_all_tasks()
@@ -103,7 +103,7 @@ class BotManager:
         await self._wait_for_task_completion()
 
         self.running = False
-        print_log("✅ All bots stopped", bcolors.OKGREEN)
+        print_log("✅ All bots stopped", BColors.OKGREEN)
 
     def _cancel_all_tasks(self):
         """Cancel all running tasks"""
@@ -111,9 +111,9 @@ class BotManager:
             try:
                 if task and not task.done():
                     task.cancel()
-                    print_log(f"✅ Cancelled task {i + 1}", bcolors.OKGREEN)
+                    print_log(f"✅ Cancelled task {i + 1}", BColors.OKGREEN)
             except Exception as e:
-                print_log(f"⚠️ Error cancelling task {i + 1}: {e}", bcolors.WARNING)
+                print_log(f"⚠️ Error cancelling task {i + 1}: {e}", BColors.WARNING)
 
     def _close_all_bots(self):
         """Close all bot connections"""
@@ -121,9 +121,9 @@ class BotManager:
             try:
                 if bot:
                     bot.close()
-                    print_log(f"✅ Closed bot {i + 1}", bcolors.OKGREEN)
+                    print_log(f"✅ Closed bot {i + 1}", BColors.OKGREEN)
             except Exception as e:
-                print_log(f"⚠️ Error closing bot {i + 1}: {e}", bcolors.WARNING)
+                print_log(f"⚠️ Error closing bot {i + 1}: {e}", BColors.WARNING)
 
     async def _wait_for_task_completion(self):
         """Wait for all tasks to complete"""
@@ -131,7 +131,7 @@ class BotManager:
             try:
                 await asyncio.gather(*self.tasks, return_exceptions=True)
             except Exception as e:
-                print_log(f"⚠️ Error waiting for task completion: {e}", bcolors.WARNING)
+                print_log(f"⚠️ Error waiting for task completion: {e}", BColors.WARNING)
 
     def stop(self):
         """Public method to stop the bot manager"""
@@ -147,7 +147,7 @@ class BotManager:
 
     def request_restart(self, new_users_config: List[Dict[str, Any]]):
         """Request a restart with new configuration"""
-        print_log("🔄 Config change detected, restarting bots...", bcolors.OKCYAN)
+        print_log("🔄 Config change detected, restarting bots...", BColors.OKCYAN)
         self.new_config = new_users_config
         self.restart_requested = True
 
@@ -156,7 +156,7 @@ class BotManager:
         if not self.new_config:
             return False
 
-        print_log("🔄 Restarting bots with new configuration...", bcolors.OKCYAN)
+        print_log("🔄 Restarting bots with new configuration...", BColors.OKCYAN)
 
         # Save current statistics before stopping bots
         saved_stats = self._save_statistics()
@@ -173,7 +173,7 @@ class BotManager:
         self.users_config = self.new_config
         new_count = len(self.users_config)
 
-        print_log(f"📊 Config updated: {old_count} → {new_count} users", bcolors.OKCYAN)
+        print_log(f"📊 Config updated: {old_count} → {new_count} users", BColors.OKCYAN)
 
         # Start with new config
         success = await self._start_all_bots()
@@ -199,7 +199,7 @@ class BotManager:
         print_log(
             f"💾 Saved statistics for {
                 len(stats)} bot(s)",
-            bcolors.OKCYAN,
+            BColors.OKCYAN,
             debug_only=True)
         return stats
 
@@ -215,7 +215,7 @@ class BotManager:
         if restored_count > 0:
             print_log(
                 f"🔄 Restored statistics for {restored_count} bot(s)",
-                bcolors.OKGREEN,
+                BColors.OKGREEN,
                 debug_only=True)
 
     def print_statistics(self):
@@ -223,9 +223,9 @@ class BotManager:
         if not self.bots:
             return
 
-        print_log("\n" + "=" * 60, bcolors.PURPLE)
-        print_log("📊 OVERALL STATISTICS", bcolors.PURPLE)
-        print_log("=" * 60, bcolors.PURPLE)
+        print_log("\n" + "=" * 60, BColors.PURPLE)
+        print_log("📊 OVERALL STATISTICS", BColors.PURPLE)
+        print_log("=" * 60, BColors.PURPLE)
 
         total_messages = sum(bot.messages_sent for bot in self.bots)
         total_colors = sum(bot.colors_changed for bot in self.bots)
@@ -243,7 +243,7 @@ class BotManager:
         def signal_handler(signum, _frame):
             print_log(
                 f"\n🔔 Received signal {signum}, initiating graceful shutdown...",
-                bcolors.WARNING)
+                BColors.WARNING)
             self.shutdown_initiated = True
             # Save the task to prevent garbage collection (intentionally not awaited
             # in signal handler)
@@ -272,16 +272,16 @@ async def _setup_config_watcher(manager: BotManager, config_file: str = None):
         # Register the watcher globally so config updates can pause it
         set_global_watcher(watcher)
 
-        print_log(f"👀 Config file watcher enabled for: {config_file}", bcolors.OKCYAN)
+        print_log(f"👀 Config file watcher enabled for: {config_file}", BColors.OKCYAN)
         return watcher
 
     except ImportError:
         print_log(
             "⚠️ Config file watching not available (install 'watchdog' package for this feature)",
-            bcolors.WARNING)
+            BColors.WARNING)
         return None
     except Exception as e:
-        print_log(f"⚠️ Failed to start config watcher: {e}", bcolors.WARNING)
+        print_log(f"⚠️ Failed to start config watcher: {e}", BColors.WARNING)
         return None
 
 
@@ -292,7 +292,7 @@ async def _run_main_loop(manager: BotManager):
 
         # Check for shutdown
         if manager.shutdown_initiated:
-            print_log("\n🛑 Shutdown initiated, stopping bots...", bcolors.WARNING)
+            print_log("\n🛑 Shutdown initiated, stopping bots...", BColors.WARNING)
             await manager._stop_all_bots()
             break
 
@@ -302,19 +302,19 @@ async def _run_main_loop(manager: BotManager):
             if not success:
                 print_log(
                     "❌ Failed to restart bots, continuing with previous configuration",
-                    bcolors.FAIL)
+                    BColors.FAIL)
             continue
 
         # Check if all tasks have completed
         if all(task.done() for task in manager.tasks):
             # All tasks completed unexpectedly - likely an error
-            print_log("\n⚠️ All bot tasks have completed unexpectedly", bcolors.WARNING)
+            print_log("\n⚠️ All bot tasks have completed unexpectedly", BColors.WARNING)
             print_log(
                 "💡 This usually means authentication failed or connection issues",
-                bcolors.OKCYAN)
+                BColors.OKCYAN)
             print_log(
                 "🔧 Please verify your Twitch API credentials are valid",
-                bcolors.OKCYAN)
+                BColors.OKCYAN)
             break
 
 
@@ -347,24 +347,24 @@ async def run_bots(users_config: List[Dict[str, Any]], config_file: str = None):
         if not success:
             return
 
-        print_log("\n🎮 Bots are running! Press Ctrl+C to stop.", bcolors.HEADER)
+        print_log("\n🎮 Bots are running! Press Ctrl+C to stop.", BColors.HEADER)
         print_log(
             "💬 Start chatting in your channels to see color changes!",
-            bcolors.OKBLUE)
+            BColors.OKBLUE)
         print_log(
             "⚠️ Note: If bots exit quickly, check your Twitch credentials",
-            bcolors.WARNING)
+            BColors.WARNING)
 
         # Run main loop
         await _run_main_loop(manager)
 
     except KeyboardInterrupt:
-        print_log("\n⌨️ Keyboard interrupt received", bcolors.WARNING)
+        print_log("\n⌨️ Keyboard interrupt received", BColors.WARNING)
     except Exception as e:
-        print_log(f"❌ Fatal error: {e}", bcolors.FAIL)
+        print_log(f"❌ Fatal error: {e}", BColors.FAIL)
     finally:
         # Cleanup
         _cleanup_watcher(watcher)
         await manager._stop_all_bots()
         manager.print_statistics()
-        print_log("\n👋 Goodbye!", bcolors.OKBLUE)
+        print_log("\n👋 Goodbye!", BColors.OKBLUE)

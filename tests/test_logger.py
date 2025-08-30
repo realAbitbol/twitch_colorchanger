@@ -144,8 +144,8 @@ class TestLoggerModule:
 
     def test_module_print_log_with_color(self, capsys):
         """Test module level print_log with color"""
-        from src.colors import bcolors
-        print_log("Colored module message", bcolors.OKGREEN)
+        from src.colors import BColors
+        print_log("Colored module message", BColors.OKGREEN)
         capsys.readouterr()
         # Function should work with color parameter
 
