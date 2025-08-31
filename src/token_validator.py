@@ -139,10 +139,12 @@ async def validate_user_tokens(user: Dict[str, Any]) -> Dict[str, Any]:
             f"🔑 {username}: No access token found", BColors.WARNING, debug_only=True
         )
         return {"valid": False, "user": user, "updated": False}
-    
+
     if not client_id or not client_secret:
         print_log(
-            f"🔑 {username}: Missing client credentials", BColors.WARNING, debug_only=True
+            f"🔑 {username}: Missing client credentials",
+            BColors.WARNING,
+            debug_only=True,
         )
         return {"valid": False, "user": user, "updated": False}
 
@@ -200,7 +202,7 @@ async def validate_new_tokens(user: Dict[str, Any]) -> Dict[str, Any]:
         Dictionary with validation results
     """
     username = user.get("username", "Unknown")
-    
+
     required_keys = ["client_id", "client_secret", "access_token", "refresh_token"]
     for key in required_keys:
         if key not in user:

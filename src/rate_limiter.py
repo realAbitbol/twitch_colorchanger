@@ -22,6 +22,8 @@ class RateLimitInfo:
 
 
 class TwitchRateLimiter:
+    """Manages Twitch API rate limiting with separate buckets for app and user access."""
+
     def __init__(self, client_id: str, username: str = None):
         self.client_id = client_id
         self.username = username

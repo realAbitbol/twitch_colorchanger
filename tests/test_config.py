@@ -617,7 +617,7 @@ async def test_validate_or_refresh_tokens_no_access_token():
 
     with patch("src.token_validator.validate_user_tokens") as mock_validate:
         mock_validate.return_value = {"valid": False, "user": user, "updated": False}
-        
+
         result = await _validate_or_refresh_tokens(user)
 
         assert result["valid"] is False
@@ -643,7 +643,7 @@ async def test_validate_or_refresh_tokens_validation_success():
 
     with patch("src.token_validator.validate_user_tokens") as mock_validate:
         mock_validate.return_value = {"valid": True, "user": user, "updated": False}
-        
+
         result = await _validate_or_refresh_tokens(user)
 
         assert result["valid"] is True
@@ -670,10 +670,10 @@ async def test_validate_or_refresh_tokens_proactive_refresh():
     updated_user = user.copy()
     updated_user["access_token"] = "new_token"
     updated_user["refresh_token"] = "new_refresh"
-    
+
     with patch("src.token_validator.validate_user_tokens") as mock_validate:
         mock_validate.return_value = {"valid": True, "user": updated_user, "updated": True}
-        
+
         result = await _validate_or_refresh_tokens(user)
 
         assert result["valid"] is True
@@ -700,7 +700,7 @@ async def test_validate_or_refresh_tokens_validation_failed():
 
     with patch("src.token_validator.validate_user_tokens") as mock_validate:
         mock_validate.return_value = {"valid": False, "user": user, "updated": False}
-        
+
         result = await _validate_or_refresh_tokens(user)
 
         assert result["valid"] is False
@@ -872,7 +872,7 @@ async def test_validate_new_tokens_success():
 
     with patch("src.token_validator.validate_new_tokens") as mock_validate:
         mock_validate.return_value = {"valid": True, "user": user}
-        
+
         result = await _validate_new_tokens(user)
 
         assert result["valid"] is True
@@ -897,7 +897,7 @@ async def test_validate_new_tokens_failure():
 
     with patch("src.token_validator.validate_new_tokens") as mock_validate:
         mock_validate.return_value = {"valid": False, "user": user}
-        
+
         result = await _validate_new_tokens(user)
 
         assert result["valid"] is False

@@ -312,7 +312,8 @@ class TwitchColorBot:
 
         except Exception as e:
             print_log(
-                f"⚠️ Error checking IRC health for {self.username}: {e}", BColors.WARNING
+                f"⚠️ Error checking IRC health for {self.username}: {e}",
+                BColors.WARNING,
             )
 
     async def _reconnect_irc(self):
@@ -394,7 +395,7 @@ class TwitchColorBot:
         # 3. Fallback refresh attempt when validation failed or not conclusive.
         return await self._attempt_standard_refresh()
 
-    # --------------------- Helper methods (complexity reduction) --------------------- #
+    # ------------------ Helper methods (complexity reduction) ------------------ #
     def _has_token_expiry(self) -> bool:
         return bool(getattr(self, "token_expiry", None))
 
@@ -477,8 +478,8 @@ class TwitchColorBot:
                 return False
         except Exception as e:  # Broad by design; upstream already categorized.
             print_log(
-                f"🔍 {
-                    self.username}: Token validation failed ({e}), attempting refresh...",
+                f"🔍 {self.username}: Token validation failed ({e}), "
+                "attempting refresh...",
                 BColors.WARNING,
                 debug_only=True,
             )
@@ -610,8 +611,7 @@ class TwitchColorBot:
             try:
                 update_user_in_config(user_config, self.config_file)
                 print_log(
-                    f"💾 {
-                        self.username}: Token changes saved to configuration",
+                    f"💾 {self.username}: Token changes saved to configuration",
                     BColors.OKGREEN,
                 )
             except Exception as e:
