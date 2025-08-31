@@ -4,6 +4,7 @@ This file preloads certain package modules to ensure a canonical
 import identity (prevents coverage from recording the same file under
 two different module names like `simple_irc.py` and `src/simple_irc.py`).
 """
+
 import asyncio
 import json
 import os
@@ -21,9 +22,10 @@ if str(PROJECT_ROOT) not in sys.path:
 
 try:  # pragma: no cover - setup utility
     import src.simple_irc as _simple_irc  # noqa: F401
+
     # Ensure alias if direct name used elsewhere
-    sys.modules.setdefault('simple_irc', _simple_irc)
-    sys.modules.setdefault('src.simple_irc', _simple_irc)
+    sys.modules.setdefault("simple_irc", _simple_irc)
+    sys.modules.setdefault("src.simple_irc", _simple_irc)
 except Exception:  # pragma: no cover - defensive
     pass
 """
@@ -32,6 +34,7 @@ Pytest configuration and shared fixtures for the Twitch ColorChanger Bot tests
 
 
 # Test event loop configuration for async tests
+
 
 @pytest.fixture(scope="function")
 def event_loop():
@@ -70,7 +73,7 @@ def sample_user_config():
         "access_token": "test_access_token_789",
         "refresh_token": "test_refresh_token_abc",
         "channels": ["testchannel1", "testchannel2"],
-        "is_prime_or_turbo": True
+        "is_prime_or_turbo": True,
     }
 
 
@@ -78,22 +81,22 @@ def sample_user_config():
 def sample_multi_user_config(sample_user_config):
     """Sample multi-user configuration for testing"""
     user2 = sample_user_config.copy()
-    user2.update({
-        "username": "testuser2",
-        "client_id": "test_client_id_456",
-        "access_token": "test_access_token_def",
-        "is_prime_or_turbo": False
-    })
+    user2.update(
+        {
+            "username": "testuser2",
+            "client_id": "test_client_id_456",
+            "access_token": "test_access_token_def",
+            "is_prime_or_turbo": False,
+        }
+    )
 
-    return {
-        "users": [sample_user_config, user2]
-    }
+    return {"users": [sample_user_config, user2]}
 
 
 @pytest.fixture
 def temp_config_file(sample_multi_user_config):
     """Create a temporary config file for testing"""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".conf", delete=False) as f:
         json.dump(sample_multi_user_config, f, indent=2)
         temp_file = f.name
 
@@ -107,7 +110,7 @@ def temp_config_file(sample_multi_user_config):
 @pytest.fixture
 def invalid_config_file():
     """Create a temporary invalid config file for testing"""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".conf", delete=False) as f:
         f.write("invalid json content {")
         temp_file = f.name
 
@@ -130,6 +133,7 @@ def mock_aiohttp_session():
 @pytest.fixture
 def mock_twitch_api_response():
     """Mock successful Twitch API response"""
+
     def _mock_response(status=200, data=None, headers=None):
         response = Mock()
         response.status = status
@@ -144,18 +148,20 @@ def mock_twitch_api_response():
 def mock_user_info_response():
     """Mock Twitch user info API response"""
     return {
-        "data": [{
-            "id": "12345678",
-            "login": "testuser",
-            "display_name": "TestUser",
-            "type": "",
-            "broadcaster_type": "partner",
-            "description": "Test user description",
-            "profile_image_url": "https://example.com/avatar.png",
-            "offline_image_url": "",
-            "view_count": 1000,
-            "created_at": "2023-01-01T00:00:00Z"
-        }]
+        "data": [
+            {
+                "id": "12345678",
+                "login": "testuser",
+                "display_name": "TestUser",
+                "type": "",
+                "broadcaster_type": "partner",
+                "description": "Test user description",
+                "profile_image_url": "https://example.com/avatar.png",
+                "offline_image_url": "",
+                "view_count": 1000,
+                "created_at": "2023-01-01T00:00:00Z",
+            }
+        ]
     }
 
 
@@ -163,12 +169,14 @@ def mock_user_info_response():
 def mock_color_response():
     """Mock Twitch color API response"""
     return {
-        "data": [{
-            "user_id": "12345678",
-            "user_login": "testuser",
-            "user_name": "TestUser",
-            "color": "#FF0000"
-        }]
+        "data": [
+            {
+                "user_id": "12345678",
+                "user_login": "testuser",
+                "user_name": "TestUser",
+                "color": "#FF0000",
+            }
+        ]
     }
 
 
@@ -180,7 +188,7 @@ def mock_token_refresh_response():
         "refresh_token": "new_refresh_token_456",
         "expires_in": 14400,  # 4 hours
         "scope": ["chat:read", "user:manage:chat_color"],
-        "token_type": "bearer"
+        "token_type": "bearer",
     }
 
 
@@ -208,7 +216,7 @@ def bot_config():
         "channels": ["testchannel"],
         "is_prime_or_turbo": True,
         "config_file": "test_config.conf",
-        "user_id": "12345678"
+        "user_id": "12345678",
     }
 
 
@@ -219,7 +227,7 @@ def clean_environment():
     original_env = os.environ.copy()
 
     # Remove any environment variables that might affect tests
-    env_vars_to_remove = ['TWITCH_CONF_FILE', 'DEBUG']
+    env_vars_to_remove = ["TWITCH_CONF_FILE", "DEBUG"]
     for var in env_vars_to_remove:
         os.environ.pop(var, None)
 
@@ -263,15 +271,9 @@ def sample_preset_colors():
 # Configuration for pytest
 def pytest_configure(config):
     """Configure pytest settings"""
-    config.addinivalue_line(
-        "markers", "asyncio: mark test as async"
-    )
-    config.addinivalue_line(
-        "markers", "integration: mark test as integration test"
-    )
-    config.addinivalue_line(
-        "markers", "slow: mark test as slow running"
-    )
+    config.addinivalue_line("markers", "asyncio: mark test as async")
+    config.addinivalue_line("markers", "integration: mark test as integration test")
+    config.addinivalue_line("markers", "slow: mark test as slow running")
 
 
 # Test data cleanup
@@ -281,11 +283,7 @@ def cleanup_test_files():
     yield
 
     # Cleanup any test files that might have been created
-    test_files = [
-        "test_config.conf",
-        "test_config.conf.backup",
-        "debug_test.py"
-    ]
+    test_files = ["test_config.conf", "test_config.conf.backup", "debug_test.py"]
 
     for file in test_files:
         if os.path.exists(file):

@@ -21,9 +21,9 @@ class TestColorGeneration:
         """Test that generated hex colors have correct format"""
         color = generate_random_hex_color()
 
-        assert color.startswith('#')
+        assert color.startswith("#")
         assert len(color) == 7
-        assert all(c in '0123456789abcdef' for c in color[1:].lower())
+        assert all(c in "0123456789abcdef" for c in color[1:].lower())
 
     def test_generate_random_hex_color_uniqueness(self):
         """Test that multiple calls generate different colors (with high probability)"""
@@ -47,7 +47,7 @@ class TestColorGeneration:
 
         # All should be valid hex colors
         for color in colors:
-            assert color.startswith('#')
+            assert color.startswith("#")
             assert len(color) == 7
 
 
@@ -57,9 +57,21 @@ class TestTwitchPresetColors:
     def test_twitch_colors_constant(self):
         """Test that get_twitch_colors contains expected colors"""
         expected_colors = [
-            'blue', 'blue_violet', 'cadet_blue', 'chocolate', 'coral',
-            'dodger_blue', 'firebrick', 'golden_rod', 'green', 'hot_pink',
-            'orange_red', 'red', 'sea_green', 'spring_green', 'yellow_green'
+            "blue",
+            "blue_violet",
+            "cadet_blue",
+            "chocolate",
+            "coral",
+            "dodger_blue",
+            "firebrick",
+            "golden_rod",
+            "green",
+            "hot_pink",
+            "orange_red",
+            "red",
+            "sea_green",
+            "spring_green",
+            "yellow_green",
         ]
 
         twitch_colors = get_twitch_colors()
@@ -122,9 +134,11 @@ class TestTwitchPresetColors:
 
         # Since this is unreachable in practice, we just test that the function
         # works correctly in normal cases and acknowledge the defensive code exists
-        with patch('src.colors.get_twitch_colors', return_value=['red', 'blue', 'green']):
-            result = get_different_twitch_color('red')
-            assert result in ['blue', 'green']
+        with patch(
+            "src.colors.get_twitch_colors", return_value=["red", "blue", "green"]
+        ):
+            result = get_different_twitch_color("red")
+            assert result in ["blue", "green"]
 
     def test_generate_random_hex_color_max_attempts_fallback(self):
         """Test fallback when max attempts reached (covers lines 84-87)"""
@@ -137,27 +151,49 @@ class TestTwitchPresetColors:
         # We need hue=0, saturation=100, lightness=50
         # This should consistently produce red
 
-        with patch('random.randint') as mock_randint:
+        with patch("random.randint") as mock_randint:
             # Set up the HSL values to consistently generate red (#ff0000)
             # hue=0, saturation=100, lightness=50 -> red
             mock_randint.side_effect = [
-                0, 100, 50,   # attempt 1: red
-                0, 100, 50,   # attempt 2: red
-                0, 100, 50,   # attempt 3: red
-                0, 100, 50,   # attempt 4: red
-                0, 100, 50,   # attempt 5: red
-                0, 100, 50,   # attempt 6: red
-                0, 100, 50,   # attempt 7: red
-                0, 100, 50,   # attempt 8: red
-                0, 100, 50,   # attempt 9: red
-                0, 100, 50,   # attempt 10: red
-                0, 100, 50,   # final fallback generation
+                0,
+                100,
+                50,  # attempt 1: red
+                0,
+                100,
+                50,  # attempt 2: red
+                0,
+                100,
+                50,  # attempt 3: red
+                0,
+                100,
+                50,  # attempt 4: red
+                0,
+                100,
+                50,  # attempt 5: red
+                0,
+                100,
+                50,  # attempt 6: red
+                0,
+                100,
+                50,  # attempt 7: red
+                0,
+                100,
+                50,  # attempt 8: red
+                0,
+                100,
+                50,  # attempt 9: red
+                0,
+                100,
+                50,  # attempt 10: red
+                0,
+                100,
+                50,  # final fallback generation
             ]
 
             result = generate_random_hex_color(exclude_color)
 
             # Should return the fallback color (which will be red since we forced it)
-            assert result.startswith('#')
+            assert result.startswith("#")
             assert len(result) == 7
             # The fallback returns the last generated color
             assert result == "#ff0000"
@@ -169,8 +205,15 @@ class TestColorConstants:
     def test_bcolors_constants(self):
         """Test that BColors constants are defined"""
         required_colors = [
-            'HEADER', 'OKBLUE', 'OKCYAN', 'OKGREEN',
-            'WARNING', 'FAIL', 'ENDC', 'BOLD', 'PURPLE'
+            "HEADER",
+            "OKBLUE",
+            "OKCYAN",
+            "OKGREEN",
+            "WARNING",
+            "FAIL",
+            "ENDC",
+            "BOLD",
+            "PURPLE",
         ]
 
         for color in required_colors:
@@ -181,16 +224,21 @@ class TestColorConstants:
         """Test that BColors contain proper ANSI escape codes"""
         # Most colors should contain ANSI escape sequences
         color_codes = [
-            BColors.HEADER, BColors.OKBLUE, BColors.OKCYAN,
-            BColors.OKGREEN, BColors.WARNING, BColors.FAIL,
-            BColors.BOLD, BColors.PURPLE
+            BColors.HEADER,
+            BColors.OKBLUE,
+            BColors.OKCYAN,
+            BColors.OKGREEN,
+            BColors.WARNING,
+            BColors.FAIL,
+            BColors.BOLD,
+            BColors.PURPLE,
         ]
 
         for code in color_codes:
-            assert code.startswith('\033[') or code.startswith('\x1b[')
+            assert code.startswith("\033[") or code.startswith("\x1b[")
 
         # ENDC should be a reset code
-        assert BColors.ENDC in ['\033[0m', '\x1b[0m']
+        assert BColors.ENDC in ["\033[0m", "\x1b[0m"]
 
 
 class TestColorValidation:
@@ -204,7 +252,7 @@ class TestColorValidation:
             # Should be able to generate without errors
             new_color = generate_random_hex_color(color)
             assert new_color != color
-            assert new_color.startswith('#')
+            assert new_color.startswith("#")
 
     def test_preset_color_edge_cases(self):
         """Test preset color selection edge cases"""
@@ -232,22 +280,25 @@ class TestColorValidation:
         assert end_time - start_time < 1.0
 
 
-@pytest.mark.parametrize("current_color,expected_different", [
-    ("#FF0000", True),
-    ("#000000", True),
-    ("#FFFFFF", True),
-    (None, True),
-    ("", True),
-])
+@pytest.mark.parametrize(
+    "current_color,expected_different",
+    [
+        ("#FF0000", True),
+        ("#000000", True),
+        ("#FFFFFF", True),
+        (None, True),
+        ("", True),
+    ],
+)
 def test_hex_color_generation_parameterized(current_color, expected_different):
     """Parameterized test for hex color generation"""
     new_color = generate_random_hex_color(current_color)
 
-    if current_color and current_color.startswith('#') and len(current_color) == 7:
+    if current_color and current_color.startswith("#") and len(current_color) == 7:
         if expected_different:
             assert new_color != current_color
 
-    assert new_color.startswith('#')
+    assert new_color.startswith("#")
     assert len(new_color) == 7
 
 
@@ -272,7 +323,7 @@ class TestColorIntegration:
         hex_color = generate_random_hex_color()
         preset_color = get_different_twitch_color()
 
-        assert hex_color.startswith('#')
+        assert hex_color.startswith("#")
         assert preset_color in twitch_colors
 
         # Ensure they're different types

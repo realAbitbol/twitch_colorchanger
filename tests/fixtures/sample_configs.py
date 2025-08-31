@@ -10,7 +10,7 @@ SINGLE_USER_CONFIG = {
     "access_token": "access_token_example_123",
     "refresh_token": "refresh_token_example_456",
     "channels": ["channel1", "channel2", "testuser"],
-    "is_prime_or_turbo": True
+    "is_prime_or_turbo": True,
 }
 
 # Valid multi-user configuration
@@ -23,7 +23,7 @@ MULTI_USER_CONFIG = {
             "access_token": "prime_access_token_789",
             "refresh_token": "prime_refresh_token_abc",
             "channels": ["bigstreamer", "primeuser"],
-            "is_prime_or_turbo": True
+            "is_prime_or_turbo": True,
         },
         {
             "username": "regularuser",
@@ -32,57 +32,67 @@ MULTI_USER_CONFIG = {
             "access_token": "regular_access_token_def",
             "refresh_token": "regular_refresh_token_ghi",
             "channels": ["smallstreamer", "regularuser"],
-            "is_prime_or_turbo": False
-        }
+            "is_prime_or_turbo": False,
+        },
     ]
 }
 
 # Invalid configurations for testing validation
 INVALID_CONFIGS = {
     "missing_username": {
-        "users": [{
-            "client_id": "test_client",
-            "client_secret": "test_secret",
-            "channels": ["test"]
-        }]
+        "users": [
+            {
+                "client_id": "test_client",
+                "client_secret": "test_secret",
+                "channels": ["test"],
+            }
+        ]
     },
     "empty_channels": {
-        "users": [{
-            "username": "testuser",
-            "client_id": "test_client",
-            "client_secret": "test_secret",
-            "channels": []
-        }]
+        "users": [
+            {
+                "username": "testuser",
+                "client_id": "test_client",
+                "client_secret": "test_secret",
+                "channels": [],
+            }
+        ]
     },
     "invalid_prime_flag": {
-        "users": [{
-            "username": "testuser",
-            "client_id": "test_client",
-            "client_secret": "test_secret",
-            "channels": ["test"],
-            "is_prime_or_turbo": "not_boolean"
-        }]
+        "users": [
+            {
+                "username": "testuser",
+                "client_id": "test_client",
+                "client_secret": "test_secret",
+                "channels": ["test"],
+                "is_prime_or_turbo": "not_boolean",
+            }
+        ]
     },
     "malformed_json": '{"users": [{"username": "test"',
 }
 
 # Minimal valid configuration
 MINIMAL_CONFIG = {
-    "users": [{
-        "username": "testuser",
-        "client_id": "test_client_id",
-        "client_secret": "test_client_secret",
-        "channels": ["testchannel"]
-    }]
+    "users": [
+        {
+            "username": "testuser",
+            "client_id": "test_client_id",
+            "client_secret": "test_client_secret",
+            "channels": ["testchannel"],
+        }
+    ]
 }
 
 # Configuration with missing tokens (for device flow testing)
 CONFIG_MISSING_TOKENS = {
-    "users": [{
-        "username": "newuser",
-        "client_id": "new_client_id",
-        "client_secret": "new_client_secret",
-        "channels": ["newchannel"],
-        "is_prime_or_turbo": True
-    }]
+    "users": [
+        {
+            "username": "newuser",
+            "client_id": "new_client_id",
+            "client_secret": "new_client_secret",
+            "channels": ["newchannel"],
+            "is_prime_or_turbo": True,
+        }
+    ]
 }

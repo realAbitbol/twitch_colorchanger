@@ -19,22 +19,22 @@ class ColoredFormatter(logging.Formatter):
         """Format log record with colors"""
         # Color mapping
         colors = {
-            'DEBUG': BColors.OKBLUE,
-            'INFO': BColors.OKGREEN,
-            'WARNING': BColors.WARNING,
-            'ERROR': BColors.FAIL,
-            'CRITICAL': BColors.FAIL + BColors.BOLD
+            "DEBUG": BColors.OKBLUE,
+            "INFO": BColors.OKGREEN,
+            "WARNING": BColors.WARNING,
+            "ERROR": BColors.FAIL,
+            "CRITICAL": BColors.FAIL + BColors.BOLD,
         }
 
-        color = colors.get(record.levelname, '')
+        color = colors.get(record.levelname, "")
 
         # Format message with optional context
         message = record.getMessage()
         context_parts = []
 
-        if hasattr(record, 'user'):
+        if hasattr(record, "user"):
             context_parts.append(f"user={record.user}")
-        if hasattr(record, 'channel'):
+        if hasattr(record, "channel"):
             context_parts.append(f"channel={record.channel}")
 
         if context_parts:
@@ -62,7 +62,7 @@ class BotLogger:
         self.logger.handlers.clear()
 
         # Set log level based on DEBUG flag
-        debug_enabled = os.environ.get('DEBUG', 'false').lower() in ('true', '1', 'yes')
+        debug_enabled = os.environ.get("DEBUG", "false").lower() in ("true", "1", "yes")
         if debug_enabled:
             self.logger.setLevel(logging.DEBUG)
         else:
@@ -76,9 +76,11 @@ class BotLogger:
         # Setup file handler if log_file is specified
         if log_file:
             file_handler = logging.FileHandler(log_file)
-            file_handler.setFormatter(logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-            ))
+            file_handler.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+                )
+            )
             self.logger.addHandler(file_handler)
 
     def set_level(self, level: int):
@@ -110,14 +112,14 @@ class BotLogger:
         extra = {}
 
         # Extract known context fields
-        if 'user' in kwargs:
-            extra['user'] = kwargs.pop('user')
-        if 'channel' in kwargs:
-            extra['channel'] = kwargs.pop('channel')
+        if "user" in kwargs:
+            extra["user"] = kwargs.pop("user")
+        if "channel" in kwargs:
+            extra["channel"] = kwargs.pop("channel")
 
         # If there are remaining kwargs, add them to the message
         if kwargs:
-            context_str = ', '.join(f"{k}={v}" for k, v in kwargs.items())
+            context_str = ", ".join(f"{k}={v}" for k, v in kwargs.items())
             message = f"{message} ({context_str})"
 
         self.logger.log(level, message, exc_info=exc_info, extra=extra)

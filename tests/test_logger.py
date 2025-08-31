@@ -22,8 +22,13 @@ class TestColoredFormatter:
         """Test formatting INFO level messages"""
         formatter = ColoredFormatter()
         record = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=0,
-            msg="Test message", args=(), exc_info=None
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="Test message",
+            args=(),
+            exc_info=None,
         )
 
         formatted = formatter.format(record)
@@ -33,8 +38,13 @@ class TestColoredFormatter:
         """Test formatting ERROR level messages"""
         formatter = ColoredFormatter()
         record = logging.LogRecord(
-            name="test", level=logging.ERROR, pathname="", lineno=0,
-            msg="Error message", args=(), exc_info=None
+            name="test",
+            level=logging.ERROR,
+            pathname="",
+            lineno=0,
+            msg="Error message",
+            args=(),
+            exc_info=None,
         )
 
         formatted = formatter.format(record)
@@ -44,8 +54,13 @@ class TestColoredFormatter:
         """Test formatting WARNING level messages"""
         formatter = ColoredFormatter()
         record = logging.LogRecord(
-            name="test", level=logging.WARNING, pathname="", lineno=0,
-            msg="Warning message", args=(), exc_info=None
+            name="test",
+            level=logging.WARNING,
+            pathname="",
+            lineno=0,
+            msg="Warning message",
+            args=(),
+            exc_info=None,
         )
 
         formatted = formatter.format(record)
@@ -98,7 +113,7 @@ class TestBotLogger:
 
     def test_bot_logger_with_file(self):
         """Test BotLogger with file output"""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.log', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as f:
             log_file = f.name
 
         try:
@@ -109,7 +124,7 @@ class TestBotLogger:
             assert os.path.exists(log_file)
 
             # Check file contents
-            with open(log_file, 'r') as f:
+            with open(log_file, "r") as f:
                 content = f.read()
                 assert "File log message" in content
         finally:
@@ -145,11 +160,12 @@ class TestLoggerModule:
     def test_module_print_log_with_color(self, capsys):
         """Test module level print_log with color"""
         from src.colors import BColors
+
         print_log("Colored module message", BColors.OKGREEN)
         capsys.readouterr()
         # Function should work with color parameter
 
-    @patch.dict(os.environ, {'DEBUG': '1'})
+    @patch.dict(os.environ, {"DEBUG": "1"})
     def test_module_print_log_debug_mode(self, capsys):
         """Test module level print_log in debug mode"""
         print_log("Debug module message", debug_only=True)
@@ -227,12 +243,17 @@ class TestLoggerIntegration:
         """Test ColoredFormatter with no context (covers line 38)"""
         formatter = ColoredFormatter()
         record = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=0,
-            msg="Test message", args=(), exc_info=None
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="Test message",
+            args=(),
+            exc_info=None,
         )
         # Explicitly ensure no user or channel attributes
-        assert not hasattr(record, 'user')
-        assert not hasattr(record, 'channel')
+        assert not hasattr(record, "user")
+        assert not hasattr(record, "channel")
 
         formatted = formatter.format(record)
         assert "Test message" in formatted
@@ -246,8 +267,13 @@ class TestLoggerIntegration:
 
         # Create record with absolutely no extra attributes
         record = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=0,
-            msg="Simple message", args=(), exc_info=None
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="Simple message",
+            args=(),
+            exc_info=None,
         )
 
         # Ensure context_parts will be empty, triggering line 38
@@ -266,21 +292,21 @@ class TestLoggerIntegration:
 
     def test_bot_logger_debug_level_enabled(self):
         """Test BotLogger sets DEBUG level when DEBUG=true (covers line 67)"""
-        with patch.dict(os.environ, {'DEBUG': 'true'}, clear=True):
+        with patch.dict(os.environ, {"DEBUG": "true"}, clear=True):
             test_logger = BotLogger("test_debug_level")
             assert test_logger.logger.level == logging.DEBUG
 
     def test_bot_logger_debug_level_with_various_values(self):
         """Test BotLogger DEBUG level with various truthy values"""
-        for debug_value in ['true', '1', 'yes', 'TRUE', 'Yes']:
-            with patch.dict(os.environ, {'DEBUG': debug_value}, clear=True):
+        for debug_value in ["true", "1", "yes", "TRUE", "Yes"]:
+            with patch.dict(os.environ, {"DEBUG": debug_value}, clear=True):
                 test_logger = BotLogger(f"test_debug_{debug_value}")
                 assert test_logger.logger.level == logging.DEBUG
 
     def test_bot_logger_critical_logging(self):
         """Test critical level logging (covers line 106)"""
         test_logger = BotLogger("test_critical")
-        with patch.object(test_logger.logger, 'log') as mock_log:
+        with patch.object(test_logger.logger, "log") as mock_log:
             test_logger.critical("Critical message", user="testuser")
             mock_log.assert_called_once()
             args = mock_log.call_args
@@ -306,10 +332,8 @@ class TestLoggerIntegration:
 
         # Test with extra kwargs that should trigger line 116
         test_logger.info(
-            "Message",
-            user="testuser",
-            extra_param="value",
-            another="thing")
+            "Message", user="testuser", extra_param="value", another="thing"
+        )
 
         # Get the captured output
         output = log_capture.getvalue()
@@ -324,7 +348,7 @@ class TestLoggerIntegration:
         test_logger = BotLogger("test_kwargs_only")
 
         # Mock the underlying logger to verify the call
-        with patch.object(test_logger.logger, 'log') as mock_log:
+        with patch.object(test_logger.logger, "log") as mock_log:
             # Call with only extra kwargs (no user/channel)
             test_logger.info("Test message", param1="value1", param2="value2")
 
@@ -341,7 +365,7 @@ class TestLoggerIntegration:
         """Explicit test for line 116 (context_str join)"""
         test_logger = BotLogger("test_line_116")
 
-        with patch.object(test_logger.logger, 'log') as mock_log:
+        with patch.object(test_logger.logger, "log") as mock_log:
             # This should trigger line 116: context_str = ', '.join(f"{k}={v}" for k,
             # v in kwargs.items())
             test_logger.error("Error occurred", error_code=500, retry_count=3)
@@ -372,7 +396,7 @@ class TestLoggerIntegration:
         logger = BotLogger("direct_116")
 
         # Force line 116 execution with direct kwargs (no user/channel)
-        with patch.object(logger.logger, 'log') as mock_log:
+        with patch.object(logger.logger, "log") as mock_log:
             logger.info("test", param="value")
             mock_log.assert_called_once()
             message = mock_log.call_args[0][1]
@@ -390,18 +414,18 @@ class TestLoggerIntegration:
             lineno=1,
             msg="Test message",
             args=(),
-            exc_info=None
+            exc_info=None,
         )
 
         # Ensure no context attributes exist
-        assert not hasattr(record, 'user')
-        assert not hasattr(record, 'channel')
+        assert not hasattr(record, "user")
+        assert not hasattr(record, "channel")
 
         # This should execute the empty context path
         result = formatter.format(record)
 
         # Verify the result contains the message (but check without ANSI color codes)
-        plain_result = result.replace('\x1b[92m', '').replace('\x1b[0m', '')
+        plain_result = result.replace("\x1b[92m", "").replace("\x1b[0m", "")
         assert "Test message" in plain_result
         # Check that there are no context brackets in the plain text
         assert "[" not in plain_result
@@ -411,22 +435,18 @@ class TestLoggerIntegration:
         logger = BotLogger("test_logger")
 
         # Call with kwargs that will remain after user/channel extraction
-        with patch('builtins.print'):  # Suppress actual logging output
+        with patch("builtins.print"):  # Suppress actual logging output
             logger.info(
                 "Test message",
-                user="testuser",         # Will be extracted to extra
-                channel="testchannel",   # Will be extracted to extra
+                user="testuser",  # Will be extracted to extra
+                channel="testchannel",  # Will be extracted to extra
                 remaining_arg1="value1",  # Should remain and trigger line 116
-                remaining_arg2="value2"  # Should remain and trigger line 116
+                remaining_arg2="value2",  # Should remain and trigger line 116
             )
 
     def test_kwargs_only_extra_params(self):
         """Test kwargs processing with only extra parameters"""
         logger = BotLogger("test_logger")
 
-        with patch('builtins.print'):
-            logger.info(
-                "Test message",
-                extra_param="value",
-                another_param="test"
-            )
+        with patch("builtins.print"):
+            logger.info("Test message", extra_param="value", another_param="test")

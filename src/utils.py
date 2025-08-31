@@ -7,14 +7,14 @@ import os
 from .colors import BColors
 
 # Global debug flag
-DEBUG = os.environ.get('DEBUG', 'false').lower() in ('true', '1', 'yes')
+DEBUG = os.environ.get("DEBUG", "false").lower() in ("true", "1", "yes")
 
 
 def print_log(message, color="", debug_only=False):
     """Print log with ANSI colors. If debug_only=True, only print when DEBUG=True"""
     if debug_only:
         # Check DEBUG environment variable dynamically
-        debug_enabled = os.environ.get('DEBUG', 'false').lower() in ('true', '1', 'yes')
+        debug_enabled = os.environ.get("DEBUG", "false").lower() in ("true", "1", "yes")
         if not debug_enabled:
             return
 

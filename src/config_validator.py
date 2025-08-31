@@ -7,8 +7,8 @@ from .logger import logger
 
 def _validate_username(user_config):
     """Validate username field"""
-    username_raw = user_config.get('username', '')
-    username = str(username_raw).strip() if username_raw is not None else ''
+    username_raw = user_config.get("username", "")
+    username = str(username_raw).strip() if username_raw is not None else ""
     if not username or len(username) < 3 or len(username) > 25:
         logger.error(f"Username must be 3-25 characters: '{username}'")
         return False, username
@@ -17,29 +17,42 @@ def _validate_username(user_config):
 
 def _validate_token_credentials(user_config, username):
     """Validate token and credentials"""
-    access_token = user_config.get('access_token', '').strip()
-    client_id = user_config.get('client_id', '').strip()
-    client_secret = user_config.get('client_secret', '').strip()
+    access_token = user_config.get("access_token", "").strip()
+    client_id = user_config.get("client_id", "").strip()
+    client_secret = user_config.get("client_secret", "").strip()
 
     # Check if we have either valid access token OR client credentials
     has_token_with_length = access_token and len(access_token) >= 20
-    has_client_credentials = client_id and client_secret and len(
-        client_id) >= 10 and len(client_secret) >= 10
+    has_client_credentials = (
+        client_id
+        and client_secret
+        and len(client_id) >= 10
+        and len(client_secret) >= 10
+    )
 
     # Check if token is a placeholder
     placeholder_tokens = [
-        'test', 'placeholder', 'your_token_here', 'fake_token', 'example_token_twenty_chars']
+        "test",
+        "placeholder",
+        "your_token_here",
+        "fake_token",
+        "example_token_twenty_chars",
+    ]
 
     if has_token_with_length and access_token.lower() in placeholder_tokens:
         logger.error(f"Please use a real token for {username}")
         return False
 
     # Valid access token is one that meets length and is not a placeholder
-    has_access_token = has_token_with_length and access_token.lower() not in placeholder_tokens
+    has_access_token = (
+        has_token_with_length and access_token.lower() not in placeholder_tokens
+    )
 
     if not has_access_token and not has_client_credentials:
         logger.error(
-            f"User {username} needs either access_token OR (client_id + client_secret) for automatic setup")
+            f"User {username} needs either access_token OR "
+            f"(client_id + client_secret) for automatic setup"
+        )
         return False
 
     return True
@@ -47,7 +60,7 @@ def _validate_token_credentials(user_config, username):
 
 def _validate_channels(user_config, username):
     """Validate channels list"""
-    channels = user_config.get('channels', [])
+    channels = user_config.get("channels", [])
     if not channels or not isinstance(channels, list):
         logger.error(f"Channels list required for {username}")
         return False
@@ -100,7 +113,7 @@ def validate_all_users(users_config):
             return False
 
         if not validate_user_config(user_config):
-            username = user_config.get('username', 'Unknown')
+            username = user_config.get("username", "Unknown")
             logger.warning(f"Skipping invalid config for {username}")
             return False
 
@@ -124,7 +137,7 @@ def get_valid_users(users_config):
             continue
 
         if validate_user_config(user_config):
-            username = user_config.get('username', '').strip().lower()
+            username = user_config.get("username", "").strip().lower()
 
             # Check for duplicates
             if username in usernames_seen:
@@ -134,7 +147,7 @@ def get_valid_users(users_config):
             usernames_seen.add(username)
             valid_users.append(user_config)
         else:
-            username = user_config.get('username', 'Unknown')
+            username = user_config.get("username", "Unknown")
             logger.warning(f"Skipping invalid config for {username}")
 
     return valid_users

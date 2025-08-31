@@ -7,23 +7,36 @@ import random  # nosec B311 - non-cryptographic randomness acceptable for color 
 
 class BColors:
     """ANSI color codes for console output"""
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKCYAN = '\033[96m'
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    PURPLE = '\033[95m'
+
+    HEADER = "\033[95m"
+    OKBLUE = "\033[94m"
+    OKCYAN = "\033[96m"
+    OKGREEN = "\033[92m"
+    WARNING = "\033[93m"
+    FAIL = "\033[91m"
+    ENDC = "\033[0m"
+    BOLD = "\033[1m"
+    PURPLE = "\033[95m"
 
 
 def get_twitch_colors():
     """Get list of available Twitch preset colors"""
     return [
-        'blue', 'blue_violet', 'cadet_blue', 'chocolate', 'coral',
-        'dodger_blue', 'firebrick', 'golden_rod', 'green', 'hot_pink',
-        'orange_red', 'red', 'sea_green', 'spring_green', 'yellow_green'
+        "blue",
+        "blue_violet",
+        "cadet_blue",
+        "chocolate",
+        "coral",
+        "dodger_blue",
+        "firebrick",
+        "golden_rod",
+        "green",
+        "hot_pink",
+        "orange_red",
+        "red",
+        "sea_green",
+        "spring_green",
+        "yellow_green",
     ]
 
 

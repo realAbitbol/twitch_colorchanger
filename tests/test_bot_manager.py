@@ -24,9 +24,9 @@ class TestBotManager:
 
     def test_init(self):
         """Test BotManager initialization"""
-        users_config = [{"username": "user1",
-                         "access_token": "token1",
-                         "channels": ["#channel1"]}]
+        users_config = [
+            {"username": "user1", "access_token": "token1", "channels": ["#channel1"]}
+        ]
         config_file = "/path/to/config.json"
 
         manager = BotManager(users_config, config_file)
@@ -40,18 +40,18 @@ class TestBotManager:
         assert manager.restart_requested is False
         assert manager.new_config is None
 
-    @patch('src.bot_manager.print_log')
+    @patch("src.bot_manager.print_log")
     async def test_start_all_bots_success(self, mock_print_log):
         """Test successful start of all bots"""
         users_config = [
             {"username": "user1", "access_token": "token1", "channels": ["#channel1"]},
-            {"username": "user2", "access_token": "token2", "channels": ["#channel2"]}
+            {"username": "user2", "access_token": "token2", "channels": ["#channel2"]},
         ]
 
         manager = BotManager(users_config)
 
         # Mock bot creation and start
-        with patch.object(manager, '_create_bot') as mock_create_bot:
+        with patch.object(manager, "_create_bot") as mock_create_bot:
             mock_bot1 = MagicMock()
             mock_bot2 = MagicMock()
             mock_bot1.start = AsyncMock()
@@ -76,17 +76,17 @@ class TestBotManager:
             mock_bot1.start.assert_called_once()
             mock_bot2.start.assert_called_once()
 
-    @patch('src.bot_manager.print_log')
+    @patch("src.bot_manager.print_log")
     async def test_start_all_bots_no_bots_created(self, mock_print_log):
         """Test start when no bots can be created"""
-        users_config = [{"username": "user1",
-                         "access_token": "token1",
-                         "channels": ["#channel1"]}]
+        users_config = [
+            {"username": "user1", "access_token": "token1", "channels": ["#channel1"]}
+        ]
 
         manager = BotManager(users_config)
 
         # Mock bot creation to fail
-        with patch.object(manager, '_create_bot') as mock_create_bot:
+        with patch.object(manager, "_create_bot") as mock_create_bot:
             mock_create_bot.side_effect = Exception("Bot creation failed")
 
             success = await manager._start_all_bots()
@@ -95,7 +95,7 @@ class TestBotManager:
             assert len(manager.bots) == 0
             assert manager.running is False
 
-    @patch('src.bot_manager.print_log')
+    @patch("src.bot_manager.print_log")
     def test_create_bot_success(self, mock_print_log):
         """Test successful bot creation"""
         manager = BotManager([])
@@ -106,10 +106,10 @@ class TestBotManager:
             "client_id": "client_id",
             "client_secret": "client_secret",
             "channels": ["#testchannel"],
-            "is_prime_or_turbo": True
+            "is_prime_or_turbo": True,
         }
 
-        with patch('src.bot_manager.TwitchColorBot') as mock_bot_class:
+        with patch("src.bot_manager.TwitchColorBot") as mock_bot_class:
             mock_bot = MagicMock()
             mock_bot_class.return_value = mock_bot
 
@@ -125,25 +125,26 @@ class TestBotManager:
                 channels=["#testchannel"],
                 is_prime_or_turbo=True,
                 config_file=None,
-                user_id=None
+                user_id=None,
             )
 
-    @patch('src.bot_manager.print_log')
+    @patch("src.bot_manager.print_log")
     def test_create_bot_failure(self, mock_print_log):
         """Test bot creation failure"""
         manager = BotManager([])
         user_config = {
             "username": "testuser",
             "access_token": "token",
-            "channels": ["#channel"]}
+            "channels": ["#channel"],
+        }
 
-        with patch('src.bot_manager.TwitchColorBot') as mock_bot_class:
+        with patch("src.bot_manager.TwitchColorBot") as mock_bot_class:
             mock_bot_class.side_effect = Exception("Bot creation error")
 
             with pytest.raises(Exception, match="Bot creation error"):
                 manager._create_bot(user_config)
 
-    @patch('src.bot_manager.print_log')
+    @patch("src.bot_manager.print_log")
     async def test_stop_all_bots(self, mock_print_log):
         """Test stopping all bots"""
         manager = BotManager([])
@@ -173,18 +174,18 @@ class TestBotManager:
         manager = BotManager([])
         manager.running = False  # Set to not running
 
-        with patch('src.bot_manager.print_log') as mock_log:
+        with patch("src.bot_manager.print_log") as mock_log:
             await manager._stop_all_bots()
 
             # Should return early without logging the "Stopping all bots" message
             mock_log.assert_not_called()
 
-    @patch('src.bot_manager.print_log')
+    @patch("src.bot_manager.print_log")
     def test_stop_public_method(self, mock_print_log):
         """Test public stop method"""
         manager = BotManager([])
 
-        with patch('asyncio.get_running_loop') as mock_get_loop:
+        with patch("asyncio.get_running_loop") as mock_get_loop:
             mock_loop = MagicMock()
             mock_get_loop.return_value = mock_loop
 
@@ -193,38 +194,55 @@ class TestBotManager:
             assert manager.shutdown_initiated is True
             mock_loop.create_task.assert_called_once()
 
-    @patch('src.bot_manager.print_log')
+    @patch("src.bot_manager.print_log")
     def test_request_restart(self, mock_print_log):
         """Test requesting restart with new config"""
         manager = BotManager([])
-        new_config = [{"username": "newuser",
-                       "access_token": "newtoken",
-                       "channels": ["#newchannel"]}]
+        new_config = [
+            {
+                "username": "newuser",
+                "access_token": "newtoken",
+                "channels": ["#newchannel"],
+            }
+        ]
 
         manager.request_restart(new_config)
 
         assert manager.restart_requested is True
         assert manager.new_config == new_config
 
-    @patch('src.bot_manager.print_log')
+    @patch("src.bot_manager.print_log")
     async def test_restart_with_new_config(self, mock_print_log):
         """Test restarting with new configuration"""
-        old_config = [{"username": "olduser",
-                       "access_token": "oldtoken",
-                       "channels": ["#oldchannel"]}]
-        new_config = [{"username": "newuser",
-                       "access_token": "newtoken",
-                       "channels": ["#newchannel"]}]
+        old_config = [
+            {
+                "username": "olduser",
+                "access_token": "oldtoken",
+                "channels": ["#oldchannel"],
+            }
+        ]
+        new_config = [
+            {
+                "username": "newuser",
+                "access_token": "newtoken",
+                "channels": ["#newchannel"],
+            }
+        ]
 
         manager = BotManager(old_config)
         manager.new_config = new_config
         manager.restart_requested = True
 
         # Mock the internal methods
-        with patch.object(manager, '_save_statistics', return_value={}) as mock_save_stats, \
-                patch.object(manager, '_stop_all_bots') as mock_stop, \
-                patch.object(manager, '_start_all_bots', return_value=True) as mock_start, \
-                patch.object(manager, '_restore_statistics') as mock_restore:
+        with patch.object(
+            manager, "_save_statistics", return_value={}
+        ) as mock_save_stats, patch.object(
+            manager, "_stop_all_bots"
+        ) as mock_stop, patch.object(
+            manager, "_start_all_bots", return_value=True
+        ) as mock_start, patch.object(
+            manager, "_restore_statistics"
+        ) as mock_restore:
 
             success = await manager._restart_with_new_config()
 
@@ -258,7 +276,7 @@ class TestBotManager:
 
         expected_stats = {
             "user1": {"messages_sent": 10, "colors_changed": 5},
-            "user2": {"messages_sent": 20, "colors_changed": 15}
+            "user2": {"messages_sent": 20, "colors_changed": 15},
         }
         assert stats == expected_stats
 
@@ -275,7 +293,7 @@ class TestBotManager:
 
         saved_stats = {
             "user1": {"messages_sent": 10, "colors_changed": 5},
-            "user2": {"messages_sent": 20, "colors_changed": 15}
+            "user2": {"messages_sent": 20, "colors_changed": 15},
         }
 
         manager._restore_statistics(saved_stats)
@@ -285,7 +303,7 @@ class TestBotManager:
         assert mock_bot2.messages_sent == 20
         assert mock_bot2.colors_changed == 15
 
-    @patch('src.bot_manager.print_log')
+    @patch("src.bot_manager.print_log")
     def test_print_statistics(self, mock_print_log):
         """Test printing statistics"""
         manager = BotManager([])
@@ -310,26 +328,42 @@ class TestBotManager:
         mock_bot1.print_statistics.assert_called_once()
         mock_bot2.print_statistics.assert_called_once()
 
-    @patch('src.bot_manager.print_log')
+    @patch("src.bot_manager.print_log")
     def test_setup_signal_handlers(self, mock_print_log):
         """Test setting up signal handlers"""
         manager = BotManager([])
 
-        with patch('signal.signal') as mock_signal:
+        with patch("signal.signal") as mock_signal:
             manager.setup_signal_handlers()
 
             # Verify both SIGINT and SIGTERM are handled
             assert mock_signal.call_count == 2
             mock_signal.assert_any_call(
                 signal.SIGINT,
-                manager.stop.__self__.__class__.setup_signal_handlers.__wrapped__.__defaults__[0] if hasattr(
-                    manager.stop.__self__.__class__.setup_signal_handlers,
-                    '__wrapped__') else mock_signal.call_args_list[0][0][1])
+                (
+                    manager.stop.__self__.__class__.setup_signal_handlers.__wrapped__.__defaults__[
+                        0
+                    ]
+                    if hasattr(
+                        manager.stop.__self__.__class__.setup_signal_handlers,
+                        "__wrapped__",
+                    )
+                    else mock_signal.call_args_list[0][0][1]
+                ),
+            )
             mock_signal.assert_any_call(
                 signal.SIGTERM,
-                manager.stop.__self__.__class__.setup_signal_handlers.__wrapped__.__defaults__[0] if hasattr(
-                    manager.stop.__self__.__class__.setup_signal_handlers,
-                    '__wrapped__') else mock_signal.call_args_list[1][0][1])
+                (
+                    manager.stop.__self__.__class__.setup_signal_handlers.__wrapped__.__defaults__[
+                        0
+                    ]
+                    if hasattr(
+                        manager.stop.__self__.__class__.setup_signal_handlers,
+                        "__wrapped__",
+                    )
+                    else mock_signal.call_args_list[1][0][1]
+                ),
+            )
 
     def test_stop_all_bots_exception_handling(self):
         """Test _stop_all_bots with task cancellation exceptions (covers lines 99-100, 108-109)"""
@@ -347,7 +381,7 @@ class TestBotManager:
         manager.bots = [mock_bot]
         manager.running = True
 
-        with patch('src.bot_manager.print_log') as mock_log:
+        with patch("src.bot_manager.print_log") as mock_log:
             # Run the async method
             asyncio.run(manager._stop_all_bots())
 
@@ -370,21 +404,25 @@ class TestBotManager:
         manager.bots = []
         manager.running = True
 
-        with patch('asyncio.gather', side_effect=Exception("Gather error")), \
-                patch('src.bot_manager.print_log') as mock_log:
+        with patch("asyncio.gather", side_effect=Exception("Gather error")), patch(
+            "src.bot_manager.print_log"
+        ) as mock_log:
 
             asyncio.run(manager._stop_all_bots())
 
             # Should log the gather exception
             call_args = [str(args) for args in mock_log.call_args_list]
-            assert any("Error waiting for task completion" in args for args in call_args)
+            assert any(
+                "Error waiting for task completion" in args for args in call_args
+            )
 
     def test_stop_public_method_runtime_error(self):
         """Test stop() method when no running loop exists (covers line 131)"""
         manager = BotManager([])
 
-        with patch('asyncio.get_running_loop', side_effect=RuntimeError("No running loop")), \
-                patch('src.bot_manager.print_log'):
+        with patch(
+            "asyncio.get_running_loop", side_effect=RuntimeError("No running loop")
+        ), patch("src.bot_manager.print_log"):
 
             # Should not raise an exception
             manager.stop()
@@ -402,7 +440,7 @@ class TestBotManager:
         manager = BotManager([])
         manager.bots = []
 
-        with patch('src.bot_manager.print_log') as mock_log:
+        with patch("src.bot_manager.print_log") as mock_log:
             manager.print_statistics()
 
             # Should not log anything since there are no bots
@@ -412,9 +450,9 @@ class TestBotManager:
         """Test signal handlers for SIGINT (covers lines 222-225)"""
         manager = BotManager([])
 
-        with patch('signal.signal') as mock_signal, \
-                patch('asyncio.create_task') as mock_create_task, \
-                patch('src.bot_manager.print_log') as mock_log:
+        with patch("signal.signal") as mock_signal, patch(
+            "asyncio.create_task"
+        ) as mock_create_task, patch("src.bot_manager.print_log") as mock_log:
 
             manager.setup_signal_handlers()
 
@@ -435,9 +473,9 @@ class TestBotManager:
         """Test signal handlers for SIGTERM (covers lines 222-225)"""
         manager = BotManager([])
 
-        with patch('signal.signal') as mock_signal, \
-                patch('asyncio.create_task') as mock_create_task, \
-                patch('src.bot_manager.print_log') as mock_log:
+        with patch("signal.signal") as mock_signal, patch(
+            "asyncio.create_task"
+        ) as mock_create_task, patch("src.bot_manager.print_log") as mock_log:
 
             manager.setup_signal_handlers()
 
@@ -458,8 +496,8 @@ class TestBotManager:
 class TestBotManagerHelperFunctions:
     """Test helper functions in bot_manager module"""
 
-    @patch('src.bot_manager.os.path.exists')
-    @patch('src.bot_manager.print_log')
+    @patch("src.bot_manager.os.path.exists")
+    @patch("src.bot_manager.print_log")
     async def test_setup_config_watcher_success(self, mock_print_log, mock_exists):
         """Test successful config watcher setup"""
         mock_exists.return_value = True
@@ -467,8 +505,11 @@ class TestBotManagerHelperFunctions:
         manager = BotManager([])
         config_file = "/path/to/config.json"
 
-        with patch('src.config_watcher.create_config_watcher') as mock_create_watcher, \
-                patch('src.watcher_globals.set_global_watcher') as mock_set_global:
+        with patch(
+            "src.config_watcher.create_config_watcher"
+        ) as mock_create_watcher, patch(
+            "src.watcher_globals.set_global_watcher"
+        ) as mock_set_global:
 
             mock_watcher = MagicMock()
             mock_create_watcher.return_value = mock_watcher
@@ -479,10 +520,11 @@ class TestBotManagerHelperFunctions:
             mock_create_watcher.assert_called_once()
             mock_set_global.assert_called_once_with(mock_watcher)
 
-    @patch('src.bot_manager.os.path.exists')
-    @patch('src.bot_manager.print_log')
+    @patch("src.bot_manager.os.path.exists")
+    @patch("src.bot_manager.print_log")
     async def test_setup_config_watcher_no_config_file(
-            self, mock_print_log, mock_exists):
+        self, mock_print_log, mock_exists
+    ):
         """Test config watcher setup with no config file"""
         mock_exists.return_value = False
 
@@ -491,8 +533,8 @@ class TestBotManagerHelperFunctions:
 
         assert result is None
 
-    @patch('src.bot_manager.os.path.exists')
-    @patch('src.bot_manager.print_log')
+    @patch("src.bot_manager.os.path.exists")
+    @patch("src.bot_manager.print_log")
     async def test_setup_config_watcher_import_error(self, mock_print_log, mock_exists):
         """Test config watcher setup with import error"""
         mock_exists.return_value = True
@@ -500,28 +542,36 @@ class TestBotManagerHelperFunctions:
         manager = BotManager([])
         config_file = "/path/to/config.json"
 
-        with patch('src.config_watcher.create_config_watcher', side_effect=ImportError("No watchdog")):
+        with patch(
+            "src.config_watcher.create_config_watcher",
+            side_effect=ImportError("No watchdog"),
+        ):
             result = await _setup_config_watcher(config_file, manager)
 
             assert result is None
 
-    @patch('os.path.exists', return_value=True)
-    @patch('src.bot_manager.print_log')
+    @patch("os.path.exists", return_value=True)
+    @patch("src.bot_manager.print_log")
     async def test_setup_config_watcher_general_exception(
-            self, mock_print_log, mock_exists):
+        self, mock_print_log, mock_exists
+    ):
         """Test config watcher setup with general exception (covers lines 256-258)"""
         manager = BotManager([])
         config_file = "/path/to/config.json"
 
-        with patch('src.config_watcher.create_config_watcher', side_effect=Exception("General error")):
+        with patch(
+            "src.config_watcher.create_config_watcher",
+            side_effect=Exception("General error"),
+        ):
             result = await _setup_config_watcher(config_file, manager)
 
             assert result is None
             # Should log the failure message
             mock_print_log.assert_called_with(
-                "⚠️ Failed to start config watcher: General error", BColors.WARNING)
+                "⚠️ Failed to start config watcher: General error", BColors.WARNING
+            )
 
-    @patch('src.bot_manager.print_log')
+    @patch("src.bot_manager.print_log")
     async def test_run_main_loop_normal_operation(self, mock_print_log):
         """Test main loop normal operation"""
         manager = BotManager([])
@@ -531,7 +581,7 @@ class TestBotManagerHelperFunctions:
             pass
 
         # Mock asyncio.sleep to exit after first iteration
-        with patch('asyncio.sleep', side_effect=[None, _StopTest()]):
+        with patch("asyncio.sleep", side_effect=[None, _StopTest()]):
             try:
                 await _run_main_loop(manager)
             except _StopTest:
@@ -541,19 +591,19 @@ class TestBotManagerHelperFunctions:
         assert manager.shutdown_initiated is False
         assert manager.restart_requested is False
 
-    @patch('src.bot_manager.print_log')
+    @patch("src.bot_manager.print_log")
     async def test_run_main_loop_shutdown(self, mock_print_log):
         """Test main loop with shutdown"""
         manager = BotManager([])
         manager.running = True
         manager.shutdown_initiated = True
 
-        with patch.object(manager, '_stop_all_bots') as mock_stop:
+        with patch.object(manager, "_stop_all_bots") as mock_stop:
             await _run_main_loop(manager)
 
         mock_stop.assert_called_once()
 
-    @patch('src.bot_manager.print_log')
+    @patch("src.bot_manager.print_log")
     async def test_run_main_loop_restart(self, mock_print_log):
         """Test main loop with restart"""
         manager = BotManager([])
@@ -563,8 +613,9 @@ class TestBotManagerHelperFunctions:
         class _StopTest(Exception):
             pass
 
-        with patch.object(manager, '_restart_with_new_config', return_value=True) as mock_restart, \
-                patch('asyncio.sleep', side_effect=[None, _StopTest()]):
+        with patch.object(
+            manager, "_restart_with_new_config", return_value=True
+        ) as mock_restart, patch("asyncio.sleep", side_effect=[None, _StopTest()]):
             try:
                 await _run_main_loop(manager)
             except _StopTest:
@@ -572,7 +623,7 @@ class TestBotManagerHelperFunctions:
 
         mock_restart.assert_called_once()
 
-    @patch('src.bot_manager.print_log')
+    @patch("src.bot_manager.print_log")
     async def test_run_main_loop_tasks_completed(self, mock_print_log):
         """Test main loop when all tasks complete"""
         manager = BotManager([])
@@ -585,7 +636,7 @@ class TestBotManagerHelperFunctions:
         class _StopTest(Exception):
             pass
 
-        with patch('asyncio.sleep', side_effect=[None, _StopTest()]):
+        with patch("asyncio.sleep", side_effect=[None, _StopTest()]):
             try:
                 await _run_main_loop(manager)
             except _StopTest:
@@ -594,7 +645,7 @@ class TestBotManagerHelperFunctions:
         # Should detect task completion and exit
         assert manager.running is True  # Loop exits but doesn't set running to False
 
-    @patch('src.bot_manager.print_log')
+    @patch("src.bot_manager.print_log")
     async def test_run_main_loop_restart_failure(self, mock_print_log):
         """Test main loop with restart failure (covers line 276)"""
         manager = BotManager([])
@@ -604,8 +655,9 @@ class TestBotManagerHelperFunctions:
         class _StopTest(Exception):
             pass
 
-        with patch.object(manager, '_restart_with_new_config', return_value=False) as mock_restart, \
-                patch('asyncio.sleep', side_effect=[None, _StopTest()]):
+        with patch.object(
+            manager, "_restart_with_new_config", return_value=False
+        ) as mock_restart, patch("asyncio.sleep", side_effect=[None, _StopTest()]):
             try:
                 await _run_main_loop(manager)
             except _StopTest:
@@ -614,9 +666,11 @@ class TestBotManagerHelperFunctions:
         mock_restart.assert_called_once()
         # Should log the failure message
         mock_print_log.assert_called_with(
-            "❌ Failed to restart bots, continuing with previous configuration", BColors.FAIL)
+            "❌ Failed to restart bots, continuing with previous configuration",
+            BColors.FAIL,
+        )
 
-    @patch('src.bot_manager.print_log')
+    @patch("src.bot_manager.print_log")
     async def test_run_main_loop_unexpected_completion(self, mock_print_log):
         """Test main loop when tasks complete unexpectedly (covers lines 284-287)"""
         manager = BotManager([])
@@ -627,17 +681,19 @@ class TestBotManagerHelperFunctions:
         mock_task.done.return_value = True
         manager.tasks = [mock_task]
 
-        with patch('asyncio.sleep', side_effect=[None]):
+        with patch("asyncio.sleep", side_effect=[None]):
             await _run_main_loop(manager)
 
         # Should log the unexpected completion message
         call_args = [str(args) for args in mock_print_log.call_args_list]
-        assert any("All bot tasks have completed unexpectedly" in args for args in call_args)
+        assert any(
+            "All bot tasks have completed unexpectedly" in args for args in call_args
+        )
 
     def test_cleanup_watcher(self):
         """Test watcher cleanup"""
         mock_watcher = MagicMock()
-        with patch('src.watcher_globals.set_global_watcher') as mock_set_global:
+        with patch("src.watcher_globals.set_global_watcher") as mock_set_global:
             _cleanup_watcher(mock_watcher)
 
         mock_watcher.stop.assert_called_once()
@@ -645,24 +701,25 @@ class TestBotManagerHelperFunctions:
 
     def test_cleanup_watcher_none(self):
         """Test watcher cleanup with None watcher"""
-        with patch('src.watcher_globals.set_global_watcher') as mock_set_global:
+        with patch("src.watcher_globals.set_global_watcher") as mock_set_global:
             _cleanup_watcher(None)
 
         mock_set_global.assert_called_once_with(None)
 
-    @patch('src.bot_manager.os.path.exists')
-    @patch('src.bot_manager.print_log')
+    @patch("src.bot_manager.os.path.exists")
+    @patch("src.bot_manager.print_log")
     async def test_setup_config_watcher_restart_callback(
-            self, mock_print_log, mock_exists):
+        self, mock_print_log, mock_exists
+    ):
         """Test the restart callback in setup_config_watcher (covers line 243)"""
         mock_exists.return_value = True
 
         manager = BotManager([])
         config_file = "/path/to/config.json"
 
-        with patch('src.config_watcher.create_config_watcher') as mock_create, \
-                patch('src.watcher_globals.set_global_watcher'), \
-                patch.object(manager, 'request_restart') as mock_request:
+        with patch("src.config_watcher.create_config_watcher") as mock_create, patch(
+            "src.watcher_globals.set_global_watcher"
+        ), patch.object(manager, "request_restart") as mock_request:
 
             mock_watcher = MagicMock()
             mock_create.return_value = mock_watcher
@@ -684,10 +741,13 @@ class TestBotManagerHelperFunctions:
         manager = BotManager([])
         config_file = "/path/to/config.json"
 
-        with patch('src.bot_manager.os.path.exists', return_value=True), \
-                patch('src.config_watcher.create_config_watcher') as mock_create, \
-                patch('src.watcher_globals.set_global_watcher') as mock_set_global, \
-                patch('src.bot_manager.print_log') as mock_log:
+        with patch("src.bot_manager.os.path.exists", return_value=True), patch(
+            "src.config_watcher.create_config_watcher"
+        ) as mock_create, patch(
+            "src.watcher_globals.set_global_watcher"
+        ) as mock_set_global, patch(
+            "src.bot_manager.print_log"
+        ) as mock_log:
 
             mock_watcher = MagicMock()
             mock_create.return_value = mock_watcher
@@ -709,8 +769,9 @@ class TestBotManagerHelperFunctions:
         mock_task.done.return_value = True
         manager.tasks = [mock_task]
 
-        with patch('asyncio.sleep') as mock_sleep, \
-                patch('src.bot_manager.print_log') as mock_log:
+        with patch("asyncio.sleep") as mock_sleep, patch(
+            "src.bot_manager.print_log"
+        ) as mock_log:
 
             # After first sleep, make all tasks done to trigger the completion check
             # Exit after second iteration
@@ -724,14 +785,16 @@ class TestBotManagerHelperFunctions:
             # Should log unexpected completion message
             call_args = [str(args) for args in mock_log.call_args_list]
             assert any(
-                "All bot tasks have completed unexpectedly" in args for args in call_args)
+                "All bot tasks have completed unexpectedly" in args
+                for args in call_args
+            )
 
     def test_missing_lines_301_302(self):
         """Test ImportError handling in _cleanup_watcher (covers lines 301-302)"""
         watcher = MagicMock()
 
         # Mock the import to raise ImportError
-        with patch('builtins.__import__', side_effect=ImportError("Module not found")):
+        with patch("builtins.__import__", side_effect=ImportError("Module not found")):
             # This should not raise an exception due to the ImportError catch
             _cleanup_watcher(watcher)
 
@@ -742,14 +805,16 @@ class TestBotManagerHelperFunctions:
         """Test when _start_all_bots returns False in run_bots (covers lines 318-326)"""
         users_config = [{"username": "test"}]
 
-        with patch('src.bot_manager.BotManager') as mock_manager_class, \
-                patch('src.bot_manager._setup_config_watcher') as mock_setup, \
-                patch('src.bot_manager._cleanup_watcher') as mock_cleanup:
+        with patch("src.bot_manager.BotManager") as mock_manager_class, patch(
+            "src.bot_manager._setup_config_watcher"
+        ) as mock_setup, patch("src.bot_manager._cleanup_watcher") as mock_cleanup:
 
             # Create a mock manager instance
             mock_manager = MagicMock()
             mock_manager_class.return_value = mock_manager
-            mock_manager._start_all_bots.return_value = False  # This triggers the early return
+            mock_manager._start_all_bots.return_value = (
+                False  # This triggers the early return
+            )
             mock_manager._stop_all_bots = AsyncMock()
             mock_setup.return_value = None
 
@@ -764,17 +829,19 @@ class TestBotManagerHelperFunctions:
 
 class TestRunBots:
     """Test run_bots function"""
-    @patch('src.bot_manager.print_log')
-    @patch('src.bot_manager._cleanup_watcher')
+
+    @patch("src.bot_manager.print_log")
+    @patch("src.bot_manager._cleanup_watcher")
     async def test_run_bots_success(self, mock_cleanup, mock_print_log):
         """Test successful run_bots execution"""
-        users_config = [{"username": "user1",
-                         "access_token": "token1",
-                         "channels": ["#channel1"]}]
+        users_config = [
+            {"username": "user1", "access_token": "token1", "channels": ["#channel1"]}
+        ]
         config_file = "/path/to/config.json"
 
-        with patch('src.bot_manager.BotManager') as mock_manager_class, \
-                patch('src.bot_manager._setup_config_watcher', return_value=None):
+        with patch("src.bot_manager.BotManager") as mock_manager_class, patch(
+            "src.bot_manager._setup_config_watcher", return_value=None
+        ):
 
             mock_manager = MagicMock()
             mock_manager_class.return_value = mock_manager
@@ -797,25 +864,37 @@ class TestRunBots:
             # Verify the success print_log calls were made (lines 350-355)
             expected_calls = [
                 call("\n🎮 Bots are running! Press Ctrl+C to stop.", BColors.HEADER),
-                call("💬 Start chatting in your channels to see color changes!", BColors.OKBLUE),
-                call("⚠️ Note: If bots exit quickly, check your Twitch credentials", BColors.WARNING)
+                call(
+                    "💬 Start chatting in your channels to see color changes!",
+                    BColors.OKBLUE,
+                ),
+                call(
+                    "⚠️ Note: If bots exit quickly, check your Twitch credentials",
+                    BColors.WARNING,
+                ),
             ]
             mock_print_log.assert_has_calls(expected_calls, any_order=False)
 
-    @patch('src.bot_manager.print_log')
-    @patch('src.bot_manager._cleanup_watcher')
+    @patch("src.bot_manager.print_log")
+    @patch("src.bot_manager._cleanup_watcher")
     async def test_run_bots_start_failure(self, mock_cleanup, mock_print_log):
         """Test run_bots when bot start fails"""
-        users_config = [{"username": "user1",
-                         "access_token": "token1",
-                         "channels": ["#channel1"]}]
+        users_config = [
+            {"username": "user1", "access_token": "token1", "channels": ["#channel1"]}
+        ]
 
         # Mock only the parts we need, not the entire BotManager
-        with patch('src.bot_manager._setup_config_watcher', return_value=None), \
-                patch.object(BotManager, '_start_all_bots', return_value=False) as mock_start, \
-                patch.object(BotManager, 'setup_signal_handlers'), \
-                patch.object(BotManager, '_stop_all_bots', new_callable=AsyncMock) as mock_stop, \
-                patch.object(BotManager, 'print_statistics') as mock_stats:
+        with patch(
+            "src.bot_manager._setup_config_watcher", return_value=None
+        ), patch.object(
+            BotManager, "_start_all_bots", return_value=False
+        ) as mock_start, patch.object(
+            BotManager, "setup_signal_handlers"
+        ), patch.object(
+            BotManager, "_stop_all_bots", new_callable=AsyncMock
+        ) as mock_stop, patch.object(
+            BotManager, "print_statistics"
+        ) as mock_stats:
 
             await run_bots(users_config)
 
@@ -824,16 +903,17 @@ class TestRunBots:
             mock_stop.assert_called_once()
             mock_stats.assert_called_once()
 
-    @patch('src.bot_manager.print_log')
-    @patch('src.bot_manager._cleanup_watcher')
+    @patch("src.bot_manager.print_log")
+    @patch("src.bot_manager._cleanup_watcher")
     async def test_run_bots_keyboard_interrupt(self, mock_cleanup, mock_print_log):
         """Test run_bots with keyboard interrupt"""
-        users_config = [{"username": "user1",
-                         "access_token": "token1",
-                         "channels": ["#channel1"]}]
+        users_config = [
+            {"username": "user1", "access_token": "token1", "channels": ["#channel1"]}
+        ]
 
-        with patch('src.bot_manager.BotManager') as mock_manager_class, \
-                patch('src.bot_manager._setup_config_watcher', return_value=None):
+        with patch("src.bot_manager.BotManager") as mock_manager_class, patch(
+            "src.bot_manager._setup_config_watcher", return_value=None
+        ):
 
             mock_manager = MagicMock()
             mock_manager_class.return_value = mock_manager
@@ -846,16 +926,17 @@ class TestRunBots:
             mock_manager._stop_all_bots.assert_called_once()
             mock_manager.print_statistics.assert_called_once()
 
-    @patch('src.bot_manager.print_log')
-    @patch('src.bot_manager._cleanup_watcher')
+    @patch("src.bot_manager.print_log")
+    @patch("src.bot_manager._cleanup_watcher")
     async def test_run_bots_exception(self, mock_cleanup, mock_print_log):
         """Test run_bots with general exception"""
-        users_config = [{"username": "user1",
-                         "access_token": "token1",
-                         "channels": ["#channel1"]}]
+        users_config = [
+            {"username": "user1", "access_token": "token1", "channels": ["#channel1"]}
+        ]
 
-        with patch('src.bot_manager.BotManager') as mock_manager_class, \
-                patch('src.bot_manager._setup_config_watcher', return_value=None):
+        with patch("src.bot_manager.BotManager") as mock_manager_class, patch(
+            "src.bot_manager._setup_config_watcher", return_value=None
+        ):
 
             mock_manager = MagicMock()
             mock_manager_class.return_value = mock_manager
@@ -875,14 +956,18 @@ class TestBotManagerBranchCoverage:
 
     def create_test_manager(self):
         """Helper to create a test manager with valid parameters"""
-        return BotManager([{
-            'username': 'testuser',
-            'oauth': 'oauth:token123',
-            'refresh_token': 'refresh123',
-            'client_id': 'client123',
-            'client_secret': 'secret123',
-            'channels': ['testchannel']
-        }])
+        return BotManager(
+            [
+                {
+                    "username": "testuser",
+                    "oauth": "oauth:token123",
+                    "refresh_token": "refresh123",
+                    "client_id": "client123",
+                    "client_secret": "secret123",
+                    "channels": ["testchannel"],
+                }
+            ]
+        )
 
     @pytest.mark.asyncio
     async def test_setup_signal_handlers_sigint_branch(self):
@@ -897,7 +982,7 @@ class TestBotManagerBranchCoverage:
             signal_calls.append((sig, handler))
             return original_signal(sig, handler)
 
-        with patch('signal.signal', side_effect=mock_signal):
+        with patch("signal.signal", side_effect=mock_signal):
             manager.setup_signal_handlers()
 
             # Find the SIGINT handler
@@ -910,7 +995,9 @@ class TestBotManagerBranchCoverage:
             assert sigint_handler is not None
 
             # Test the SIGINT handler sets shutdown_initiated
-            with patch.object(manager, '_stop_all_bots', return_value=asyncio.Future()) as mock_stop:
+            with patch.object(
+                manager, "_stop_all_bots", return_value=asyncio.Future()
+            ) as mock_stop:
                 mock_stop.return_value.set_result(None)  # Set the future to complete
                 sigint_handler(signal.SIGINT, None)
                 assert manager.shutdown_initiated is True
@@ -920,7 +1007,7 @@ class TestBotManagerBranchCoverage:
         """Test when restart flag is False in run_main_loop - lines 291->295"""
 
         # Mock the _run_main_loop function since it's module-level
-        with patch('src.bot_manager._run_main_loop') as mock_run_main:
+        with patch("src.bot_manager._run_main_loop") as mock_run_main:
             # Simulate the main loop checking restart_requested
             manager = self.create_test_manager()
             manager.restart_requested = False
@@ -994,7 +1081,7 @@ class TestBotManagerBranchCoverage:
         manager = self.create_test_manager()
         manager.bots = []  # Empty list, not None
 
-        with patch('src.bot_manager.print_log') as mock_print:
+        with patch("src.bot_manager.print_log") as mock_print:
             manager.print_statistics()
 
             # Should exit early and not print detailed statistics
@@ -1019,7 +1106,7 @@ class TestBotManagerBranchCoverage:
         manager = BotManager([user_config])
 
         # Mock _create_bot to return None
-        with patch.object(manager, '_create_bot', return_value=None):
+        with patch.object(manager, "_create_bot", return_value=None):
             # This is async method, need to run it
             async def test_async():
                 result = await manager._start_all_bots()
@@ -1059,7 +1146,7 @@ class TestBotManagerBranchCoverage:
         manager = BotManager([])
 
         # Mock hasattr to return False for _get_running_loop
-        with patch('builtins.hasattr', return_value=False):
+        with patch("builtins.hasattr", return_value=False):
             # Should not raise error, just exit early
             manager.stop()
 
@@ -1068,15 +1155,17 @@ class TestBotManagerBranchCoverage:
         manager = BotManager([])
 
         # Test when hasattr returns False (asyncio doesn't have _get_running_loop)
-        with patch('builtins.hasattr') as mock_hasattr:
+        with patch("builtins.hasattr") as mock_hasattr:
             # Return False only for the specific check
-            mock_hasattr.side_effect = lambda obj, attr: False if attr == '_get_running_loop' else hasattr(obj, attr)
+            mock_hasattr.side_effect = lambda obj, attr: (
+                False if attr == "_get_running_loop" else hasattr(obj, attr)
+            )
 
             # Should exit early without attempting to get running loop
             manager.stop()
 
             # Verify the check was made
-            mock_hasattr.assert_any_call(asyncio, '_get_running_loop')
+            mock_hasattr.assert_any_call(asyncio, "_get_running_loop")
 
     @pytest.mark.asyncio
     async def test_restart_with_new_config_success_true_branch(self):
@@ -1084,10 +1173,11 @@ class TestBotManagerBranchCoverage:
         manager = BotManager([])
         manager.new_config = [{"username": "test"}]
 
-        with patch.object(manager, '_stop_all_bots'), \
-             patch.object(manager, '_start_all_bots', return_value=True), \
-             patch.object(manager, '_save_statistics', return_value={}), \
-             patch.object(manager, '_restore_statistics') as mock_restore:
+        with patch.object(manager, "_stop_all_bots"), patch.object(
+            manager, "_start_all_bots", return_value=True
+        ), patch.object(manager, "_save_statistics", return_value={}), patch.object(
+            manager, "_restore_statistics"
+        ) as mock_restore:
 
             result = await manager._restart_with_new_config()
 
@@ -1100,10 +1190,11 @@ class TestBotManagerBranchCoverage:
         manager = BotManager([])
         manager.new_config = [{"username": "test"}]
 
-        with patch.object(manager, '_stop_all_bots'), \
-             patch.object(manager, '_start_all_bots', return_value=False), \
-             patch.object(manager, '_save_statistics', return_value={}), \
-             patch.object(manager, '_restore_statistics') as mock_restore:
+        with patch.object(manager, "_stop_all_bots"), patch.object(
+            manager, "_start_all_bots", return_value=False
+        ), patch.object(manager, "_save_statistics", return_value={}), patch.object(
+            manager, "_restore_statistics"
+        ) as mock_restore:
 
             result = await manager._restart_with_new_config()
 
@@ -1121,14 +1212,9 @@ class TestBotManagerBranchCoverage:
         mock_bot.colors_changed = 0
         manager.bots = [mock_bot]
 
-        saved_stats = {
-            "testuser": {
-                "messages_sent": 5,
-                "colors_changed": 3
-            }
-        }
+        saved_stats = {"testuser": {"messages_sent": 5, "colors_changed": 3}}
 
-        with patch('src.bot_manager.print_log') as mock_log:
+        with patch("src.bot_manager.print_log") as mock_log:
             manager._restore_statistics(saved_stats)
 
             # Verify stats were restored
@@ -1145,18 +1231,17 @@ class TestBotManagerBranchCoverage:
         mock_bot.username = "different_user"
         manager.bots = [mock_bot]
 
-        saved_stats = {
-            "testuser": {
-                "messages_sent": 5,
-                "colors_changed": 3
-            }
-        }
+        saved_stats = {"testuser": {"messages_sent": 5, "colors_changed": 3}}
 
-        with patch('src.bot_manager.print_log') as mock_log:
+        with patch("src.bot_manager.print_log") as mock_log:
             manager._restore_statistics(saved_stats)
 
             # Stats should not be restored and log should not be called for restore
-            restore_calls = [call for call in mock_log.call_args_list if "Restored statistics" in str(call)]
+            restore_calls = [
+                call
+                for call in mock_log.call_args_list
+                if "Restored statistics" in str(call)
+            ]
             assert len(restore_calls) == 0
 
     @pytest.mark.asyncio
@@ -1174,17 +1259,19 @@ class TestBotManagerBranchCoverage:
         task2.set_result("completed")
         manager.tasks = [task1, task2]
 
-        with patch.object(manager, '_start_all_bots', return_value=True), \
-             patch('src.bot_manager._setup_config_watcher'), \
-             patch('src.bot_manager._cleanup_watcher'), \
-             patch('src.bot_manager.print_log') as mock_log:
+        with patch.object(manager, "_start_all_bots", return_value=True), patch(
+            "src.bot_manager._setup_config_watcher"
+        ), patch("src.bot_manager._cleanup_watcher"), patch(
+            "src.bot_manager.print_log"
+        ) as mock_log:
 
             # Run main loop - it should detect all tasks are done and break the loop
             await _run_main_loop(manager)
 
         # Verify warning message was logged when all tasks completed
         warning_calls = [
-            call for call in mock_log.call_args_list
+            call
+            for call in mock_log.call_args_list
             if "All bot tasks have completed unexpectedly" in str(call)
         ]
         assert len(warning_calls) > 0
@@ -1224,12 +1311,16 @@ class TestBotManagerBranchCoverage:
                 manager.shutdown_initiated = True
             await original_sleep(0)
 
-        with patch("asyncio.sleep", side_effect=fake_sleep), \
-             patch("src.bot_manager.print_log") as mock_log, \
-             patch.object(manager, "_stop_all_bots", return_value=None):
+        with patch("asyncio.sleep", side_effect=fake_sleep), patch(
+            "src.bot_manager.print_log"
+        ) as mock_log, patch.object(manager, "_stop_all_bots", return_value=None):
             await _run_main_loop(manager)
 
-        unexpected = [c for c in mock_log.call_args_list if "All bot tasks have completed unexpectedly" in str(c)]
+        unexpected = [
+            c
+            for c in mock_log.call_args_list
+            if "All bot tasks have completed unexpectedly" in str(c)
+        ]
         assert not unexpected
 
     @pytest.mark.asyncio
@@ -1249,12 +1340,16 @@ class TestBotManagerBranchCoverage:
         async def fast_sleep(_sec):
             await original_sleep(0)
 
-        with patch("asyncio.sleep", side_effect=fast_sleep), \
-             patch("src.bot_manager.print_log") as mock_log:
+        with patch("asyncio.sleep", side_effect=fast_sleep), patch(
+            "src.bot_manager.print_log"
+        ) as mock_log:
             await _run_main_loop(manager)
 
         # Assert the expected log appeared
-        logged = any("All bot tasks have completed unexpectedly" in str(c) for c in mock_log.call_args_list)
+        logged = any(
+            "All bot tasks have completed unexpectedly" in str(c)
+            for c in mock_log.call_args_list
+        )
         assert logged
 
 
@@ -1271,12 +1366,12 @@ class TestBotManagerHealthMonitoring:
                 "refresh_token": "testrefresh",
                 "client_id": "testclient",
                 "client_secret": "testsecret",
-                "channels": ["#testchannel"]
+                "channels": ["#testchannel"],
             }
         ]
         return BotManager(users_config)
 
-    @pytest.fixture  
+    @pytest.fixture
     def mock_bot(self):
         """Create a mock bot with IRC connection"""
         bot = MagicMock(spec=TwitchColorBot)
@@ -1284,9 +1379,9 @@ class TestBotManagerHealthMonitoring:
         bot.irc = MagicMock()
         bot.irc.is_healthy.return_value = True
         bot.irc.get_connection_stats.return_value = {
-            'time_since_activity': 30.0,
-            'consecutive_ping_failures': 0,
-            'connection_failures': 0
+            "time_since_activity": 30.0,
+            "consecutive_ping_failures": 0,
+            "connection_failures": 0,
         }
         bot.irc.force_reconnect.return_value = True
         return bot
@@ -1296,9 +1391,9 @@ class TestBotManagerHealthMonitoring:
         """Test health monitoring handles cancellation properly"""
         bot_manager.running = True
         bot_manager.shutdown_initiated = False
-        
+
         # Mock sleep to raise CancelledError
-        with patch('asyncio.sleep', side_effect=asyncio.CancelledError()):
+        with patch("asyncio.sleep", side_effect=asyncio.CancelledError()):
             with pytest.raises(asyncio.CancelledError):
                 await bot_manager._monitor_bot_health()
 
@@ -1307,12 +1402,12 @@ class TestBotManagerHealthMonitoring:
         """Test health monitoring handles exceptions"""
         bot_manager.running = True
         bot_manager.shutdown_initiated = False
-        
+
         # Mock sleep to raise exception then stop
         sleep_effects = [Exception("Test error"), asyncio.CancelledError()]
-        
-        with patch('asyncio.sleep', side_effect=sleep_effects):
-            with patch('src.bot_manager.print_log'):
+
+        with patch("asyncio.sleep", side_effect=sleep_effects):
+            with patch("src.bot_manager.print_log"):
                 with pytest.raises(asyncio.CancelledError):
                     await bot_manager._monitor_bot_health()
 
@@ -1321,22 +1416,28 @@ class TestBotManagerHealthMonitoring:
         """Test health monitoring stops when shutdown initiated"""
         bot_manager.running = True
         bot_manager.shutdown_initiated = False
-        
+
         def set_shutdown_after_sleep(*args):
             bot_manager.shutdown_initiated = True
-            
-        with patch('asyncio.sleep', side_effect=set_shutdown_after_sleep):
-            with patch.object(bot_manager, '_perform_health_check'):
+
+        with patch("asyncio.sleep", side_effect=set_shutdown_after_sleep):
+            with patch.object(bot_manager, "_perform_health_check"):
                 await bot_manager._monitor_bot_health()
 
     @pytest.mark.asyncio
-    async def test_perform_health_check_with_unhealthy_bots(self, bot_manager, mock_bot):
+    async def test_perform_health_check_with_unhealthy_bots(
+        self, bot_manager, mock_bot
+    ):
         """Test perform health check with unhealthy bots"""
         mock_bot.irc.is_healthy.return_value = False
         bot_manager.bots = [mock_bot]
-        
-        with patch.object(bot_manager, '_identify_unhealthy_bots', return_value=[mock_bot]):
-            with patch.object(bot_manager, '_reconnect_unhealthy_bots') as mock_reconnect:
+
+        with patch.object(
+            bot_manager, "_identify_unhealthy_bots", return_value=[mock_bot]
+        ):
+            with patch.object(
+                bot_manager, "_reconnect_unhealthy_bots"
+            ) as mock_reconnect:
                 await bot_manager._perform_health_check()
                 mock_reconnect.assert_called_once_with([mock_bot])
 
@@ -1344,14 +1445,14 @@ class TestBotManagerHealthMonitoring:
     async def test_perform_health_check_all_healthy(self, bot_manager, mock_bot):
         """Test perform health check when all bots are healthy"""
         bot_manager.bots = [mock_bot]
-        
-        with patch.object(bot_manager, '_identify_unhealthy_bots', return_value=[]):
-            with patch('src.bot_manager.print_log') as mock_log:
+
+        with patch.object(bot_manager, "_identify_unhealthy_bots", return_value=[]):
+            with patch("src.bot_manager.print_log") as mock_log:
                 await bot_manager._perform_health_check()
                 # Look for the call with "All bots are healthy" message
                 found_healthy_log = False
-                for call in mock_log.call_args_list:
-                    if "All bots are healthy" in str(call):
+                for log_call in mock_log.call_args_list:
+                    if "All bots are healthy" in str(log_call):
                         found_healthy_log = True
                         break
                 assert found_healthy_log
@@ -1360,8 +1461,8 @@ class TestBotManagerHealthMonitoring:
         """Test identification of unhealthy bots"""
         mock_bot.irc.is_healthy.return_value = False
         bot_manager.bots = [mock_bot]
-        
-        with patch.object(bot_manager, '_log_bot_health_issues'):
+
+        with patch.object(bot_manager, "_log_bot_health_issues"):
             unhealthy = bot_manager._identify_unhealthy_bots()
             assert unhealthy == [mock_bot]
 
@@ -1369,22 +1470,22 @@ class TestBotManagerHealthMonitoring:
         """Test identification when all bots are healthy"""
         mock_bot.irc.is_healthy.return_value = True
         bot_manager.bots = [mock_bot]
-        
+
         unhealthy = bot_manager._identify_unhealthy_bots()
         assert unhealthy == []
 
     def test_log_bot_health_issues(self, bot_manager, mock_bot):
         """Test logging of bot health issues"""
-        with patch('src.bot_manager.print_log') as mock_log:
+        with patch("src.bot_manager.print_log") as mock_log:
             bot_manager._log_bot_health_issues(mock_bot)
-            
+
             # Should log warning and stats
             assert mock_log.call_count == 2
-            
+
             # Check first call (warning)
             first_call = mock_log.call_args_list[0]
             assert "appears unhealthy" in first_call[0][0]
-            
+
             # Check second call (stats)
             second_call = mock_log.call_args_list[1]
             assert "health stats" in second_call[0][0]
@@ -1392,31 +1493,43 @@ class TestBotManagerHealthMonitoring:
     @pytest.mark.asyncio
     async def test_reconnect_unhealthy_bots_success(self, bot_manager, mock_bot):
         """Test reconnecting unhealthy bots successfully"""
-        with patch.object(bot_manager, '_attempt_bot_reconnection', return_value=True):
-            with patch('src.bot_manager.print_log') as mock_log:
+        with patch.object(bot_manager, "_attempt_bot_reconnection", return_value=True):
+            with patch("src.bot_manager.print_log") as mock_log:
                 await bot_manager._reconnect_unhealthy_bots([mock_bot])
-                
+
                 # Should log reconnection attempt and success
-                assert any("Attempting to reconnect" in str(call) for call in mock_log.call_args_list)
-                assert any("Successfully reconnected" in str(call) for call in mock_log.call_args_list)
+                assert any(
+                    "Attempting to reconnect" in str(call)
+                    for call in mock_log.call_args_list
+                )
+                assert any(
+                    "Successfully reconnected" in str(call)
+                    for call in mock_log.call_args_list
+                )
 
     @pytest.mark.asyncio
     async def test_reconnect_unhealthy_bots_failure(self, bot_manager, mock_bot):
         """Test reconnecting unhealthy bots with failure"""
-        with patch.object(bot_manager, '_attempt_bot_reconnection', return_value=False):
-            with patch('src.bot_manager.print_log') as mock_log:
+        with patch.object(bot_manager, "_attempt_bot_reconnection", return_value=False):
+            with patch("src.bot_manager.print_log") as mock_log:
                 await bot_manager._reconnect_unhealthy_bots([mock_bot])
-                
+
                 # Should log reconnection attempt and failure
-                assert any("Attempting to reconnect" in str(call) for call in mock_log.call_args_list)
-                assert any("Failed to reconnect" in str(call) for call in mock_log.call_args_list)
+                assert any(
+                    "Attempting to reconnect" in str(call)
+                    for call in mock_log.call_args_list
+                )
+                assert any(
+                    "Failed to reconnect" in str(call)
+                    for call in mock_log.call_args_list
+                )
 
     @pytest.mark.asyncio
     async def test_attempt_bot_reconnection_no_irc(self, bot_manager, mock_bot):
         """Test reconnection attempt with no IRC connection"""
         mock_bot.irc = None
-        
-        with patch('src.bot_manager.print_log'):
+
+        with patch("src.bot_manager.print_log"):
             result = await bot_manager._attempt_bot_reconnection(mock_bot)
             assert result is False
 
@@ -1425,8 +1538,8 @@ class TestBotManagerHealthMonitoring:
         """Test successful bot reconnection"""
         mock_bot.irc.force_reconnect.return_value = True
         mock_bot.irc.is_healthy.return_value = True
-        
-        with patch('asyncio.sleep'):
+
+        with patch("asyncio.sleep"):
             result = await bot_manager._attempt_bot_reconnection(mock_bot)
             assert result is True
 
@@ -1434,19 +1547,21 @@ class TestBotManagerHealthMonitoring:
     async def test_attempt_bot_reconnection_force_fail(self, bot_manager, mock_bot):
         """Test bot reconnection when force_reconnect fails"""
         mock_bot.irc.force_reconnect.return_value = False
-        
-        with patch('src.bot_manager.print_log'):
+
+        with patch("src.bot_manager.print_log"):
             result = await bot_manager._attempt_bot_reconnection(mock_bot)
             assert result is False
 
     @pytest.mark.asyncio
-    async def test_attempt_bot_reconnection_unhealthy_after(self, bot_manager, mock_bot):
+    async def test_attempt_bot_reconnection_unhealthy_after(
+        self, bot_manager, mock_bot
+    ):
         """Test bot reconnection that succeeds but bot is still unhealthy"""
         mock_bot.irc.force_reconnect.return_value = True
         mock_bot.irc.is_healthy.return_value = False
-        
-        with patch('asyncio.sleep'):
-            with patch('src.bot_manager.print_log'):
+
+        with patch("asyncio.sleep"):
+            with patch("src.bot_manager.print_log"):
                 result = await bot_manager._attempt_bot_reconnection(mock_bot)
                 assert result is False
 
@@ -1454,8 +1569,8 @@ class TestBotManagerHealthMonitoring:
     async def test_attempt_bot_reconnection_exception(self, bot_manager, mock_bot):
         """Test bot reconnection with exception"""
         mock_bot.irc.force_reconnect.side_effect = Exception("Test error")
-        
-        with patch('src.bot_manager.print_log'):
+
+        with patch("src.bot_manager.print_log"):
             result = await bot_manager._attempt_bot_reconnection(mock_bot)
             assert result is False
 
@@ -1463,33 +1578,33 @@ class TestBotManagerHealthMonitoring:
         """Test starting health monitoring when running"""
         bot_manager.running = True
         bot_manager.tasks = []
-        
-        with patch('asyncio.create_task') as mock_create_task:
+
+        with patch("asyncio.create_task") as mock_create_task:
             mock_task = MagicMock()
             mock_create_task.return_value = mock_task
-            
-            with patch('src.bot_manager.print_log'):
+
+            with patch("src.bot_manager.print_log"):
                 result = bot_manager._start_health_monitoring()
-                
+
                 assert result == mock_task
                 assert mock_task in bot_manager.tasks
 
     def test_start_health_monitoring_not_running(self, bot_manager):
         """Test starting health monitoring when not running"""
         bot_manager.running = False
-        
+
         result = bot_manager._start_health_monitoring()
         assert result is None
 
-    @pytest.mark.asyncio 
+    @pytest.mark.asyncio
     async def test_monitor_bot_health_shutdown_exit(self, bot_manager):
         """Test health monitoring loop exits on shutdown"""
         bot_manager.running = True
         bot_manager.shutdown_initiated = True  # Cause immediate exit from while loop
-        
+
         # Should exit immediately due to shutdown_initiated
         await bot_manager._monitor_bot_health()
-        
+
         # No other checks needed - the fact it returned means it exited the loop
 
     @pytest.mark.asyncio
@@ -1497,10 +1612,10 @@ class TestBotManagerHealthMonitoring:
         """Test complete health monitoring cycle with check execution"""
         bot_manager.running = True
         bot_manager.shutdown_initiated = False
-        
+
         # Track call count to exit after health check completes
         call_count = 0
-        
+
         def mock_sleep(duration):
             nonlocal call_count
             call_count += 1
@@ -1511,10 +1626,10 @@ class TestBotManagerHealthMonitoring:
             future = asyncio.Future()
             future.set_result(None)
             return future
-        
-        with patch('asyncio.sleep', side_effect=mock_sleep):
-            with patch.object(bot_manager, '_perform_health_check') as mock_check:
+
+        with patch("asyncio.sleep", side_effect=mock_sleep):
+            with patch.object(bot_manager, "_perform_health_check") as mock_check:
                 await bot_manager._monitor_bot_health()
-                
+
                 # Should have called the health check
                 mock_check.assert_called_once()

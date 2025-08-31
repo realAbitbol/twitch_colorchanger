@@ -18,32 +18,30 @@ from .simple_irc import SimpleTwitchIRC
 from .utils import print_log
 
 # Constants
-CHAT_COLOR_ENDPOINT = 'chat/color'
+CHAT_COLOR_ENDPOINT = "chat/color"
 
 
-async def _make_api_request(method: str,
-                            endpoint: str,
-                            access_token: str,
-                            client_id: str,
-                            data: Dict[str,
-                                       Any] = None,
-                            params: Dict[str,
-                                         Any] = None) -> Tuple[Dict[str,
-                                                                    Any],
-                                                               int,
-                                                               Dict[str,
-                                                                    str]]:
+async def _make_api_request(
+    method: str,
+    endpoint: str,
+    access_token: str,
+    client_id: str,
+    data: Dict[str, Any] = None,
+    params: Dict[str, Any] = None,
+) -> Tuple[Dict[str, Any], int, Dict[str, str]]:
     """Make a simple HTTP request to Twitch API"""
     headers = {
-        'Authorization': f'Bearer {access_token}',
-        'Client-Id': client_id,
-        'Content-Type': 'application/json'
+        "Authorization": f"Bearer {access_token}",
+        "Client-Id": client_id,
+        "Content-Type": "application/json",
     }
 
-    url = f'https://api.twitch.tv/helix/{endpoint}'
+    url = f"https://api.twitch.tv/helix/{endpoint}"
 
     async with aiohttp.ClientSession() as session:
-        async with session.request(method, url, headers=headers, json=data, params=params) as response:
+        async with session.request(
+            method, url, headers=headers, json=data, params=params
+        ) as response:
             try:
                 response_data = await response.json()
             except (aiohttp.ContentTypeError, json.JSONDecodeError):
@@ -55,25 +53,27 @@ async def _make_api_request(method: str,
 class TwitchColorBot:
     """Bot that changes Twitch username colors after each message"""
 
-    OAUTH_PREFIX = 'oauth:'
+    OAUTH_PREFIX = "oauth:"
 
     def __init__(
-            self,
-            token: str,
-            refresh_token: str,
-            client_id: str,
-            client_secret: str,
-            nick: str,
-            channels: List[str],
-            is_prime_or_turbo: bool = True,
-            config_file: str = None,
-            user_id: str = None):
+        self,
+        token: str,
+        refresh_token: str,
+        client_id: str,
+        client_secret: str,
+        nick: str,
+        channels: List[str],
+        is_prime_or_turbo: bool = True,
+        config_file: str = None,
+        user_id: str = None,
+    ):
         # User credentials
         self.username = nick
-        self.access_token = token.replace(
-            self.OAUTH_PREFIX,
-            '') if token.startswith(
-            self.OAUTH_PREFIX) else token
+        self.access_token = (
+            token.replace(self.OAUTH_PREFIX, "")
+            if token.startswith(self.OAUTH_PREFIX)
+            else token
+        )
         self.refresh_token = refresh_token
         self.client_id = client_id
         self.client_secret = client_secret
@@ -114,18 +114,20 @@ class TwitchColorBot:
         # Fetch user_id if not set
         if not self.user_id:
             user_info = await self._get_user_info()
-            if user_info and 'id' in user_info:
-                self.user_id = user_info['id']
+            if user_info and "id" in user_info:
+                self.user_id = user_info["id"]
                 print_log(
                     f"✅ {
                         self.username}: Retrieved user_id: {
                         self.user_id}",
-                    BColors.OKGREEN)
+                    BColors.OKGREEN,
+                )
             else:
                 print_log(
                     f"❌ {
                         self.username}: Failed to retrieve user_id",
-                    BColors.FAIL)
+                    BColors.FAIL,
+                )
                 return
 
         # Get current color to avoid repeating it on first change
@@ -135,27 +137,38 @@ class TwitchColorBot:
             print_log(
                 f"✅ {
                     self.username}: Initialized with current color: {current_color}",
-                BColors.OKGREEN)
+                BColors.OKGREEN,
+            )
 
         # Create IRC connection
         self.irc = SimpleTwitchIRC()
-        
+
         # Deduplicate and normalize channels
-        unique_channels = list(dict.fromkeys([ch.lower().replace('#', '') for ch in self.channels]))
-        
+        unique_channels = list(
+            dict.fromkeys([ch.lower().replace("#", "") for ch in self.channels])
+        )
+
         # Check if deduplication changed the channels list
         if unique_channels != self.channels:
-            print_log(f"📝 {self.username}: Deduplicated channels: {len(self.channels)} → {len(unique_channels)}", BColors.OKBLUE)
-            self.channels = unique_channels  # Update bot's channel list with deduplicated channels
-            
+            print_log(
+                f"📝 {self.username}: Deduplicated channels: "
+                f"{len(self.channels)} → {len(unique_channels)}",
+                BColors.OKBLUE,
+            )
+            self.channels = (
+                unique_channels  # Update bot's channel list with deduplicated channels
+            )
+
             # Persist the deduplicated channels to configuration
             self._persist_channel_deduplication()
         else:
-            self.channels = unique_channels  # Update bot's channel list even if no change
-        
+            self.channels = (
+                unique_channels  # Update bot's channel list even if no change
+            )
+
         # Set up all channels in IRC object before connecting
         self.irc.channels = unique_channels.copy()
-        
+
         # Connect to IRC with the first channel
         self.irc.connect(self.access_token, self.username, unique_channels[0])
 
@@ -193,7 +206,9 @@ class TwitchColorBot:
                 await self.token_task
             except asyncio.CancelledError:
                 # Expected when cancelling task - log and re-raise for proper cleanup
-                print_log("Token task cancelled during stop", BColors.OKBLUE, debug_only=True)
+                print_log(
+                    "Token task cancelled during stop", BColors.OKBLUE, debug_only=True
+                )
                 raise
 
         # Disconnect IRC (this sets running=False on IRC object)
@@ -207,7 +222,9 @@ class TwitchColorBot:
             except asyncio.TimeoutError:
                 print_log(
                     f"⚠️ IRC task didn't finish within timeout for {
-                        self.username}", BColors.WARNING)
+                        self.username}",
+                    BColors.WARNING,
+                )
             except Exception as e:
                 print_log(f"⚠️ Error waiting for IRC task: {e}", BColors.WARNING)
 
@@ -227,10 +244,10 @@ class TwitchColorBot:
             except RuntimeError:
                 # Fallback: run in new thread
                 import threading
+
                 threading.Thread(
-                    target=lambda: asyncio.run(
-                        self._change_color()),
-                    daemon=True).start()
+                    target=lambda: asyncio.run(self._change_color()), daemon=True
+                ).start()
 
     def _handle_message(self, sender: str, message: str, channel: str):
         """Handle message (for testing compatibility)"""
@@ -252,15 +269,15 @@ class TwitchColorBot:
 
             except asyncio.CancelledError:
                 print_log(
-                    '⏹️ Token check task cancelled',
-                    BColors.WARNING,
-                    debug_only=True)
+                    "⏹️ Token check task cancelled", BColors.WARNING, debug_only=True
+                )
                 raise
             except Exception as e:
                 print_log(
-                    f'⚠️ Error in periodic token check for {
-                        self.username}: {e}',
-                    BColors.WARNING)
+                    f"⚠️ Error in periodic token check for {
+                        self.username}: {e}",
+                    BColors.WARNING,
+                )
                 # Wait 5 minutes before retrying
                 await asyncio.sleep(300)
 
@@ -279,15 +296,15 @@ class TwitchColorBot:
                 f"activity: {stats['time_since_activity']:.1f}s ago, "
                 f"failures: {stats['connection_failures']}",
                 BColors.OKBLUE,
-                debug_only=True
+                debug_only=True,
             )
 
             # Check if connection is unhealthy
-            if not stats['is_healthy']:
+            if not stats["is_healthy"]:
                 print_log(
                     f"⚠️ {self.username}: IRC connection appears unhealthy - "
                     f"last activity {stats['time_since_activity']:.1f}s ago",
-                    BColors.WARNING
+                    BColors.WARNING,
                 )
 
                 # Attempt to force reconnection
@@ -295,14 +312,15 @@ class TwitchColorBot:
 
         except Exception as e:
             print_log(
-                f"⚠️ Error checking IRC health for {self.username}: {e}",
-                BColors.WARNING
+                f"⚠️ Error checking IRC health for {self.username}: {e}", BColors.WARNING
             )
 
     async def _reconnect_irc(self):
         """Attempt to reconnect IRC connection"""
         try:
-            print_log(f"🔄 {self.username}: Attempting IRC reconnection...", BColors.WARNING)
+            print_log(
+                f"🔄 {self.username}: Attempting IRC reconnection...", BColors.WARNING
+            )
 
             # Cancel current IRC task if running
             if self.irc_task and not self.irc_task.done():
@@ -318,14 +336,15 @@ class TwitchColorBot:
                 loop = asyncio.get_event_loop()
                 self.irc_task = loop.run_in_executor(None, self.irc.listen)
 
-                print_log(f"✅ {self.username}: IRC reconnection successful", BColors.OKGREEN)
+                print_log(
+                    f"✅ {self.username}: IRC reconnection successful", BColors.OKGREEN
+                )
             else:
                 print_log(f"❌ {self.username}: IRC reconnection failed", BColors.FAIL)
 
         except Exception as e:
             print_log(
-                f"❌ Error reconnecting IRC for {self.username}: {e}",
-                BColors.FAIL
+                f"❌ Error reconnecting IRC for {self.username}: {e}", BColors.FAIL
             )
 
     def _get_token_check_interval(self) -> int:
@@ -357,7 +376,8 @@ class TwitchColorBot:
             print_log(
                 f"⚠️ {
                     self.username}: No refresh token available",
-                BColors.WARNING)
+                BColors.WARNING,
+            )
             return False
 
         if force:
@@ -376,11 +396,11 @@ class TwitchColorBot:
 
     # --------------------- Helper methods (complexity reduction) --------------------- #
     def _has_token_expiry(self) -> bool:
-        return bool(getattr(self, 'token_expiry', None))
+        return bool(getattr(self, "token_expiry", None))
 
     def _hours_until_expiry(self) -> float:
         if not self._has_token_expiry() or self.token_expiry is None:
-            return float('inf')
+            return float("inf")
         return (self.token_expiry - datetime.now()).total_seconds() / 3600
 
     async def _force_token_refresh(self, initial: bool = False) -> bool:
@@ -391,7 +411,8 @@ class TwitchColorBot:
             print_log(
                 f"✅ {
                     self.username}: Forced token refresh succeeded",
-                BColors.OKGREEN)
+                BColors.OKGREEN,
+            )
             self._persist_token_changes()
         else:
             print_log(f"❌ {self.username}: Forced token refresh failed", BColors.FAIL)
@@ -403,7 +424,8 @@ class TwitchColorBot:
             f"🔑 {
                 self.username}: Token expires in {
                 hours_remaining:.1f} hours",
-            debug_only=True)
+            debug_only=True,
+        )
 
         # Refresh when less than 1 hour remaining (for ~4 hour tokens)
         # This gives us plenty of buffer while not refreshing too early
@@ -414,13 +436,15 @@ class TwitchColorBot:
                         self.username}: Token expires in {
                         hours_remaining *
                         60:.0f} minutes, refreshing urgently...",
-                    BColors.FAIL)
+                    BColors.FAIL,
+                )
             else:
                 print_log(
                     f"⏰ {
                         self.username}: Token expires in {
                         hours_remaining:.1f} hours, refreshing proactively...",
-                    BColors.WARNING)
+                    BColors.WARNING,
+                )
             return await self._attempt_standard_refresh()
 
         print_log(
@@ -428,7 +452,8 @@ class TwitchColorBot:
                 self.username}: Token is valid and has sufficient time remaining ({
                 hours_remaining:.1f}h)",
             BColors.OKGREEN,
-            debug_only=True)
+            debug_only=True,
+        )
         return True
 
     async def _validate_token_via_api(self) -> bool:
@@ -439,21 +464,24 @@ class TwitchColorBot:
                     f"✅ {
                         self.username}: Token is valid (API check)",
                     BColors.OKGREEN,
-                    debug_only=True)
+                    debug_only=True,
+                )
                 return True
             else:
                 print_log(
                     f"🔍 {
                         self.username}: Token validation failed, attempting refresh...",
                     BColors.WARNING,
-                    debug_only=True)
+                    debug_only=True,
+                )
                 return False
         except Exception as e:  # Broad by design; upstream already categorized.
             print_log(
                 f"🔍 {
                     self.username}: Token validation failed ({e}), attempting refresh...",
                 BColors.WARNING,
-                debug_only=True)
+                debug_only=True,
+            )
             return False
 
     async def _attempt_standard_refresh(self) -> bool:
@@ -462,7 +490,8 @@ class TwitchColorBot:
             print_log(
                 f"✅ {
                     self.username}: Token refreshed and saved successfully",
-                BColors.OKGREEN)
+                BColors.OKGREEN,
+            )
             self._persist_token_changes()
         else:
             print_log(f"❌ {self.username}: Token refresh failed", BColors.FAIL)
@@ -475,18 +504,18 @@ class TwitchColorBot:
     async def _get_user_info_impl(self):
         """Implementation of user info retrieval"""
         # Wait for rate limiting before making request
-        await self.rate_limiter.wait_if_needed('get_user_info', is_user_request=True)
+        await self.rate_limiter.wait_if_needed("get_user_info", is_user_request=True)
 
         try:
             data, status_code, headers = await _make_api_request(
-                'GET', 'users', self.access_token, self.client_id
+                "GET", "users", self.access_token, self.client_id
             )
 
             # Update rate limiting info from response headers
             self.rate_limiter.update_from_headers(headers, is_user_request=True)
 
-            if status_code == 200 and data and data.get('data'):
-                return data['data'][0]
+            if status_code == 200 and data and data.get("data"):
+                return data["data"][0]
             elif status_code == 429:
                 self.rate_limiter.handle_429_error(headers, is_user_request=True)
                 return None
@@ -498,7 +527,8 @@ class TwitchColorBot:
                 logger.error(
                     f"Failed to get user info: {status_code}",
                     user=self.username,
-                    status_code=status_code)
+                    status_code=status_code,
+                )
                 return None
 
         except APIError as e:
@@ -512,9 +542,8 @@ class TwitchColorBot:
             raise
         except Exception as e:
             logger.error(
-                f"Error getting user info: {e}",
-                exc_info=True,
-                user=self.username)
+                f"Error getting user info: {e}", exc_info=True, user=self.username
+            )
             return None
 
     async def _get_current_color(self):
@@ -524,20 +553,30 @@ class TwitchColorBot:
     async def _get_current_color_impl(self):
         """Implementation of current color retrieval"""
         # Wait for rate limiting before making request
-        await self.rate_limiter.wait_if_needed('get_current_color', is_user_request=True)
+        await self.rate_limiter.wait_if_needed(
+            "get_current_color", is_user_request=True
+        )
 
         try:
-            params = {'user_id': self.user_id}
+            params = {"user_id": self.user_id}
             data, status_code, headers = await _make_api_request(
-                'GET', CHAT_COLOR_ENDPOINT, self.access_token, self.client_id, params=params
+                "GET",
+                CHAT_COLOR_ENDPOINT,
+                self.access_token,
+                self.client_id,
+                params=params,
             )
 
             # Update rate limiting info from response headers
             self.rate_limiter.update_from_headers(headers, is_user_request=True)
 
-            if status_code == 200 and data and data.get(
-                    'data') and len(data['data']) > 0:
-                color = data['data'][0].get('color')
+            if (
+                status_code == 200
+                and data
+                and data.get("data")
+                and len(data["data"]) > 0
+            ):
+                color = data["data"][0].get("color")
                 if color:
                     logger.info(f"Current color is {color}", user=self.username)
                     return color
@@ -558,54 +597,58 @@ class TwitchColorBot:
 
     def _persist_token_changes(self):
         """Persist token changes to configuration file"""
-        if hasattr(self, 'config_file') and self.config_file:
+        if hasattr(self, "config_file") and self.config_file:
             user_config = {
-                'username': self.username,
-                'client_id': self.client_id,
-                'client_secret': self.client_secret,
-                'access_token': self.access_token,
-                'refresh_token': self.refresh_token,
-                'channels': getattr(self, 'channels', [self.username.lower()]),
-                'is_prime_or_turbo': self.use_random_colors  # Preserve the current setting
+                "username": self.username,
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "access_token": self.access_token,
+                "refresh_token": self.refresh_token,
+                "channels": getattr(self, "channels", [self.username.lower()]),
+                "is_prime_or_turbo": self.use_random_colors,  # Preserve the current setting
             }
             try:
                 update_user_in_config(user_config, self.config_file)
                 print_log(
                     f"💾 {
                         self.username}: Token changes saved to configuration",
-                    BColors.OKGREEN)
+                    BColors.OKGREEN,
+                )
             except Exception as e:
                 print_log(
                     f"⚠️ {
                         self.username}: Failed to save token changes: {e}",
-                    BColors.WARNING)
+                    BColors.WARNING,
+                )
 
     def _persist_channel_deduplication(self):
         """Persist deduplicated channels to configuration file"""
-        if hasattr(self, 'config_file') and self.config_file:
+        if hasattr(self, "config_file") and self.config_file:
             user_config = {
-                'username': self.username,
-                'client_id': self.client_id,
-                'client_secret': self.client_secret,
-                'access_token': self.access_token,
-                'refresh_token': self.refresh_token,
-                'channels': self.channels,  # Use the deduplicated channels
-                'is_prime_or_turbo': self.use_random_colors
+                "username": self.username,
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "access_token": self.access_token,
+                "refresh_token": self.refresh_token,
+                "channels": self.channels,  # Use the deduplicated channels
+                "is_prime_or_turbo": self.use_random_colors,
             }
             try:
                 update_user_in_config(user_config, self.config_file)
                 print_log(
                     f"💾 {self.username}: Deduplicated channels saved to configuration",
-                    BColors.OKGREEN)
+                    BColors.OKGREEN,
+                )
             except Exception as e:
                 print_log(
                     f"⚠️ {self.username}: Failed to save deduplicated channels: {e}",
-                    BColors.WARNING)
+                    BColors.WARNING,
+                )
 
     async def _change_color(self, hex_color=None):
         """Change the username color via Twitch API"""
         # Wait for rate limiting before making request
-        await self.rate_limiter.wait_if_needed('change_color', is_user_request=True)
+        await self.rate_limiter.wait_if_needed("change_color", is_user_request=True)
 
         if hex_color:
             # Use the provided hex color
@@ -623,9 +666,8 @@ class TwitchColorBot:
             return success
         except Exception as e:
             logger.error(
-                f"Error changing color: {e}",
-                exc_info=True,
-                user=self.username)
+                f"Error changing color: {e}", exc_info=True, user=self.username
+            )
             return False
 
     def _select_color(self):
@@ -640,14 +682,18 @@ class TwitchColorBot:
     async def _attempt_color_change(self, color):
         """Attempt to change color and handle the response"""
         try:
-            params = {'user_id': self.user_id, 'color': color}
+            params = {"user_id": self.user_id, "color": color}
 
             try:
                 _, status_code, headers = await asyncio.wait_for(
                     _make_api_request(
-                        'PUT', CHAT_COLOR_ENDPOINT, self.access_token, self.client_id, params=params
+                        "PUT",
+                        CHAT_COLOR_ENDPOINT,
+                        self.access_token,
+                        self.client_id,
+                        params=params,
                     ),
-                    timeout=10
+                    timeout=10,
                 )
             except asyncio.TimeoutError:
                 logger.error("Failed to change color (timeout)", user=self.username)
@@ -671,24 +717,29 @@ class TwitchColorBot:
             return True
         elif status_code == 429:
             self.rate_limiter.handle_429_error(
-                {}, is_user_request=True)  # headers were already processed
+                {}, is_user_request=True
+            )  # headers were already processed
             logger.warning("Rate limited, will retry automatically", user=self.username)
             return False
         else:
             logger.error(
                 f"Failed to change color. Status: {status_code}",
                 user=self.username,
-                status_code=status_code)
+                status_code=status_code,
+            )
             return False
 
     def _handle_api_error(self, e):
         """Handle API errors, specifically the Turbo/Prime requirement error"""
         error_text = str(e)
-        if ("Turbo or Prime user" in error_text or "Hex color code" in error_text) and self.use_random_colors:
+        if (
+            "Turbo or Prime user" in error_text or "Hex color code" in error_text
+        ) and self.use_random_colors:
             logger.warning(
                 f"User {self.username} requires Turbo/Prime for hex colors. "
                 "Disabling random colors and using preset colors.",
-                user=self.username)
+                user=self.username,
+            )
 
             # Disable random colors for this user
             self.use_random_colors = False
@@ -699,31 +750,37 @@ class TwitchColorBot:
                     logger.info(
                         f"Disabled random colors for {
                             self.username} in configuration",
-                        user=self.username)
+                        user=self.username,
+                    )
                 else:
                     logger.warning(
                         f"Failed to persist random color setting change for {
-                            self.username}", user=self.username)
+                            self.username}",
+                        user=self.username,
+                    )
 
             return False  # Indicate that fallback is needed
         else:
             logger.error(
-                f"Error changing color: {e}",
-                exc_info=True,
-                user=self.username)
+                f"Error changing color: {e}", exc_info=True, user=self.username
+            )
             return False
 
     async def _try_preset_color_fallback(self):
         """Try changing color with preset colors as fallback"""
         try:
             color = get_different_twitch_color(exclude_color=self.last_color)
-            params = {'user_id': self.user_id, 'color': color}
+            params = {"user_id": self.user_id, "color": color}
 
             _, status_code, headers = await asyncio.wait_for(
                 _make_api_request(
-                    'PUT', CHAT_COLOR_ENDPOINT, self.access_token, self.client_id, params=params
+                    "PUT",
+                    CHAT_COLOR_ENDPOINT,
+                    self.access_token,
+                    self.client_id,
+                    params=params,
                 ),
-                timeout=10
+                timeout=10,
             )
 
             # Update rate limiting info from response headers
@@ -735,20 +792,23 @@ class TwitchColorBot:
                 rate_status = self._get_rate_limit_display()
                 logger.info(
                     f"Color changed to {color} (using preset colors){rate_status}",
-                    user=self.username)
+                    user=self.username,
+                )
                 return True
             else:
                 logger.error(
                     f"Failed to change color with preset color. Status: {status_code}",
                     user=self.username,
-                    status_code=status_code)
+                    status_code=status_code,
+                )
                 return False
 
         except Exception as fallback_e:
             logger.error(
                 f"Error changing color with preset color fallback: {fallback_e}",
                 exc_info=True,
-                user=self.username)
+                user=self.username,
+            )
             return False
 
     def _get_rate_limit_display(self):
@@ -787,31 +847,35 @@ class TwitchColorBot:
     async def _refresh_access_token_impl(self):
         """Implementation of token refresh"""
         token_data = {
-            'grant_type': 'refresh_token',
-            'refresh_token': self.refresh_token,
-            'client_id': self.client_id,
-            'client_secret': self.client_secret
+            "grant_type": "refresh_token",
+            "refresh_token": self.refresh_token,
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
         }
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post('https://id.twitch.tv/oauth2/token', data=token_data) as response:
+                async with session.post(
+                    "https://id.twitch.tv/oauth2/token", data=token_data
+                ) as response:
                     if response.status == 200:
                         token_response = await response.json()
-                        self.access_token = token_response['access_token']
+                        self.access_token = token_response["access_token"]
 
                         # Update refresh token if provided
-                        if 'refresh_token' in token_response:
-                            self.refresh_token = token_response['refresh_token']
+                        if "refresh_token" in token_response:
+                            self.refresh_token = token_response["refresh_token"]
 
                         # Set token expiry if provided
-                        if 'expires_in' in token_response:
-                            self.token_expiry = datetime.now(
-                            ) + timedelta(seconds=token_response['expires_in'])
+                        if "expires_in" in token_response:
+                            self.token_expiry = datetime.now() + timedelta(
+                                seconds=token_response["expires_in"]
+                            )
                             logger.info(
                                 f"Token will expire at {
                                     self.token_expiry.strftime('%Y-%m-%d %H:%M:%S')}",
-                                user=self.username)
+                                user=self.username,
+                            )
 
                         return True
                     else:
@@ -820,14 +884,14 @@ class TwitchColorBot:
                             f"Token refresh failed. Status: {
                                 response.status}, Response: {error_text}",
                             user=self.username,
-                            status_code=response.status)
+                            status_code=response.status,
+                        )
                 return False
 
         except Exception as e:
             logger.error(
-                f"Error refreshing token: {e}",
-                exc_info=True,
-                user=self.username)
+                f"Error refreshing token: {e}", exc_info=True, user=self.username
+            )
             return False
 
     def close(self):
@@ -836,7 +900,8 @@ class TwitchColorBot:
             f"🛑 Closing bot for {
                 self.username}",
             BColors.WARNING,
-            debug_only=False)
+            debug_only=False,
+        )
         self.running = False
 
         if self.irc:
@@ -849,4 +914,5 @@ class TwitchColorBot:
             f"📊 {
                 self.username}: Messages sent: {
                 self.messages_sent}, Colors changed: {
-                self.colors_changed}")
+                self.colors_changed}"
+        )

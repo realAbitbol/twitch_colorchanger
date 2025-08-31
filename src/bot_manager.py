@@ -39,7 +39,8 @@ class BotManager:
                 print_log(
                     f"❌ Failed to create bot for user {
                         user_config['username']}: {e}",
-                    BColors.FAIL)
+                    BColors.FAIL,
+                )
                 continue
 
         if not self.bots:
@@ -67,20 +68,20 @@ class BotManager:
 
     def _create_bot(self, user_config: Dict[str, Any]) -> TwitchColorBot:
         """Create a bot instance from user configuration"""
-        username = user_config['username']
-        token = user_config['access_token']
+        username = user_config["username"]
+        token = user_config["access_token"]
 
         try:
             bot = TwitchColorBot(
                 token=token,
-                refresh_token=user_config.get('refresh_token', ''),
-                client_id=user_config.get('client_id', ''),
-                client_secret=user_config.get('client_secret', ''),
+                refresh_token=user_config.get("refresh_token", ""),
+                client_id=user_config.get("client_id", ""),
+                client_secret=user_config.get("client_secret", ""),
                 nick=username,
-                channels=user_config['channels'],
-                is_prime_or_turbo=user_config.get('is_prime_or_turbo', True),
+                channels=user_config["channels"],
+                is_prime_or_turbo=user_config.get("is_prime_or_turbo", True),
                 config_file=self.config_file,
-                user_id=None  # Will be fetched by the bot itself
+                user_id=None,  # Will be fetched by the bot itself
             )
 
             print_log(f"✅ Bot created for {username}", BColors.OKGREEN)
@@ -141,7 +142,7 @@ class BotManager:
         """Public method to stop the bot manager"""
         self.shutdown_initiated = True
         # Create a task to stop bots (don't await in sync context)
-        if hasattr(asyncio, '_get_running_loop'):
+        if hasattr(asyncio, "_get_running_loop"):
             try:
                 loop = asyncio.get_running_loop()
                 loop.create_task(self._stop_all_bots())
@@ -240,20 +241,22 @@ class BotManager:
             f"time_since_activity={stats['time_since_activity']:.1f}s, "
             f"consecutive_ping_failures={stats['consecutive_ping_failures']}, "
             f"connection_failures={stats['connection_failures']}",
-            BColors.WARNING
+            BColors.WARNING,
         )
 
     async def _reconnect_unhealthy_bots(self, unhealthy_bots):
         """Attempt to reconnect all unhealthy bots"""
         print_log(
             f"🔧 Attempting to reconnect {len(unhealthy_bots)} unhealthy bot(s)...",
-            BColors.WARNING
+            BColors.WARNING,
         )
 
         for bot in unhealthy_bots:
             success = await self._attempt_bot_reconnection(bot)
             if success:
-                print_log(f"✅ Successfully reconnected {bot.username}", BColors.OKGREEN)
+                print_log(
+                    f"✅ Successfully reconnected {bot.username}", BColors.OKGREEN
+                )
             else:
                 print_log(f"❌ Failed to reconnect {bot.username}", BColors.FAIL)
 
@@ -261,7 +264,9 @@ class BotManager:
         """Attempt to reconnect a bot's IRC connection"""
         try:
             if not bot.irc:
-                print_log(f"❌ {bot.username}: No IRC connection to reconnect", BColors.FAIL)
+                print_log(
+                    f"❌ {bot.username}: No IRC connection to reconnect", BColors.FAIL
+                )
                 return False
 
             # Force reconnection in the IRC client
@@ -277,7 +282,7 @@ class BotManager:
                 else:
                     print_log(
                         f"⚠️ {bot.username}: Reconnection succeeded but health check still fails",
-                        BColors.WARNING
+                        BColors.WARNING,
                     )
                     return False
             else:
@@ -302,14 +307,15 @@ class BotManager:
         stats = {}
         for bot in self.bots:
             stats[bot.username] = {
-                'messages_sent': bot.messages_sent,
-                'colors_changed': bot.colors_changed
+                "messages_sent": bot.messages_sent,
+                "colors_changed": bot.colors_changed,
             }
         print_log(
             f"💾 Saved statistics for {
                 len(stats)} bot(s)",
             BColors.OKCYAN,
-            debug_only=True)
+            debug_only=True,
+        )
         return stats
 
     def _restore_statistics(self, saved_stats: Dict[str, Dict[str, int]]):
@@ -317,15 +323,16 @@ class BotManager:
         restored_count = 0
         for bot in self.bots:
             if bot.username in saved_stats:
-                bot.messages_sent = saved_stats[bot.username]['messages_sent']
-                bot.colors_changed = saved_stats[bot.username]['colors_changed']
+                bot.messages_sent = saved_stats[bot.username]["messages_sent"]
+                bot.colors_changed = saved_stats[bot.username]["colors_changed"]
                 restored_count += 1
 
         if restored_count > 0:
             print_log(
                 f"🔄 Restored statistics for {restored_count} bot(s)",
                 BColors.OKGREEN,
-                debug_only=True)
+                debug_only=True,
+            )
 
     def print_statistics(self):
         """Print statistics for all bots"""
@@ -349,10 +356,12 @@ class BotManager:
 
     def setup_signal_handlers(self):
         """Setup signal handlers for graceful shutdown"""
+
         def signal_handler(signum, _frame):
             print_log(
                 f"\n🔔 Received signal {signum}, initiating graceful shutdown...",
-                BColors.WARNING)
+                BColors.WARNING,
+            )
             self.shutdown_initiated = True
             # Save the task to prevent garbage collection (intentionally not awaited
             # in signal handler)
@@ -387,7 +396,8 @@ async def _setup_config_watcher(manager: BotManager, config_file: str = None):
     except ImportError:
         print_log(
             "⚠️ Config file watching not available (install 'watchdog' package for this feature)",
-            BColors.WARNING)
+            BColors.WARNING,
+        )
         return None
     except Exception as e:
         print_log(f"⚠️ Failed to start config watcher: {e}", BColors.WARNING)
@@ -411,7 +421,8 @@ async def _run_main_loop(manager: BotManager):
             if not success:
                 print_log(
                     "❌ Failed to restart bots, continuing with previous configuration",
-                    BColors.FAIL)
+                    BColors.FAIL,
+                )
             continue
 
         # Check if all tasks have completed
@@ -420,10 +431,11 @@ async def _run_main_loop(manager: BotManager):
             print_log("\n⚠️ All bot tasks have completed unexpectedly", BColors.WARNING)
             print_log(
                 "💡 This usually means authentication failed or connection issues",
-                BColors.OKCYAN)
+                BColors.OKCYAN,
+            )
             print_log(
-                "🔧 Please verify your Twitch API credentials are valid",
-                BColors.OKCYAN)
+                "🔧 Please verify your Twitch API credentials are valid", BColors.OKCYAN
+            )
             break
 
 
@@ -435,6 +447,7 @@ def _cleanup_watcher(watcher):
     # Clear global watcher reference
     try:
         from .watcher_globals import set_global_watcher
+
         set_global_watcher(None)
     except ImportError:
         pass
@@ -458,11 +471,12 @@ async def run_bots(users_config: List[Dict[str, Any]], config_file: str = None):
 
         print_log("\n🎮 Bots are running! Press Ctrl+C to stop.", BColors.HEADER)
         print_log(
-            "💬 Start chatting in your channels to see color changes!",
-            BColors.OKBLUE)
+            "💬 Start chatting in your channels to see color changes!", BColors.OKBLUE
+        )
         print_log(
             "⚠️ Note: If bots exit quickly, check your Twitch credentials",
-            BColors.WARNING)
+            BColors.WARNING,
+        )
 
         # Run main loop
         await _run_main_loop(manager)

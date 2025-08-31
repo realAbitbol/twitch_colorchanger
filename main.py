@@ -23,7 +23,7 @@ async def main():
         print_instructions()
 
         # Get config file path for token saving
-        config_file = os.environ.get('TWITCH_CONF_FILE', "twitch_colorchanger.conf")
+        config_file = os.environ.get("TWITCH_CONF_FILE", "twitch_colorchanger.conf")
 
         # Get configuration from config file
         users_config = get_configuration()
@@ -53,7 +53,9 @@ if __name__ == "__main__":
         logger.info("🏥 Health check mode")
         try:
             users_config = get_configuration()
-            logger.info(f"✅ Health check passed - {len(users_config)} user(s) configured")
+            logger.info(
+                f"✅ Health check passed - {len(users_config)} user(s) configured"
+            )
             sys.exit(0)
         except Exception as e:
             logger.error(f"❌ Health check failed: {e}")
