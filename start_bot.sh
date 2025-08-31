@@ -92,7 +92,7 @@ fi
 
 # Start the bot
 echo "Starting the bot..."
-$PYTHON_CMD main.py
+$PYTHON_CMD -m src.main
 
 # Check exit status
 if [ $? -ne 0 ]; then

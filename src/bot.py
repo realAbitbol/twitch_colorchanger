@@ -4,6 +4,7 @@ Main bot class for Twitch color changing functionality
 
 import asyncio
 import json
+import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Tuple
 
@@ -255,17 +256,30 @@ class TwitchColorBot:
 
     async def _periodic_token_check(self):
         """Periodically check and refresh token if needed"""
+        last_irc_check = 0
+        last_token_check = 0
+        irc_check_interval = 120  # Check IRC health every 2 minutes
+        
         while self.running:
             try:
-                # Dynamic check interval based on token expiry
-                check_interval = self._get_token_check_interval()
-                await asyncio.sleep(check_interval)
+                # Sleep for the IRC check interval (shorter of the two)
+                await asyncio.sleep(irc_check_interval)
+                # Capture current time first so the line is always executed (improves testability)
+                current_time = time.time()
 
-                if self.running:  # Check if still running after sleep
-                    await self._check_and_refresh_token()
-
-                    # Also check IRC connection health
+                if not self.running:  # Check if still running after sleep
+                    break
+                
+                # Always check IRC health every 2 minutes
+                if current_time - last_irc_check >= irc_check_interval:
                     await self._check_irc_health()
+                    last_irc_check = current_time
+
+                # Check if it's time for token check based on dynamic interval
+                token_check_interval = self._get_token_check_interval()
+                if current_time - last_token_check >= token_check_interval:
+                    await self._check_and_refresh_token()
+                    last_token_check = current_time
 
             except asyncio.CancelledError:
                 print_log(
@@ -294,7 +308,7 @@ class TwitchColorBot:
             print_log(
                 f"🏥 {self.username} IRC health: {stats['is_healthy']}, "
                 f"activity: {stats['time_since_activity']:.1f}s ago, "
-                f"failures: {stats['connection_failures']}",
+                f"connected: {stats['connected']}, running: {stats['running']}",
                 BColors.OKBLUE,
                 debug_only=True,
             )

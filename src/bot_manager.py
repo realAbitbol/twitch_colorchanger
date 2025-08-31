@@ -239,8 +239,8 @@ class BotManager:
         print_log(
             f"📊 {bot.username} health stats: "
             f"time_since_activity={stats['time_since_activity']:.1f}s, "
-            f"consecutive_ping_failures={stats['consecutive_ping_failures']}, "
-            f"connection_failures={stats['connection_failures']}",
+            f"connected={stats['connected']}, "
+            f"running={stats['running']}",
             BColors.WARNING,
         )
 

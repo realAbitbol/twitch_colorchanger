@@ -24,7 +24,6 @@ RUN pip install --no-cache-dir -r requirements.txt && \
     fi
 
 # Copy application files
-COPY main.py .
 COPY src/ ./src/
 
 # Create config directory and set permissions
@@ -43,6 +42,6 @@ VOLUME ["/app/config"]
 
 # Optimized healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD python -c "import os,json,subprocess,sys; cf=os.environ.get('TWITCH_CONF_FILE','/app/config/twitch_colorchanger.conf'); f=open(cf); c=json.load(f); f.close(); sys.exit(0 if c.get('users') and subprocess.run(['pgrep','-f','python.*main.py'],capture_output=True).returncode==0 else 1)" || exit 1
+    CMD python -c "import os,json,subprocess,sys; cf=os.environ.get('TWITCH_CONF_FILE','/app/config/twitch_colorchanger.conf'); f=open(cf); c=json.load(f); f.close(); sys.exit(0 if c.get('users') and subprocess.run(['pgrep','-f','python.*src/main.py'],capture_output=True).returncode==0 else 1)" || exit 1
 
-CMD ["python", "main.py"]
+CMD ["python", "-m", "src.main"]

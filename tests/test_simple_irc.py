@@ -809,16 +809,10 @@ class TestIRCHealthMonitoring:
 
     def test_health_monitoring_initialization(self, irc_client):
         """Test health monitoring fields are initialized"""
-        assert irc_client.last_client_ping_sent == 0
-        assert irc_client.last_pong_received == 0
         assert irc_client.last_server_activity == 0
         assert irc_client.last_ping_from_server == 0
         assert irc_client.server_activity_timeout == 300
         assert irc_client.expected_ping_interval == 270
-        assert irc_client.client_ping_interval == 300
-        assert irc_client.pong_timeout == 15
-        assert irc_client.consecutive_ping_failures == 0
-        assert irc_client.max_consecutive_ping_failures == 3
 
     def test_handle_pong(self, irc_client):
         """Test PONG message handling"""
@@ -828,84 +822,17 @@ class TestIRCHealthMonitoring:
             with patch("src.simple_irc.print_log"):
                 irc_client._handle_pong("PONG :tmi.twitch.tv")
 
-        assert irc_client.last_pong_received == test_time
         assert irc_client.last_server_activity == test_time
-
-    def test_send_client_ping_success(self, irc_client):
-        """Test successful client PING sending"""
-        mock_socket = MagicMock()
-        irc_client.sock = mock_socket
-        irc_client.connected = True
-
-        test_time = time.time()
-        with patch("src.simple_irc.time.time", return_value=test_time):
-            with patch("src.simple_irc.print_log"):
-                result = irc_client._send_client_ping()
-
-        assert result is True
-        assert irc_client.last_client_ping_sent == test_time
-        mock_socket.send.assert_called_once()
-
-    def test_send_client_ping_failure(self, irc_client):
-        """Test client PING sending failure"""
-        mock_socket = MagicMock()
-        mock_socket.send.side_effect = Exception("Send failed")
-        irc_client.sock = mock_socket
-        irc_client.connected = True
-
-        with patch("src.simple_irc.print_log"):
-            result = irc_client._send_client_ping()
-
-        assert result is False
-
-    def test_send_client_ping_not_connected(self, irc_client):
-        """Test client PING sending when not connected"""
-        result = irc_client._send_client_ping()
-        assert result is False
 
     def test_check_connection_health_healthy(self, irc_client):
         """Test connection health check when healthy"""
         now = time.time()
         irc_client.last_server_activity = now - 30  # 30 seconds ago
-        irc_client.last_pong_received = now
-        irc_client.last_client_ping_sent = now - 10
         irc_client.last_ping_from_server = now - 100
 
         with patch("src.simple_irc.time.time", return_value=now):
             result = irc_client._check_connection_health()
 
-        assert result is True
-
-    def test_check_connection_health_pong_timeout(self, irc_client):
-        """Test connection health check with PONG timeout"""
-        now = time.time()
-        irc_client.last_client_ping_sent = now - 20  # 20 seconds ago
-        irc_client.last_pong_received = now - 30  # 30 seconds ago
-        irc_client.pong_timeout = 15  # Expect PONG within 15 seconds
-        irc_client.last_server_activity = now - 10  # Recent activity
-
-        with patch("src.simple_irc.time.time", return_value=now):
-            with patch("src.simple_irc.print_log"):
-                result = irc_client._check_connection_health()
-
-        assert result is False
-
-    def test_check_connection_health_send_client_ping(self, irc_client):
-        """Test connection health check sends client PING when needed"""
-        now = time.time()
-        irc_client.last_server_activity = now - 30  # Recent activity
-        irc_client.last_client_ping_sent = now - 310  # > client_ping_interval
-        irc_client.last_pong_received = now - 50  # Before last ping
-        irc_client.client_ping_interval = 300
-        irc_client.consecutive_ping_failures = 0  # No previous failures
-
-        with patch("src.simple_irc.time.time", return_value=now):
-            with patch.object(
-                irc_client, "_send_client_ping", return_value=True
-            ) as mock_send_ping:
-                result = irc_client._check_connection_health()
-
-        mock_send_ping.assert_called_once()
         assert result is True
 
     def test_is_connection_stale_activity_timeout(self, irc_client):
@@ -919,25 +846,11 @@ class TestIRCHealthMonitoring:
 
         assert result is True
 
-    def test_is_connection_stale_pong_timeout(self, irc_client):
-        """Test stale connection detection by PONG timeout"""
-        now = time.time()
-        irc_client.last_client_ping_sent = now - 20
-        irc_client.last_pong_received = now - 30
-        irc_client.pong_timeout = 15
-        irc_client.last_server_activity = now - 10  # Recent activity
-
-        with patch("src.simple_irc.time.time", return_value=now):
-            result = irc_client._is_connection_stale()
-
-        assert result is True
-
     def test_is_connection_stale_healthy(self, irc_client):
         """Test stale connection detection when healthy"""
         now = time.time()
         irc_client.last_server_activity = now - 30
-        irc_client.last_client_ping_sent = now - 10
-        irc_client.last_pong_received = now - 5
+        irc_client.last_ping_from_server = now - 5
 
         with patch("src.simple_irc.time.time", return_value=now):
             result = irc_client._is_connection_stale()
@@ -1031,9 +944,6 @@ class TestIRCHealthMonitoring:
         irc_client.running = True
         irc_client.last_server_activity = now - 30
         irc_client.last_ping_from_server = now - 100
-        irc_client.last_client_ping_sent = now - 50
-        irc_client.last_pong_received = now - 40
-        irc_client.consecutive_ping_failures = 1
 
         with patch("src.simple_irc.time.time", return_value=now):
             with patch.object(irc_client, "is_healthy", return_value=True):
@@ -1043,9 +953,7 @@ class TestIRCHealthMonitoring:
         assert stats["running"] is True
         assert stats["last_server_activity"] == now - 30
         assert stats["time_since_activity"] == 30
-        assert stats["last_client_ping_sent"] == now - 50
-        assert stats["last_pong_received"] == now - 40
-        assert stats["consecutive_ping_failures"] == 1
+        assert stats["last_ping_from_server"] == now - 100
         assert stats["is_healthy"] is True
 
     def test_force_reconnect_success(self, irc_client):
@@ -1123,7 +1031,8 @@ class TestBotIRCHealthIntegration:
         mock_irc.get_connection_stats.return_value = {
             "is_healthy": False,
             "time_since_activity": 150.0,
-            "connection_failures": 2,
+            "connected": True,
+            "running": True,
         }
         bot.irc = mock_irc
 
@@ -1216,18 +1125,16 @@ class TestBotIRCHealthIntegration:
         bot = TwitchColorBot(**bot_config)
         bot.running = True
 
-        check_count = 0
-
+        # Create a mock that tracks calls and stops the loop
+        irc_called = False
+        
         async def mock_token_check():
-            nonlocal check_count
-            check_count += 1
-            if check_count >= 2:
-                bot.running = False  # Stop after 2 iterations
-            await asyncio.sleep(0.01)  # Simulate async work
-            return True
+            await asyncio.sleep(0.001)
 
         async def mock_irc_check():
-            # Mock IRC health check - no actual work needed
+            nonlocal irc_called
+            irc_called = True
+            bot.running = False  # Stop the loop
             await asyncio.sleep(0.001)
 
         with patch.object(
@@ -1236,14 +1143,23 @@ class TestBotIRCHealthIntegration:
             with patch.object(
                 bot, "_check_irc_health", side_effect=mock_irc_check
             ) as mock_irc_health:
-                with patch.object(bot, "_get_token_check_interval", return_value=0.01):
-                    try:
-                        await asyncio.wait_for(bot._periodic_token_check(), timeout=1.0)
-                    except asyncio.TimeoutError:
-                        bot.running = False
+                with patch.object(bot, "_get_token_check_interval", return_value=600):
+                    # Override the sleep to make IRC check immediate
+                    original_sleep = asyncio.sleep
+                    async def fast_sleep(delay):
+                        if delay == 120:  # IRC check interval
+                            await original_sleep(0.001)  # Make it immediate
+                        else:
+                            await original_sleep(delay)
+                    
+                    with patch("asyncio.sleep", side_effect=fast_sleep):
+                        try:
+                            await asyncio.wait_for(bot._periodic_token_check(), timeout=1.0)
+                        except asyncio.TimeoutError:
+                            bot.running = False
 
         # Should have called IRC health check
-        assert mock_irc_health.call_count >= 1
+        assert irc_called or mock_irc_health.call_count >= 1
 
 
 class TestFinalCoverage:
@@ -1334,115 +1250,15 @@ class TestIRCHealthMonitoringCoverage:
         irc.channels = ["#testchannel"]
         return irc
 
-    def test_handle_pong_with_pending_client_ping(self, irc_client):
-        """Test handling PONG when we have a pending client ping"""
-        now = time.time()
-        irc_client.last_client_ping_sent = now - 5  # Sent 5 seconds ago
-        irc_client.last_pong_received = now - 10  # Older pong
-        irc_client.consecutive_ping_failures = 2
-
-        irc_client._handle_pong("PONG :tmi.twitch.tv")
-
-        # Should update last_pong_received and reset failures
-        assert irc_client.last_pong_received > now - 1  # Recent
-        assert irc_client.consecutive_ping_failures == 0
-
-    def test_handle_pong_without_pending_client_ping(self, irc_client):
-        """Test handling PONG when no client ping is pending"""
-        now = time.time()
-        irc_client.last_client_ping_sent = 0  # No client ping sent yet
-        irc_client.last_pong_received = now - 5  # Older pong
-        irc_client.consecutive_ping_failures = 1
-
-        irc_client._handle_pong("PONG :tmi.twitch.tv")
-
-        # Should still update last_pong_received but not reset failures (since no client ping was sent)
-        assert irc_client.last_pong_received > now - 1  # Recent
-        assert irc_client.consecutive_ping_failures == 1  # Should remain unchanged
-
-    def test_send_client_ping_socket_send_exception(self, irc_client):
-        """Test client ping when socket send raises exception"""
-        irc_client.socket = MagicMock()
-        irc_client.socket.send.side_effect = Exception("Send failed")
-
-        result = irc_client._send_client_ping()
-
-        assert result is False
-
-    def test_check_connection_health_max_ping_failures(self, irc_client):
-        """Test connection health when max ping failures reached"""
-        now = time.time()
-        irc_client.last_server_activity = now - 30  # Recent activity
-        irc_client.consecutive_ping_failures = 3  # At max
-        irc_client.max_consecutive_ping_failures = 3
-
-        result = irc_client._check_connection_health()
-
-        assert result is False
-
-    def test_check_connection_health_pending_pong_timeout(self, irc_client):
-        """Test connection health when pending PONG times out"""
-        now = time.time()
-        irc_client.last_server_activity = now - 30  # Recent activity
-        irc_client.consecutive_ping_failures = 0
-        irc_client.last_client_ping_sent = now - 5  # Recent ping
-        irc_client.last_pong_received = now - 20  # Older pong (so ping is pending)
-        irc_client.pong_timeout = 3  # 3 second timeout
-
-        with patch("src.simple_irc.time.time", return_value=now):
-            result = irc_client._check_connection_health()
-
-        assert result is False
-        assert irc_client.consecutive_ping_failures == 1  # Should increment
-
     def test_check_connection_health_server_ping_timeout(self, irc_client):
         """Test connection health when server ping times out"""
         now = time.time()
         irc_client.last_server_activity = now - 30  # Recent activity
-        irc_client.consecutive_ping_failures = 0
         irc_client.last_ping_from_server = now - 310  # 310 seconds ago
         irc_client.expected_ping_interval = 300  # Expected every 300 seconds
 
         result = irc_client._check_connection_health()
 
-        assert result is False
-
-    def test_check_connection_health_triggers_client_ping(self, irc_client):
-        """Test connection health triggers client ping when needed"""
-        now = time.time()
-        irc_client.last_server_activity = now - 30  # Recent activity
-        irc_client.last_client_ping_sent = now - 310  # 310 seconds ago
-        irc_client.last_pong_received = now - 300  # Received PONG for previous ping
-        irc_client.client_ping_interval = 300  # Send every 300 seconds
-        irc_client.consecutive_ping_failures = 0
-        irc_client.last_ping_from_server = now - 100  # Recent server ping
-
-        with patch("src.simple_irc.time.time", return_value=now):
-            with patch.object(
-                irc_client, "_send_client_ping", return_value=True
-            ) as mock_ping:
-                result = irc_client._check_connection_health()
-
-        mock_ping.assert_called_once()
-        assert result is True
-
-    def test_check_connection_health_client_ping_fails(self, irc_client):
-        """Test connection health when client ping fails"""
-        now = time.time()
-        irc_client.last_server_activity = now - 30  # Recent activity
-        irc_client.last_client_ping_sent = now - 310  # 310 seconds ago
-        irc_client.last_pong_received = now - 300  # Received PONG for previous ping
-        irc_client.client_ping_interval = 300  # Send every 300 seconds
-        irc_client.consecutive_ping_failures = 0
-        irc_client.last_ping_from_server = now - 100  # Recent server ping
-
-        with patch("src.simple_irc.time.time", return_value=now):
-            with patch.object(
-                irc_client, "_send_client_ping", return_value=False
-            ) as mock_ping:
-                result = irc_client._check_connection_health()
-
-        mock_ping.assert_called_once()
         assert result is False
 
 

@@ -74,7 +74,7 @@ if exist "requirements.txt" (
 
 REM Start the bot
 echo Starting the bot...
-%PYTHON_CMD% main.py
+%PYTHON_CMD% -m src.main
 
 REM Keep window open if there's an error
 if %errorlevel% neq 0 (
