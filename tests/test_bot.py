@@ -2063,3 +2063,80 @@ class TestBotBranchCoverage:
             assert bot.refresh_token == 'new_refresh'
             # token_expiry should remain None since expires_in not in response
             assert bot.token_expiry is None
+
+
+class TestBotMissingCoverage:
+    """Tests for missing coverage in bot.py IRC reconnection scenarios"""
+
+    @pytest.mark.asyncio
+    async def test_reconnect_irc_wait_for_timeout(self):
+        """Test IRC reconnection when waiting for a task times out"""
+        bot = TwitchColorBot(
+            token='oauth:token123',
+            refresh_token='refresh123',
+            client_id='client123',
+            client_secret='secret123',
+            nick='testuser',
+            channels=['testchannel']
+        )
+        bot.running = True
+        bot.user_id = 'user123'
+
+        mock_irc = MagicMock()
+        mock_irc.force_reconnect.return_value = True
+        bot.irc = mock_irc
+        bot.rate_limiter = MagicMock()
+
+        # Create mock task that won't complete
+        mock_task = MagicMock()
+        mock_task.done.return_value = False
+        bot.irc_task = mock_task
+
+        with patch('src.bot.asyncio.wait_for', side_effect=asyncio.TimeoutError):
+            with patch('src.bot.asyncio.get_event_loop') as mock_get_loop:
+                mock_loop = MagicMock()
+                mock_get_loop.return_value = mock_loop
+                with patch('src.bot.print_log') as mock_print_log:
+                    await bot._reconnect_irc()
+
+                    # Should continue with reconnection despite timeout
+                    mock_irc.force_reconnect.assert_called()
+                    # Should log success message since force_reconnect returns True
+                    assert any("IRC reconnection successful" in str(call) for call in mock_print_log.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_reconnect_irc_wait_for_cancelled(self):
+        """Test IRC reconnection when waiting for a task is cancelled"""
+        bot = TwitchColorBot(
+            token='oauth:token123',
+            refresh_token='refresh123',
+            client_id='client123',
+            client_secret='secret123',
+            nick='testuser',
+            channels=['testchannel']
+        )
+        bot.running = True
+        bot.user_id = 'user123'
+
+        mock_irc = MagicMock()
+        mock_irc.force_reconnect.return_value = True
+        bot.irc = mock_irc
+        bot.rate_limiter = MagicMock()
+
+        # Create mock task that won't complete
+        mock_task = MagicMock()
+        mock_task.done.return_value = False
+        bot.irc_task = mock_task
+
+        with patch('src.bot.asyncio.wait_for', side_effect=asyncio.CancelledError):
+            with patch('src.bot.asyncio.get_event_loop') as mock_get_loop:
+                mock_loop = MagicMock()
+                mock_get_loop.return_value = mock_loop
+                with patch('src.bot.print_log') as mock_print_log:
+                    # CancelledError is caught and handled, method should complete normally
+                    await bot._reconnect_irc()
+                    
+                    # Should continue with reconnection despite cancellation
+                    mock_irc.force_reconnect.assert_called()
+                    # Should log success message since force_reconnect returns True
+                    assert any("IRC reconnection successful" in str(call) for call in mock_print_log.call_args_list)

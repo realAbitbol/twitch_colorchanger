@@ -58,10 +58,10 @@ class BotManager:
 
         self.running = True
         self.shutdown_initiated = False  # Reset shutdown flag for new run
-        
+
         # Start health monitoring
         self._start_health_monitoring()
-        
+
         print_log("✅ All bots started successfully!", BColors.OKGREEN)
         return True
 
@@ -197,13 +197,13 @@ class BotManager:
         while self.running and not self.shutdown_initiated:
             try:
                 await asyncio.sleep(3600)  # Check every hour
-                
+
                 if not self.running or self.shutdown_initiated:
                     break
-                
+
                 print_log("🔍 Performing hourly bot health check...", BColors.OKCYAN)
                 await self._perform_health_check()
-                    
+
             except asyncio.CancelledError:
                 print_log("🔍 Health monitoring cancelled", BColors.WARNING)
                 raise  # Re-raise CancelledError
@@ -214,7 +214,7 @@ class BotManager:
     async def _perform_health_check(self):
         """Perform the actual health check logic"""
         unhealthy_bots = self._identify_unhealthy_bots()
-        
+
         if unhealthy_bots:
             await self._reconnect_unhealthy_bots(unhealthy_bots)
         else:
@@ -232,7 +232,7 @@ class BotManager:
     def _log_bot_health_issues(self, bot):
         """Log health issues for a specific bot"""
         print_log(f"⚠️ Bot {bot.username} appears unhealthy", BColors.WARNING)
-        
+
         # Get detailed stats for logging
         stats = bot.irc.get_connection_stats()
         print_log(
@@ -249,7 +249,7 @@ class BotManager:
             f"🔧 Attempting to reconnect {len(unhealthy_bots)} unhealthy bot(s)...",
             BColors.WARNING
         )
-        
+
         for bot in unhealthy_bots:
             success = await self._attempt_bot_reconnection(bot)
             if success:
@@ -263,14 +263,14 @@ class BotManager:
             if not bot.irc:
                 print_log(f"❌ {bot.username}: No IRC connection to reconnect", BColors.FAIL)
                 return False
-            
+
             # Force reconnection in the IRC client
             success = bot.irc.force_reconnect()
-            
+
             if success:
                 # Give it a moment to stabilize
                 await asyncio.sleep(2)
-                
+
                 # Verify the connection is actually healthy now
                 if bot.irc.is_healthy():
                     return True
@@ -283,7 +283,7 @@ class BotManager:
             else:
                 print_log(f"❌ {bot.username}: IRC reconnection failed", BColors.FAIL)
                 return False
-                
+
         except Exception as e:
             print_log(f"❌ Error reconnecting {bot.username}: {e}", BColors.FAIL)
             return False

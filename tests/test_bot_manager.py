@@ -15,6 +15,7 @@ from src.bot_manager import (
     _setup_config_watcher,
     run_bots,
 )
+from src.bot import TwitchColorBot
 from src.colors import BColors
 
 
@@ -1255,3 +1256,265 @@ class TestBotManagerBranchCoverage:
         # Assert the expected log appeared
         logged = any("All bot tasks have completed unexpectedly" in str(c) for c in mock_log.call_args_list)
         assert logged
+
+
+class TestBotManagerHealthMonitoring:
+    """Test health monitoring functionality in bot manager"""
+
+    @pytest.fixture
+    def bot_manager(self):
+        """Create a bot manager instance for testing"""
+        users_config = [
+            {
+                "username": "testuser",
+                "access_token": "oauth:testtoken",
+                "refresh_token": "testrefresh",
+                "client_id": "testclient",
+                "client_secret": "testsecret",
+                "channels": ["#testchannel"]
+            }
+        ]
+        return BotManager(users_config)
+
+    @pytest.fixture  
+    def mock_bot(self):
+        """Create a mock bot with IRC connection"""
+        bot = MagicMock(spec=TwitchColorBot)
+        bot.username = "testbot"
+        bot.irc = MagicMock()
+        bot.irc.is_healthy.return_value = True
+        bot.irc.get_connection_stats.return_value = {
+            'time_since_activity': 30.0,
+            'consecutive_ping_failures': 0,
+            'connection_failures': 0
+        }
+        bot.irc.force_reconnect.return_value = True
+        return bot
+
+    @pytest.mark.asyncio
+    async def test_monitor_bot_health_cancelled(self, bot_manager):
+        """Test health monitoring handles cancellation properly"""
+        bot_manager.running = True
+        bot_manager.shutdown_initiated = False
+        
+        # Mock sleep to raise CancelledError
+        with patch('asyncio.sleep', side_effect=asyncio.CancelledError()):
+            with pytest.raises(asyncio.CancelledError):
+                await bot_manager._monitor_bot_health()
+
+    @pytest.mark.asyncio
+    async def test_monitor_bot_health_exception_handling(self, bot_manager):
+        """Test health monitoring handles exceptions"""
+        bot_manager.running = True
+        bot_manager.shutdown_initiated = False
+        
+        # Mock sleep to raise exception then stop
+        sleep_effects = [Exception("Test error"), asyncio.CancelledError()]
+        
+        with patch('asyncio.sleep', side_effect=sleep_effects):
+            with patch('src.bot_manager.print_log'):
+                with pytest.raises(asyncio.CancelledError):
+                    await bot_manager._monitor_bot_health()
+
+    @pytest.mark.asyncio
+    async def test_monitor_bot_health_shutdown_check(self, bot_manager):
+        """Test health monitoring stops when shutdown initiated"""
+        bot_manager.running = True
+        bot_manager.shutdown_initiated = False
+        
+        def set_shutdown_after_sleep(*args):
+            bot_manager.shutdown_initiated = True
+            
+        with patch('asyncio.sleep', side_effect=set_shutdown_after_sleep):
+            with patch.object(bot_manager, '_perform_health_check'):
+                await bot_manager._monitor_bot_health()
+
+    @pytest.mark.asyncio
+    async def test_perform_health_check_with_unhealthy_bots(self, bot_manager, mock_bot):
+        """Test perform health check with unhealthy bots"""
+        mock_bot.irc.is_healthy.return_value = False
+        bot_manager.bots = [mock_bot]
+        
+        with patch.object(bot_manager, '_identify_unhealthy_bots', return_value=[mock_bot]):
+            with patch.object(bot_manager, '_reconnect_unhealthy_bots') as mock_reconnect:
+                await bot_manager._perform_health_check()
+                mock_reconnect.assert_called_once_with([mock_bot])
+
+    @pytest.mark.asyncio
+    async def test_perform_health_check_all_healthy(self, bot_manager, mock_bot):
+        """Test perform health check when all bots are healthy"""
+        bot_manager.bots = [mock_bot]
+        
+        with patch.object(bot_manager, '_identify_unhealthy_bots', return_value=[]):
+            with patch('src.bot_manager.print_log') as mock_log:
+                await bot_manager._perform_health_check()
+                # Look for the call with "All bots are healthy" message
+                found_healthy_log = False
+                for call in mock_log.call_args_list:
+                    if "All bots are healthy" in str(call):
+                        found_healthy_log = True
+                        break
+                assert found_healthy_log
+
+    def test_identify_unhealthy_bots(self, bot_manager, mock_bot):
+        """Test identification of unhealthy bots"""
+        mock_bot.irc.is_healthy.return_value = False
+        bot_manager.bots = [mock_bot]
+        
+        with patch.object(bot_manager, '_log_bot_health_issues'):
+            unhealthy = bot_manager._identify_unhealthy_bots()
+            assert unhealthy == [mock_bot]
+
+    def test_identify_healthy_bots(self, bot_manager, mock_bot):
+        """Test identification when all bots are healthy"""
+        mock_bot.irc.is_healthy.return_value = True
+        bot_manager.bots = [mock_bot]
+        
+        unhealthy = bot_manager._identify_unhealthy_bots()
+        assert unhealthy == []
+
+    def test_log_bot_health_issues(self, bot_manager, mock_bot):
+        """Test logging of bot health issues"""
+        with patch('src.bot_manager.print_log') as mock_log:
+            bot_manager._log_bot_health_issues(mock_bot)
+            
+            # Should log warning and stats
+            assert mock_log.call_count == 2
+            
+            # Check first call (warning)
+            first_call = mock_log.call_args_list[0]
+            assert "appears unhealthy" in first_call[0][0]
+            
+            # Check second call (stats)
+            second_call = mock_log.call_args_list[1]
+            assert "health stats" in second_call[0][0]
+
+    @pytest.mark.asyncio
+    async def test_reconnect_unhealthy_bots_success(self, bot_manager, mock_bot):
+        """Test reconnecting unhealthy bots successfully"""
+        with patch.object(bot_manager, '_attempt_bot_reconnection', return_value=True):
+            with patch('src.bot_manager.print_log') as mock_log:
+                await bot_manager._reconnect_unhealthy_bots([mock_bot])
+                
+                # Should log reconnection attempt and success
+                assert any("Attempting to reconnect" in str(call) for call in mock_log.call_args_list)
+                assert any("Successfully reconnected" in str(call) for call in mock_log.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_reconnect_unhealthy_bots_failure(self, bot_manager, mock_bot):
+        """Test reconnecting unhealthy bots with failure"""
+        with patch.object(bot_manager, '_attempt_bot_reconnection', return_value=False):
+            with patch('src.bot_manager.print_log') as mock_log:
+                await bot_manager._reconnect_unhealthy_bots([mock_bot])
+                
+                # Should log reconnection attempt and failure
+                assert any("Attempting to reconnect" in str(call) for call in mock_log.call_args_list)
+                assert any("Failed to reconnect" in str(call) for call in mock_log.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_attempt_bot_reconnection_no_irc(self, bot_manager, mock_bot):
+        """Test reconnection attempt with no IRC connection"""
+        mock_bot.irc = None
+        
+        with patch('src.bot_manager.print_log'):
+            result = await bot_manager._attempt_bot_reconnection(mock_bot)
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_attempt_bot_reconnection_success(self, bot_manager, mock_bot):
+        """Test successful bot reconnection"""
+        mock_bot.irc.force_reconnect.return_value = True
+        mock_bot.irc.is_healthy.return_value = True
+        
+        with patch('asyncio.sleep'):
+            result = await bot_manager._attempt_bot_reconnection(mock_bot)
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_attempt_bot_reconnection_force_fail(self, bot_manager, mock_bot):
+        """Test bot reconnection when force_reconnect fails"""
+        mock_bot.irc.force_reconnect.return_value = False
+        
+        with patch('src.bot_manager.print_log'):
+            result = await bot_manager._attempt_bot_reconnection(mock_bot)
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_attempt_bot_reconnection_unhealthy_after(self, bot_manager, mock_bot):
+        """Test bot reconnection that succeeds but bot is still unhealthy"""
+        mock_bot.irc.force_reconnect.return_value = True
+        mock_bot.irc.is_healthy.return_value = False
+        
+        with patch('asyncio.sleep'):
+            with patch('src.bot_manager.print_log'):
+                result = await bot_manager._attempt_bot_reconnection(mock_bot)
+                assert result is False
+
+    @pytest.mark.asyncio
+    async def test_attempt_bot_reconnection_exception(self, bot_manager, mock_bot):
+        """Test bot reconnection with exception"""
+        mock_bot.irc.force_reconnect.side_effect = Exception("Test error")
+        
+        with patch('src.bot_manager.print_log'):
+            result = await bot_manager._attempt_bot_reconnection(mock_bot)
+            assert result is False
+
+    def test_start_health_monitoring_running(self, bot_manager):
+        """Test starting health monitoring when running"""
+        bot_manager.running = True
+        bot_manager.tasks = []
+        
+        with patch('asyncio.create_task') as mock_create_task:
+            mock_task = MagicMock()
+            mock_create_task.return_value = mock_task
+            
+            with patch('src.bot_manager.print_log'):
+                result = bot_manager._start_health_monitoring()
+                
+                assert result == mock_task
+                assert mock_task in bot_manager.tasks
+
+    def test_start_health_monitoring_not_running(self, bot_manager):
+        """Test starting health monitoring when not running"""
+        bot_manager.running = False
+        
+        result = bot_manager._start_health_monitoring()
+        assert result is None
+
+    @pytest.mark.asyncio 
+    async def test_monitor_bot_health_shutdown_exit(self, bot_manager):
+        """Test health monitoring loop exits on shutdown"""
+        bot_manager.running = True
+        bot_manager.shutdown_initiated = True  # Cause immediate exit from while loop
+        
+        # Should exit immediately due to shutdown_initiated
+        await bot_manager._monitor_bot_health()
+        
+        # No other checks needed - the fact it returned means it exited the loop
+
+    @pytest.mark.asyncio
+    async def test_monitor_bot_health_complete_cycle(self, bot_manager):
+        """Test complete health monitoring cycle with check execution"""
+        bot_manager.running = True
+        bot_manager.shutdown_initiated = False
+        
+        # Track call count to exit after health check completes
+        call_count = 0
+        
+        def mock_sleep(duration):
+            nonlocal call_count
+            call_count += 1
+            # After the second sleep (after health check), stop running
+            if call_count >= 2:
+                bot_manager.running = False
+            # Create a completed future
+            future = asyncio.Future()
+            future.set_result(None)
+            return future
+        
+        with patch('asyncio.sleep', side_effect=mock_sleep):
+            with patch.object(bot_manager, '_perform_health_check') as mock_check:
+                await bot_manager._monitor_bot_health()
+                
+                # Should have called the health check
+                mock_check.assert_called_once()
