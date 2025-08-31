@@ -2151,6 +2151,157 @@ class TestBotMissingCoverage:
                     # Should log success message since force_reconnect returns True
                     assert any("IRC reconnection successful" in str(call) for call in mock_print_log.call_args_list)
 
+
+class TestRemainingBotCoverage:
+    """Additional tests to cover remaining uncovered lines in bot.py (148-152, 600-601)."""
+
+    @pytest.mark.asyncio
+    async def test_start_no_channel_dedup_else_branch(self):
+        """Covers else branch where unique_channels == original channels (lines 148-152)."""
+        from src.bot import TwitchColorBot
+        bot = TwitchColorBot(
+            token='oauth:tok',
+            refresh_token='ref',
+            client_id='cid',
+            client_secret='csecret',
+            nick='testuser',
+            channels=['channelone', 'channeltwo']  # already normalized unique list
+        )
+        bot.user_id = '12345'
+        bot.access_token = 'oauth:tok'
+        bot.refresh_token = 'ref'
+
+        # Mock async helpers
+        async def mock_get_current_color():
+            await asyncio.sleep(0)
+            return None
+        bot._get_current_color = mock_get_current_color  # type: ignore
+        bot._periodic_token_check = AsyncMock()  # type: ignore
+        bot.handle_irc_message = AsyncMock()  # type: ignore
+
+        with patch('src.bot.SimpleTwitchIRC') as mock_irc_cls, \
+             patch('src.bot.asyncio.get_event_loop') as mock_loop_fn:
+            mock_irc = MagicMock()
+            mock_irc.listen = MagicMock()
+            mock_irc_cls.return_value = mock_irc
+            mock_loop = MagicMock()
+            fut = asyncio.Future()
+            fut.set_result(None)
+            mock_loop.run_in_executor.return_value = fut
+            mock_loop_fn.return_value = mock_loop
+
+            # Run limited start to reach dedup logic
+            async def limited_start():
+                start_coro = bot.start()
+                await asyncio.sleep(0)
+                if bot.token_task:
+                    bot.token_task.cancel()
+                try:
+                    await asyncio.wait_for(start_coro, timeout=0.1)
+                except Exception:
+                    pass
+            await limited_start()
+
+        assert bot.channels == ['channelone', 'channeltwo']
+
+    @pytest.mark.asyncio
+    async def test_persist_channel_deduplication_success_logging(self, tmp_path):
+        """Covers success logging in _persist_channel_deduplication (lines 600-601)."""
+        from src.bot import TwitchColorBot
+        cfg_path = tmp_path / 'conf.toml'
+        cfg_path.write_text('')
+        bot = TwitchColorBot(
+            token='oauth:tok',
+            refresh_token='ref',
+            client_id='cid',
+            client_secret='csecret',
+            nick='testuser',
+            channels=['chan1', 'chan2'],
+            config_file=str(cfg_path)
+        )
+        bot.access_token = 'oauth:tok'
+        bot.refresh_token = 'ref'
+        bot.username = 'testuser'
+        bot.use_random_colors = True
+
+        with patch('src.bot.update_user_in_config') as mock_update, \
+             patch('src.bot.print_log') as mock_log:
+            bot._persist_channel_deduplication()
+
+        mock_update.assert_called_once()
+        success_calls = [c for c in mock_log.call_args_list if 'Deduplicated channels saved to configuration' in c.args[0]]
+        assert success_calls
+
+    @pytest.mark.asyncio
+    async def test_start_channel_deduplication_branch_with_persistence(self, tmp_path):
+        """Covers deduplication branch lines 148-152 with persistence call."""
+        from src.bot import TwitchColorBot
+        cfg_path = tmp_path / 'conf.toml'
+        cfg_path.write_text('')
+        # Channels intentionally contain duplicates, case differences and '#'
+        bot = TwitchColorBot(
+            token='oauth:tok', refresh_token='ref', client_id='cid', client_secret='csecret',
+            nick='testuser', channels=['ChannelOne', 'channelone', '#ChannelTwo', 'channelone'], config_file=str(cfg_path)
+        )
+        bot.user_id = '12345'
+        bot.access_token = 'oauth:tok'
+        bot.refresh_token = 'ref'
+        async def mock_get_current_color():
+            await asyncio.sleep(0)
+            return None
+        bot._get_current_color = mock_get_current_color  # type: ignore
+        bot._periodic_token_check = AsyncMock(return_value=None)  # type: ignore
+        bot.handle_irc_message = AsyncMock()  # type: ignore
+        with patch('src.bot.SimpleTwitchIRC') as mock_irc_cls, \
+             patch('src.bot.update_user_in_config') as mock_update, \
+             patch('src.bot.print_log') as mock_log, \
+             patch('src.bot.asyncio.create_task', side_effect=RuntimeError('stop_after_dedup')):
+            dummy_irc = MagicMock()
+            dummy_irc.connect.return_value = True
+            dummy_irc.join_channel.return_value = None
+            dummy_irc.set_message_handler.return_value = None
+            dummy_irc.listen = MagicMock()
+            mock_irc_cls.return_value = dummy_irc
+            # Call start and expect early RuntimeError after dedup lines
+            with pytest.raises(RuntimeError):
+                await bot.start()
+        # After dedup we expect only two channels remaining in preserved order first occurrences
+        assert bot.channels == ['channelone', 'channeltwo']
+        # update_user_in_config should be called once from persistence
+        mock_update.assert_called_once()
+        # Ensure dedup log present
+        assert any('Deduplicated channels' in c.args[0] for c in mock_log.call_args_list)
+
+    def test_persist_channel_deduplication_failure_logging(self, tmp_path):
+        """Covers exception branch lines 600-601 in _persist_channel_deduplication."""
+        from src.bot import TwitchColorBot
+        cfg_path = tmp_path / 'conf.toml'; cfg_path.write_text('')
+        bot = TwitchColorBot(
+            token='oauth:tok', refresh_token='ref', client_id='cid', client_secret='csecret',
+            nick='testuser', channels=['chan1'], config_file=str(cfg_path)
+        )
+        bot.access_token = 'oauth:tok'; bot.refresh_token='ref'; bot.username='testuser'
+        with patch('src.bot.update_user_in_config', side_effect=RuntimeError('fail')), \
+             patch('src.bot.print_log') as mock_log:
+            bot._persist_channel_deduplication()
+        assert any('Failed to save deduplicated channels' in c.args[0] for c in mock_log.call_args_list)
+
+    def test_persist_channel_deduplication_no_config_file_branch(self):
+        """Covers false branch of line 585 condition (no config_file => early exit)."""
+        from src.bot import TwitchColorBot
+        bot = TwitchColorBot(
+            token='oauth:tok', refresh_token='ref', client_id='cid', client_secret='csecret',
+            nick='testuser', channels=['chan1']
+        )  # no config_file provided
+        bot.username = 'testuser'
+        with patch('src.bot.update_user_in_config') as mock_update, \
+             patch('src.bot.print_log') as mock_log:
+            bot._persist_channel_deduplication()
+        mock_update.assert_not_called()
+        # No success or failure log expected because persistence skipped
+        assert not any('Deduplicated channels saved' in c.args[0] for c in mock_log.call_args_list)
+        assert not any('Failed to save deduplicated channels' in c.args[0] for c in mock_log.call_args_list)
+
     @pytest.mark.asyncio
     async def test_reconnect_irc_wait_for_cancelled(self):
         """Test IRC reconnection when waiting for a task is cancelled"""
