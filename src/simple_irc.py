@@ -42,14 +42,6 @@ class SimpleTwitchIRC:
         self.last_ping_from_server = 0  # When server last sent us a PING
         self.expected_ping_interval = 270  # Twitch typically pings every ~4.5 minutes
 
-        # Client-initiated health checks
-        self.last_client_ping_sent = 0  # When we last sent a PING to test connection
-        self.last_pong_received = 0  # When we last received a PONG response
-        self.client_ping_interval = 300  # Send client PING every 5 minutes
-        self.pong_timeout = 15  # Wait 15 seconds for PONG response
-        self.consecutive_ping_failures = 0
-        self.max_consecutive_ping_failures = 3
-
     def connect(self, token: str, username: str, channel: str) -> bool:
         """Connect to Twitch IRC with the given credentials"""
         # Set connection details
@@ -179,38 +171,15 @@ class SimpleTwitchIRC:
         print_log("🏓 Responded to server PING", BColors.OKCYAN, debug_only=True)
 
     def _handle_pong(self, line: str):
-        """Handle PONG responses (to our client-initiated PINGs)"""
+        """Handle PONG responses from server"""
         now = time.time()
         self.last_server_activity = now
-        self.last_pong_received = now
-
-        # Reset failure counter on successful PONG
-        if self.last_client_ping_sent > 0:
-            self.consecutive_ping_failures = 0
-            print_log(
-                f"🏓 Received PONG response: {line}", BColors.OKCYAN, debug_only=True
-            )
-
-    def _send_client_ping(self) -> bool:
-        """Send a client-initiated PING to test connection health"""
-        if not self.sock or not self.connected:
-            return False
-
-        try:
-            ping_msg = f"PING :health_check_{int(time.time())}"
-            self.sock.send(f"{ping_msg}\r\n".encode("utf-8"))
-            self.last_client_ping_sent = time.time()
-            print_log(
-                "🏓 Sent client health check PING", BColors.OKCYAN, debug_only=True
-            )
-            return True
-        except Exception as e:
-            print_log(f"❌ Failed to send client PING: {e}", BColors.FAIL)
-            self.consecutive_ping_failures += 1
-            return False
+        print_log(
+            f"🏓 Received PONG from server: {line}", BColors.OKCYAN, debug_only=True
+        )
 
     def _check_connection_health(self) -> bool:
-        """Check if connection is healthy based on Twitch server activity and client ping tests"""
+        """Check if connection is healthy based on Twitch server activity"""
         now = time.time()
 
         # Check when we last heard from server (any message)
@@ -222,26 +191,6 @@ class SimpleTwitchIRC:
                 BColors.WARNING,
             )
             return False
-
-        # Check for too many consecutive client ping failures
-        if self.consecutive_ping_failures >= self.max_consecutive_ping_failures:
-            print_log(
-                f"⚠️ {self.username}: Too many consecutive client ping failures "
-                f"({self.consecutive_ping_failures})",
-                BColors.WARNING,
-            )
-            return False
-
-        # Check if we have a pending PONG that's timed out
-        if self.last_client_ping_sent > self.last_pong_received:
-            time_since_ping = now - self.last_client_ping_sent
-            if time_since_ping > self.pong_timeout:
-                print_log(
-                    f"⚠️ {self.username}: Client PING timeout ({time_since_ping:.1f}s since PING)",
-                    BColors.WARNING,
-                )
-                self.consecutive_ping_failures += 1
-                return False
 
         # Check when server last sent us a PING (Twitch-specific)
         time_since_ping = now - self.last_ping_from_server
@@ -255,12 +204,6 @@ class SimpleTwitchIRC:
                 BColors.WARNING,
             )
             return False
-
-        # Send client ping if it's time for a health check
-        time_since_client_ping = now - self.last_client_ping_sent
-        if time_since_client_ping > self.client_ping_interval:
-            if not self._send_client_ping():
-                return False
 
         return True
 
@@ -357,10 +300,7 @@ class SimpleTwitchIRC:
 
                 # Perform periodic checks
                 if self._perform_periodic_checks():
-                    print_log(
-                        f"❌ {self.username}: Max connection failures reached, disconnecting",
-                        BColors.FAIL,
-                    )
+                    # _perform_periodic_checks already logged the reason
                     break
 
             except socket.timeout:
@@ -467,14 +407,6 @@ class SimpleTwitchIRC:
                 if self.last_ping_from_server > 0
                 else 0
             ),
-            "last_client_ping_sent": self.last_client_ping_sent,
-            "last_pong_received": self.last_pong_received,
-            "time_since_client_ping": (
-                now - self.last_client_ping_sent
-                if self.last_client_ping_sent > 0
-                else 0
-            ),
-            "consecutive_ping_failures": self.consecutive_ping_failures,
             "is_healthy": self.is_healthy(),
         }
 

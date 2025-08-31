@@ -33,7 +33,7 @@ test:
 	pytest
 
 test-coverage:
-	pytest --cov=src --cov=main --cov-report=html --cov-report=term --cov-report=xml
+	pytest --cov=src --cov-report=html --cov-report=term --cov-report=xml
 
 test-cov: test-coverage
 
@@ -49,26 +49,26 @@ test-slow:
 # Code quality
 lint:
 	@echo "Running flake8..."
-	flake8 src/ tests/ main.py
+	flake8 src/ tests/
 	@echo "Running mypy..."
-	mypy src/ main.py
+	mypy src/
 	@echo "Running bandit..."
-	bandit -r src/ main.py
+	bandit -r src/
 	@echo "Running safety..."
 	safety check
 
 format:
 	@echo "Formatting with black..."
-	black src/ tests/ main.py
+	black src/ tests/
 	@echo "Sorting imports with isort..."
-	isort src/ tests/ main.py
+	isort src/ tests/
 
 format-check:
-	black --check src/ tests/ main.py
-	isort --check-only src/ tests/ main.py
+	black --check src/ tests/
+	isort --check-only src/ tests/
 
 security:
-	bandit -r src/ main.py
+	bandit -r src/
 	safety check
 
 # Comprehensive checks
@@ -138,7 +138,7 @@ docs-serve:
 
 # Monitoring
 profile:
-	py-spy record -o profile.svg -- python main.py &
+	py-spy record -o profile.svg -- python -m src.main &
 	@echo "Profiling started. Stop with 'pkill py-spy'"
 
 # Version management

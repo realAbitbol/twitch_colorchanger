@@ -1,5 +1,5 @@
 """
-Test module for main.py entry point
+Test module for src/main.py entry point
 """
 
 import sys
@@ -7,7 +7,7 @@ import os
 import pytest
 from unittest.mock import patch, AsyncMock
 
-import main
+from src import main
 
 
 class TestMainFunction:
@@ -25,18 +25,18 @@ class TestMainFunction:
             }
         ]
 
-        with patch("main.print_instructions") as mock_print_instructions, patch(
-            "main.get_configuration", return_value=mock_users_config
+        with patch("src.main.print_instructions") as mock_print_instructions, patch(
+            "src.main.get_configuration", return_value=mock_users_config
         ) as mock_get_config, patch(
-            "main.setup_missing_tokens",
+            "src.main.setup_missing_tokens",
             new_callable=AsyncMock,
             return_value=mock_users_config,
         ) as mock_setup_tokens, patch(
-            "main.print_config_summary"
+            "src.main.print_config_summary"
         ) as mock_print_summary, patch(
-            "main.run_bots", new_callable=AsyncMock
+            "src.main.run_bots", new_callable=AsyncMock
         ) as mock_run_bots, patch(
-            "main.logger"
+            "src.main.logger"
         ) as mock_logger:
 
             await main.main()
@@ -60,17 +60,17 @@ class TestMainFunction:
         mock_users_config = [{"username": "testuser"}]
 
         with patch.dict(os.environ, {"TWITCH_CONF_FILE": "custom.conf"}), patch(
-            "main.print_instructions"
-        ), patch("main.get_configuration", return_value=mock_users_config), patch(
-            "main.setup_missing_tokens",
+            "src.main.print_instructions"
+        ), patch("src.main.get_configuration", return_value=mock_users_config), patch(
+            "src.main.setup_missing_tokens",
             new_callable=AsyncMock,
             return_value=mock_users_config,
         ) as mock_setup_tokens, patch(
-            "main.print_config_summary"
+            "src.main.print_config_summary"
         ), patch(
-            "main.run_bots", new_callable=AsyncMock
+            "src.main.run_bots", new_callable=AsyncMock
         ) as mock_run_bots, patch(
-            "main.logger"
+            "src.main.logger"
         ):
 
             await main.main()
@@ -82,9 +82,9 @@ class TestMainFunction:
     @pytest.mark.asyncio
     async def test_main_keyboard_interrupt(self):
         """Test main handles KeyboardInterrupt"""
-        with patch("main.print_instructions"), patch(
-            "main.get_configuration"
-        ) as mock_get_config, patch("main.logger") as mock_logger:
+        with patch("src.main.print_instructions"), patch(
+            "src.main.get_configuration"
+        ) as mock_get_config, patch("src.main.logger") as mock_logger:
 
             mock_get_config.side_effect = KeyboardInterrupt()
 
@@ -98,10 +98,10 @@ class TestMainFunction:
         """Test main handles generic exceptions"""
         test_exception = Exception("Test error")
 
-        with patch("main.print_instructions"), patch(
-            "main.get_configuration"
-        ) as mock_get_config, patch("main.log_error") as mock_log_error, patch(
-            "main.logger"
+        with patch("src.main.print_instructions"), patch(
+            "src.main.get_configuration"
+        ) as mock_get_config, patch("src.main.log_error") as mock_log_error, patch(
+            "src.main.logger"
         ) as mock_logger, patch(
             "sys.exit"
         ) as mock_exit:
@@ -125,14 +125,14 @@ class TestMainFunction:
         mock_users_config = [{"username": "testuser"}]
         test_exception = Exception("Token setup failed")
 
-        with patch("main.print_instructions"), patch(
-            "main.get_configuration", return_value=mock_users_config
+        with patch("src.main.print_instructions"), patch(
+            "src.main.get_configuration", return_value=mock_users_config
         ), patch(
-            "main.setup_missing_tokens", new_callable=AsyncMock
+            "src.main.setup_missing_tokens", new_callable=AsyncMock
         ) as mock_setup_tokens, patch(
-            "main.log_error"
+            "src.main.log_error"
         ) as mock_log_error, patch(
-            "main.logger"
+            "src.main.logger"
         ) as mock_logger, patch(
             "sys.exit"
         ) as mock_exit:
@@ -155,20 +155,20 @@ class TestMainFunction:
         mock_users_config = [{"username": "testuser"}]
         test_exception = Exception("Bot running failed")
 
-        with patch("main.print_instructions"), patch(
-            "main.get_configuration", return_value=mock_users_config
+        with patch("src.main.print_instructions"), patch(
+            "src.main.get_configuration", return_value=mock_users_config
         ), patch(
-            "main.setup_missing_tokens",
+            "src.main.setup_missing_tokens",
             new_callable=AsyncMock,
             return_value=mock_users_config,
         ), patch(
-            "main.print_config_summary"
+            "src.main.print_config_summary"
         ), patch(
-            "main.run_bots", new_callable=AsyncMock
+            "src.main.run_bots", new_callable=AsyncMock
         ) as mock_run_bots, patch(
-            "main.log_error"
+            "src.main.log_error"
         ) as mock_log_error, patch(
-            "main.logger"
+            "src.main.logger"
         ) as mock_logger, patch(
             "sys.exit"
         ) as mock_exit:
@@ -193,13 +193,16 @@ class TestMainEntryPoint:
         """Test health check mode with valid configuration"""
         mock_users_config = [{"username": "testuser"}]
 
-        with patch.object(sys, "argv", ["main.py", "--health-check"]), patch(
-            "main.get_configuration", return_value=mock_users_config
-        ) as mock_get_config, patch("main.logger") as mock_logger, patch(
-            "main.sys.exit"
+        with patch.object(sys, "argv", ["src.main", "--health-check"]), patch(
+            "src.main.get_configuration", return_value=mock_users_config
+        ) as mock_get_config, patch("src.main.logger") as mock_logger, patch(
+            "src.main.sys.exit"
         ) as mock_exit:
 
-            # Simulate the health check mode execution
+            # Import src.main to trigger the if __name__ == "__main__" logic
+            from src import main as main_module
+            
+            # Manually call the health check logic since __name__ != "__main__" in tests
             if len(sys.argv) > 1 and sys.argv[1] == "--health-check":
                 mock_logger.info("🏥 Health check mode")
                 try:
@@ -223,15 +226,18 @@ class TestMainEntryPoint:
         """Test health check mode with configuration error"""
         test_exception = Exception("Config error")
 
-        with patch.object(sys, "argv", ["main.py", "--health-check"]), patch(
-            "main.get_configuration"
-        ) as mock_get_config, patch("main.logger") as mock_logger, patch(
-            "main.sys.exit"
+        with patch.object(sys, "argv", ["src.main", "--health-check"]), patch(
+            "src.main.get_configuration"
+        ) as mock_get_config, patch("src.main.logger") as mock_logger, patch(
+            "src.main.sys.exit"
         ) as mock_exit:
 
             mock_get_config.side_effect = test_exception
 
-            # Simulate the health check mode execution
+            # Import src.main to trigger the if __name__ == "__main__" logic
+            from src import main as main_module
+
+            # Manually call the health check logic since __name__ != "__main__" in tests
             if len(sys.argv) > 1 and sys.argv[1] == "--health-check":
                 mock_logger.info("🏥 Health check mode")
                 try:
@@ -254,8 +260,8 @@ class TestMainEntryPoint:
     @pytest.mark.asyncio
     async def test_normal_execution_success(self):
         """Test normal main execution"""
-        with patch.object(sys, "argv", ["main.py"]), patch(
-            "main.asyncio.run"
+        with patch.object(sys, "argv", ["-m", "src.main"]), patch(
+            "src.main.asyncio.run"
         ) as mock_asyncio_run:
 
             # Simulate normal execution
@@ -266,10 +272,10 @@ class TestMainEntryPoint:
 
     def test_normal_execution_keyboard_interrupt(self):
         """Test normal execution with KeyboardInterrupt"""
-        with patch.object(sys, "argv", ["main.py"]), patch(
-            "main.asyncio.run"
-        ) as mock_asyncio_run, patch("main.logger") as mock_logger, patch(
-            "main.sys.exit"
+        with patch.object(sys, "argv", ["-m", "src.main"]), patch(
+            "src.main.asyncio.run"
+        ) as mock_asyncio_run, patch("src.main.logger") as mock_logger, patch(
+            "src.main.sys.exit"
         ) as mock_exit:
 
             mock_asyncio_run.side_effect = KeyboardInterrupt()
@@ -288,12 +294,12 @@ class TestMainEntryPoint:
         """Test normal execution with generic exception"""
         test_exception = Exception("Top level error")
 
-        with patch.object(sys, "argv", ["main.py"]), patch(
-            "main.asyncio.run"
-        ) as mock_asyncio_run, patch("main.log_error") as mock_log_error, patch(
-            "main.logger"
+        with patch.object(sys, "argv", ["-m", "src.main"]), patch(
+            "src.main.asyncio.run"
+        ) as mock_asyncio_run, patch("src.main.log_error") as mock_log_error, patch(
+            "src.main.logger"
         ) as mock_logger, patch(
-            "main.sys.exit"
+            "src.main.sys.exit"
         ) as mock_exit:
 
             mock_asyncio_run.side_effect = test_exception
@@ -328,18 +334,18 @@ class TestMainIntegration:
             }
         ]
 
-        with patch("main.print_instructions") as mock_print_instructions, patch(
-            "main.get_configuration", return_value=mock_users_config
+        with patch("src.main.print_instructions") as mock_print_instructions, patch(
+            "src.main.get_configuration", return_value=mock_users_config
         ) as mock_get_config, patch(
-            "main.setup_missing_tokens",
+            "src.main.setup_missing_tokens",
             new_callable=AsyncMock,
             return_value=mock_users_config,
         ) as mock_setup_tokens, patch(
-            "main.print_config_summary"
+            "src.main.print_config_summary"
         ) as mock_print_summary, patch(
-            "main.run_bots", new_callable=AsyncMock
+            "src.main.run_bots", new_callable=AsyncMock
         ) as mock_run_bots, patch(
-            "main.logger"
+            "src.main.logger"
         ):
 
             await main.main()
@@ -356,18 +362,18 @@ class TestMainIntegration:
         """Test main with empty configuration"""
         empty_config = []
 
-        with patch("main.print_instructions"), patch(
-            "main.get_configuration", return_value=empty_config
+        with patch("src.main.print_instructions"), patch(
+            "src.main.get_configuration", return_value=empty_config
         ), patch(
-            "main.setup_missing_tokens",
+            "src.main.setup_missing_tokens",
             new_callable=AsyncMock,
             return_value=empty_config,
         ) as mock_setup_tokens, patch(
-            "main.print_config_summary"
+            "src.main.print_config_summary"
         ) as mock_print_summary, patch(
-            "main.run_bots", new_callable=AsyncMock
+            "src.main.run_bots", new_callable=AsyncMock
         ) as mock_run_bots, patch(
-            "main.logger"
+            "src.main.logger"
         ):
 
             await main.main()
@@ -389,13 +395,13 @@ class TestMainIntegration:
             {"username": "user3"},
         ]
 
-        with patch.object(sys, "argv", ["main.py", "--health-check"]), patch(
-            "main.get_configuration", return_value=mock_users_config
-        ) as mock_get_config, patch("main.logger") as mock_logger, patch(
-            "main.sys.exit"
+        with patch.object(sys, "argv", ["src.main", "--health-check"]), patch(
+            "src.main.get_configuration", return_value=mock_users_config
+        ) as mock_get_config, patch("src.main.logger") as mock_logger, patch(
+            "src.main.sys.exit"
         ) as mock_exit:
 
-            # Simulate the health check mode execution
+            # Manually call the health check logic since __name__ != "__main__" in tests
             if len(sys.argv) > 1 and sys.argv[1] == "--health-check":
                 mock_logger.info("🏥 Health check mode")
                 try:
@@ -417,13 +423,13 @@ class TestMainIntegration:
         """Test health check with no users configured"""
         empty_config = []
 
-        with patch.object(sys, "argv", ["main.py", "--health-check"]), patch(
-            "main.get_configuration", return_value=empty_config
-        ) as mock_get_config, patch("main.logger") as mock_logger, patch(
-            "main.sys.exit"
+        with patch.object(sys, "argv", ["src.main", "--health-check"]), patch(
+            "src.main.get_configuration", return_value=empty_config
+        ) as mock_get_config, patch("src.main.logger") as mock_logger, patch(
+            "src.main.sys.exit"
         ) as mock_exit:
 
-            # Simulate the health check mode execution
+            # Manually call the health check logic since __name__ != "__main__" in tests
             if len(sys.argv) > 1 and sys.argv[1] == "--health-check":
                 mock_logger.info("🏥 Health check mode")
                 try:
@@ -450,10 +456,10 @@ class TestMainErrorHandling:
         """Test main when configuration loading fails"""
         config_error = Exception("Failed to load config")
 
-        with patch("main.print_instructions"), patch(
-            "main.get_configuration"
-        ) as mock_get_config, patch("main.log_error") as mock_log_error, patch(
-            "main.logger"
+        with patch("src.main.print_instructions"), patch(
+            "src.main.get_configuration"
+        ) as mock_get_config, patch("src.main.log_error") as mock_log_error, patch(
+            "src.main.logger"
         ) as mock_logger, patch(
             "sys.exit"
         ) as mock_exit:
@@ -476,18 +482,18 @@ class TestMainErrorHandling:
         mock_users_config = [{"username": "testuser"}]
         summary_error = Exception("Print summary failed")
 
-        with patch("main.print_instructions"), patch(
-            "main.get_configuration", return_value=mock_users_config
+        with patch("src.main.print_instructions"), patch(
+            "src.main.get_configuration", return_value=mock_users_config
         ), patch(
-            "main.setup_missing_tokens",
+            "src.main.setup_missing_tokens",
             new_callable=AsyncMock,
             return_value=mock_users_config,
         ), patch(
-            "main.print_config_summary"
+            "src.main.print_config_summary"
         ) as mock_print_summary, patch(
-            "main.log_error"
+            "src.main.log_error"
         ) as mock_log_error, patch(
-            "main.logger"
+            "src.main.logger"
         ) as mock_logger, patch(
             "sys.exit"
         ) as mock_exit:
@@ -510,8 +516,8 @@ class TestMainCommandLineArgs:
 
     def test_no_arguments(self):
         """Test execution with no command line arguments"""
-        with patch.object(sys, "argv", ["main.py"]), patch(
-            "main.asyncio.run"
+        with patch.object(sys, "argv", ["-m", "src.main"]), patch(
+            "src.main.asyncio.run"
         ) as mock_asyncio_run:
 
             # Simulate normal execution (no health check args)
@@ -525,8 +531,8 @@ class TestMainCommandLineArgs:
 
     def test_unknown_argument(self):
         """Test execution with unknown argument (should proceed normally)"""
-        with patch.object(sys, "argv", ["main.py", "--unknown-arg"]), patch(
-            "main.asyncio.run"
+        with patch.object(sys, "argv", ["-m", "src.main", "--unknown-arg"]), patch(
+            "src.main.asyncio.run"
         ) as mock_asyncio_run:
 
             # Simulate normal execution (no health check args)
@@ -541,14 +547,14 @@ class TestMainCommandLineArgs:
     def test_multiple_arguments_health_check_first(self):
         """Test execution with health check as first argument"""
         with patch.object(
-            sys, "argv", ["main.py", "--health-check", "--other-arg"]
-        ), patch("main.get_configuration", return_value=[]) as mock_get_config, patch(
-            "main.logger"
+            sys, "argv", ["src.main", "--health-check", "--other-arg"]
+        ), patch("src.main.get_configuration", return_value=[]) as mock_get_config, patch(
+            "src.main.logger"
         ) as mock_logger, patch(
-            "main.sys.exit"
+            "src.main.sys.exit"
         ) as mock_exit:
 
-            # Simulate the health check mode execution
+            # Manually call the health check logic since __name__ != "__main__" in tests
             if len(sys.argv) > 1 and sys.argv[1] == "--health-check":
                 mock_logger.info("🏥 Health check mode")
                 try:

@@ -17,7 +17,7 @@ This directory contains the comprehensive test suite for the Twitch ColorChanger
 
 ### Module Coverage
 
-- `main.py`: 100% (24 lines)
+- `src/main.py`: 100% (24 lines)
 - `src/bot.py`: 100% (358 lines, 102 branches) - 103 tests
 - `src/bot_manager.py`: 100% (208 lines, 54 branches) - 79 tests  
 - `src/colors.py`: 100% (48 lines, 16 branches) - 70 tests

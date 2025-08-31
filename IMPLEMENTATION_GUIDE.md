@@ -8,13 +8,13 @@ This guide provides the essential architectural patterns and implementation deta
 
 ```text
 twitch_colorchanger/
-├── main.py                     # Application entry point
 ├── requirements.txt            # Dependencies (aiohttp, watchdog)
 ├── Dockerfile                  # Multi-platform container
 ├── docker-compose.yml-sample   # Deployment template
 ├── twitch_colorchanger.conf    # Runtime configuration (JSON)
 └── src/
     ├── __init__.py
+    ├── main.py                 # Application entry point
     ├── bot.py                  # Core bot implementation
     ├── bot_manager.py          # Multi-bot orchestration
     ├── colors.py               # Color generation and management
@@ -39,7 +39,7 @@ watchdog>=3.0.0,<4.0.0   # File system monitoring
 
 ## Implementation Components
 
-### 1. Application Entry Point (`main.py`)
+### 1. Application Entry Point (`src/main.py`)
 
 **Architecture Pattern**: Simple async main with error handling
 

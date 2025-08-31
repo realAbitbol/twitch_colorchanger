@@ -7,11 +7,11 @@ import asyncio
 import sys
 import os
 
-from src.config import get_configuration, print_config_summary, setup_missing_tokens
-from src.bot_manager import run_bots
-from src.utils import print_instructions
-from src.logger import logger
-from src.error_handling import log_error
+from .config import get_configuration, print_config_summary, setup_missing_tokens
+from .bot_manager import run_bots
+from .utils import print_instructions
+from .logger import logger
+from .error_handling import log_error
 
 
 async def main():

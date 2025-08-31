@@ -104,13 +104,13 @@ safety check
 ## Coverage Goals
 
 - **Current Achievement**: 100% overall coverage ✅
-- **Total Lines**: 1,587 lines covered (main.py + src/)
+- **Total Lines**: 1,587 lines covered (src/)
 - **Total Branches**: 440 branches covered
 - **Test Count**: 551 tests passing
 
 ### Current Coverage Status (100% across all modules)
 
-- `main.py`: 100% coverage (24/24 lines)
+- `src/main.py`: 100% coverage (24/24 lines)
 - `src/bot.py`: 100% coverage (358/358 lines, 102/102 branches)
 - `src/bot_manager.py`: 100% coverage (208/208 lines, 54/54 branches)
 - `src/colors.py`: 100% coverage (48/48 lines, 16/16 branches)

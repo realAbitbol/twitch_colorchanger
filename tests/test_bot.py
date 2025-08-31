@@ -2552,3 +2552,300 @@ class TestRemainingBotCoverage:
                         "IRC reconnection successful" in str(call)
                         for call in mock_print_log.call_args_list
                     )
+
+
+class TestBotCoverage:
+    """Tests specifically for achieving 100% coverage on bot.py"""
+
+    async def test_periodic_token_check_current_time_call(self, bot_config):
+        """Test that current_time = time.time() line is covered"""
+        # Update config for this test
+        bot_config.update({
+            "refresh_token": "test_refresh",
+            "client_secret": "test_secret",
+            "user_id": "12345",
+        })
+        bot = TwitchColorBot(**bot_config)
+        bot.running = True
+
+        # Track time.time() calls
+        time_called = False
+        original_time = time.time
+
+        def track_time():
+            nonlocal time_called
+            time_called = True
+            # Stop the bot after the first time call
+            bot.running = False
+            return original_time()
+
+        async def mock_irc_health():
+            await asyncio.sleep(0.001)
+
+        async def mock_token_check():
+            await asyncio.sleep(0.001)
+
+        # Mock the methods and track time.time() calls
+        with patch.object(bot, "_check_irc_health", side_effect=mock_irc_health):
+            with patch.object(bot, "_check_and_refresh_token", side_effect=mock_token_check):
+                with patch.object(bot, "_get_token_check_interval", return_value=300):
+                    with patch("src.bot.time.time", side_effect=track_time):
+                        # Reduce asyncio.sleep to speed up the test
+                        with patch("asyncio.sleep", side_effect=lambda x: asyncio.sleep(0.001)):
+                            try:
+                                await asyncio.wait_for(bot._periodic_token_check(), timeout=1.0)
+                            except asyncio.TimeoutError:
+                                pass
+
+        # Verify that time.time() was called (covering line 269)
+        assert time_called
+
+    async def test_periodic_token_check_branch_coverage(self, bot_config):
+        """Test branch coverage in periodic token check"""
+        # Update config for this test
+        bot_config.update({
+            "refresh_token": "test_refresh",
+            "client_secret": "test_secret",
+            "user_id": "12345",
+        })
+        bot = TwitchColorBot(**bot_config)
+        bot.running = True
+
+        # Track calls
+        method_called = False
+
+        async def mock_irc_health():
+            nonlocal method_called
+            method_called = True
+            bot.running = False  # Stop after first call
+            await asyncio.sleep(0.001)
+
+        async def mock_token_check():
+            await asyncio.sleep(0.001)
+
+        # Mock and ensure we reach the periodic check execution
+        with patch.object(bot, "_check_irc_health", side_effect=mock_irc_health):
+            with patch.object(bot, "_check_and_refresh_token", side_effect=mock_token_check):
+                with patch.object(bot, "_get_token_check_interval", return_value=600):
+                    # Speed up the sleep
+                    with patch("asyncio.sleep", side_effect=lambda x: asyncio.sleep(0.001)):
+                        try:
+                            await asyncio.wait_for(bot._periodic_token_check(), timeout=1.0)
+                        except asyncio.TimeoutError:
+                            pass
+
+        # The test passes if we executed some of the logic
+        assert method_called
+
+    async def test_periodic_token_check_exception_handling(self, bot_config):
+        """Test exception handling in periodic token check"""
+        # Update config for this test
+        bot_config.update({
+            "refresh_token": "test_refresh",
+            "client_secret": "test_secret",
+            "user_id": "12345",
+        })
+        bot = TwitchColorBot(**bot_config)
+        bot.running = True
+
+        call_count = 0
+
+        async def failing_irc_health():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ValueError("Test IRC health error")
+            else:
+                bot.running = False  # Stop after retry
+            await asyncio.sleep(0.001)  # Make it properly async
+
+        async def mock_token_check():
+            # Empty mock for token check - no action needed
+            await asyncio.sleep(0.001)  # Make it properly async
+
+        with patch.object(bot, "_check_irc_health", side_effect=failing_irc_health):
+            with patch.object(bot, "_check_and_refresh_token", side_effect=mock_token_check):
+                with patch.object(bot, "_get_token_check_interval", return_value=600):
+                    with patch("src.bot.print_log") as mock_log:
+                        # Mock sleep to speed up test
+                        original_sleep = asyncio.sleep
+                        async def fast_sleep(delay):
+                            if delay == 300:  # Error retry delay
+                                await original_sleep(0.01)
+                            elif delay == 120:  # IRC check interval
+                                await original_sleep(0.01)
+                            else:
+                                await original_sleep(delay)
+
+                        with patch("asyncio.sleep", side_effect=fast_sleep):
+                            try:
+                                await asyncio.wait_for(bot._periodic_token_check(), timeout=1.0)
+                            except asyncio.TimeoutError:
+                                bot.running = False
+
+        # Should have logged the error
+        log_calls = [str(call) for call in mock_log.call_args_list]
+        assert any("Error in periodic token check" in call for call in log_calls)
+
+    async def test_check_irc_health_unhealthy_connection(self, bot_config):
+        """Test IRC health check when connection is unhealthy"""
+        # Update config for this test
+        bot_config.update({
+            "refresh_token": "test_refresh",
+            "client_secret": "test_secret",
+            "user_id": "12345",
+        })
+        bot = TwitchColorBot(**bot_config)
+        
+        # Create mock IRC with unhealthy stats
+        mock_irc = MagicMock()
+        mock_irc.get_connection_stats.return_value = {
+            "is_healthy": False,
+            "time_since_activity": 350.0,
+            "connected": True,
+            "running": True,
+        }
+        bot.irc = mock_irc
+
+        reconnect_called = False
+
+        async def mock_reconnect():
+            nonlocal reconnect_called
+            reconnect_called = True
+            await asyncio.sleep(0.001)  # Make it properly async
+
+        with patch.object(bot, "_reconnect_irc", side_effect=mock_reconnect):
+            with patch("src.bot.print_log") as mock_log:
+                await bot._check_irc_health()
+
+        # Should have called reconnect
+        assert reconnect_called
+
+        # Should have logged unhealthy warning
+        log_calls = [str(call) for call in mock_log.call_args_list]
+        assert any("IRC connection appears unhealthy" in call for call in log_calls)
+
+    async def test_check_irc_health_exception(self, bot_config):
+        """Test IRC health check exception handling"""
+        # Update config for this test
+        bot_config.update({
+            "refresh_token": "test_refresh",
+            "client_secret": "test_secret",
+            "user_id": "12345",
+        })
+        bot = TwitchColorBot(**bot_config)
+        
+        # Create mock IRC that raises exception
+        mock_irc = MagicMock()
+        mock_irc.get_connection_stats.side_effect = ValueError("Stats error")
+        bot.irc = mock_irc
+
+        with patch("src.bot.print_log") as mock_log:
+            await bot._check_irc_health()
+
+        # Should have logged the error
+        log_calls = [str(call) for call in mock_log.call_args_list]
+        assert any("Error checking IRC health" in call for call in log_calls)
+
+    async def test_check_irc_health_healthy_connection(self, bot_config):
+        """Test IRC health check when connection is healthy (false branch of if)."""
+        # Update config for this test
+        bot_config.update({
+            "refresh_token": "test_refresh",
+            "client_secret": "test_secret",
+            "user_id": "12345",
+        })
+        bot = TwitchColorBot(**bot_config)
+
+        mock_irc = MagicMock()
+        mock_irc.get_connection_stats.return_value = {
+            "is_healthy": True,
+            "time_since_activity": 5.0,
+            "connected": True,
+            "running": True,
+        }
+        bot.irc = mock_irc
+
+        # Patch _reconnect_irc to ensure it's NOT called
+        with patch.object(bot, "_reconnect_irc", side_effect=AssertionError("Should not reconnect")):
+            # We don't need to patch print_log; just run the method
+            await bot._check_irc_health()
+
+        # Ensure stats retrieval was performed
+        mock_irc.get_connection_stats.assert_called_once()
+
+    async def test_periodic_token_check_false_branches_then_true(self, bot_config):
+        """Covers the false branches of IRC/token checks then a true branch to exit."""
+        # Update config for this test
+        bot_config.update({
+            "refresh_token": "test_refresh",
+            "client_secret": "test_secret",
+            "user_id": "12345",
+        })
+        bot = TwitchColorBot(**bot_config)
+        bot.running = True
+
+        # Side effects for time: first iteration small time (skip checks), second large (perform checks)
+        time_values = [1.0, 1000.0]
+
+        async def mock_irc_health():
+            # Called only on second iteration (true branch). Stop loop afterward.
+            bot.running = False
+            await asyncio.sleep(0)
+
+        async def mock_token_check():  # pragma: no cover - minimal
+            await asyncio.sleep(0)
+
+        with patch.object(bot, "_check_irc_health", side_effect=mock_irc_health):
+            with patch.object(bot, "_check_and_refresh_token", side_effect=mock_token_check):
+                with patch.object(bot, "_get_token_check_interval", return_value=300):
+                    def fake_time():
+                        # Return first element until list exhausted
+                        if len(time_values) > 1:
+                            return time_values.pop(0)
+                        return time_values[0]
+
+                    original_sleep = asyncio.sleep
+
+                    async def fast_sleep(delay):
+                        # Don't actually sleep long delays; yield control once
+                        await original_sleep(0)
+
+                    with patch("src.bot.time.time", side_effect=fake_time):
+                        with patch("asyncio.sleep", side_effect=fast_sleep):
+                            # Run loop; it should perform one no-op iteration then one with checks
+                            try:
+                                await asyncio.wait_for(bot._periodic_token_check(), timeout=1.0)
+                            except asyncio.TimeoutError:  # pragma: no cover
+                                bot.running = False
+
+        # After execution, loop should have stopped by mock_irc_health
+        assert not bot.running
+
+    async def test_periodic_token_check_cancelled_exit_branch(self, bot_config):
+        """Covers the CancelledError except branch including the re-raise (exit path)."""
+        # Update config for this test
+        bot_config.update({
+            "refresh_token": "test_refresh",
+            "client_secret": "test_secret",
+            "user_id": "12345",
+        })
+        bot = TwitchColorBot(**bot_config)
+        bot.running = True
+
+        async def dummy():
+            await asyncio.sleep(0)
+
+        with patch.object(bot, "_check_irc_health", side_effect=dummy):
+            with patch.object(bot, "_check_and_refresh_token", side_effect=dummy):
+                with patch.object(bot, "_get_token_check_interval", return_value=300):
+                    original_sleep = asyncio.sleep
+                    async def fast_sleep(delay):
+                        await original_sleep(0)
+                    with patch("asyncio.sleep", side_effect=fast_sleep):
+                        task = asyncio.create_task(bot._periodic_token_check())
+                        # Let the task start and enter its sleep
+                        await asyncio.sleep(0)
+                        task.cancel()
+                        with pytest.raises(asyncio.CancelledError):
+                            await task

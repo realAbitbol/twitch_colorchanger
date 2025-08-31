@@ -160,7 +160,7 @@ Create a config file from the sample:
 ```bash
 cp twitch_colorchanger.conf.sample twitch_colorchanger.conf
 # Edit the config file with your credentials
-python main.py
+python -m src.main
 ```
 
 #### Option C: Docker
@@ -197,7 +197,7 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
 # Run the bot
-python main.py
+python -m src.main
 ```
 
 ### Docker Deployment
@@ -258,7 +258,7 @@ The bot loads settings from `twitch_colorchanger.conf` by default. You can use a
 ```bash
 # Use a custom config file
 export TWITCH_CONF_FILE=/path/to/my-config.conf
-python main.py
+python -m src.main
 
 # Or for Docker
 docker run -e TWITCH_CONF_FILE=/app/config/my-config.conf \
@@ -342,7 +342,7 @@ The bot automatically watches for changes to the configuration file and restarts
 
 **Example workflow:**
 
-1. Start the bot: `python main.py`
+1. Start the bot: `python -m src.main`
 2. Edit `twitch_colorchanger.conf` in your editor
 3. Save the file - bots automatically restart with new config
 4. Check the console output for restart confirmation
@@ -376,7 +376,7 @@ Enable detailed logging for troubleshooting:
 
 ```bash
 # Local debugging
-DEBUG=true python main.py
+DEBUG=true python -m src.main
 
 # Docker with debug logging
 docker run -e DEBUG=true damastah/twitch-colorchanger:latest
@@ -558,7 +558,7 @@ If you prefer to manage your own virtual environment:
 python3 -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate.bat
 pip install -r requirements.txt
-python main.py
+python -m src.main
 ```
 
 ---

@@ -1380,8 +1380,12 @@ class TestBotManagerHealthMonitoring:
         bot.irc.is_healthy.return_value = True
         bot.irc.get_connection_stats.return_value = {
             "time_since_activity": 30.0,
-            "consecutive_ping_failures": 0,
-            "connection_failures": 0,
+            "connected": True,
+            "running": True,
+            "is_healthy": True,
+            "last_server_activity": 1234567890,
+            "last_ping_from_server": 1234567890,
+            "time_since_server_ping": 0,
         }
         bot.irc.force_reconnect.return_value = True
         return bot
