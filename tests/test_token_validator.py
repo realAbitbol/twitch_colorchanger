@@ -1,9 +1,8 @@
 """Tests for token_validator module."""
 
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock, Mock
+from unittest.mock import AsyncMock, patch, MagicMock
 import asyncio
-import httpx
 
 from src.token_validator import (
     TokenValidator,
@@ -73,7 +72,7 @@ class TestTokenValidator:
             validate_response = MagicMock()
             validate_response.status_code = 200
             validate_response.json.return_value = {"expires_in": 3600}  # 1 hour
-            
+
             # Second response: refresh success
             refresh_response = MagicMock()
             refresh_response.status_code = 200
@@ -332,7 +331,7 @@ class TestValidateUserTokens:
     async def test_validate_user_tokens_no_access_token(self):
         """Test validation with no access token."""
         user = {"username": "testuser"}
-        
+
         with patch("src.token_validator.print_log") as mock_log:
             result = await validate_user_tokens(user)
             assert result["valid"] is False
@@ -346,7 +345,7 @@ class TestValidateUserTokens:
             "username": "testuser",
             "access_token": "token",
         }
-        
+
         with patch("src.token_validator.print_log") as mock_log:
             result = await validate_user_tokens(user)
             assert result["valid"] is False

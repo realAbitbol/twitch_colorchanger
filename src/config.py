@@ -386,12 +386,14 @@ async def _validate_or_refresh_tokens(user):
     This avoids circular imports between config.py and bot.py.
     """
     from .token_validator import validate_user_tokens
-    
+
     try:
         return await validate_user_tokens(user)
     except Exception:
         # In case of any exception, return failure
         return {"valid": False, "user": user, "updated": False}
+
+
 async def _get_new_tokens_via_device_flow(user, client_id, client_secret):
     """Get new tokens using device flow and ensure they're saved to config."""
     username = user.get("username", "Unknown")
@@ -431,12 +433,14 @@ async def _get_new_tokens_via_device_flow(user, client_id, client_secret):
 async def _validate_new_tokens(user):
     """Validate newly obtained tokens."""
     from .token_validator import validate_new_tokens
-    
+
     try:
         return await validate_new_tokens(user)
     except Exception:
         # In case of any exception, return failure
         return {"valid": False, "user": user}
+
+
 def _save_updated_config(updated_users, config_file):
     """Save updated configuration to file."""
     try:
