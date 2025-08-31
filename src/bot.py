@@ -142,7 +142,16 @@ class TwitchColorBot:
         
         # Deduplicate and normalize channels
         unique_channels = list(dict.fromkeys([ch.lower().replace('#', '') for ch in self.channels]))
-        self.channels = unique_channels  # Update bot's channel list with deduplicated channels
+        
+        # Check if deduplication changed the channels list
+        if unique_channels != self.channels:
+            print_log(f"📝 {self.username}: Deduplicated channels: {len(self.channels)} → {len(unique_channels)}", BColors.OKBLUE)
+            self.channels = unique_channels  # Update bot's channel list with deduplicated channels
+            
+            # Persist the deduplicated channels to configuration
+            self._persist_channel_deduplication()
+        else:
+            self.channels = unique_channels  # Update bot's channel list even if no change
         
         # Set up all channels in IRC object before connecting
         self.irc.channels = unique_channels.copy()
@@ -569,6 +578,28 @@ class TwitchColorBot:
                 print_log(
                     f"⚠️ {
                         self.username}: Failed to save token changes: {e}",
+                    BColors.WARNING)
+
+    def _persist_channel_deduplication(self):
+        """Persist deduplicated channels to configuration file"""
+        if hasattr(self, 'config_file') and self.config_file:
+            user_config = {
+                'username': self.username,
+                'client_id': self.client_id,
+                'client_secret': self.client_secret,
+                'access_token': self.access_token,
+                'refresh_token': self.refresh_token,
+                'channels': self.channels,  # Use the deduplicated channels
+                'is_prime_or_turbo': self.use_random_colors
+            }
+            try:
+                update_user_in_config(user_config, self.config_file)
+                print_log(
+                    f"💾 {self.username}: Deduplicated channels saved to configuration",
+                    BColors.OKGREEN)
+            except Exception as e:
+                print_log(
+                    f"⚠️ {self.username}: Failed to save deduplicated channels: {e}",
                     BColors.WARNING)
 
     async def _change_color(self, hex_color=None):
