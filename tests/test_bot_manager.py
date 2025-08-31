@@ -62,7 +62,7 @@ class TestBotManager:
 
             assert success is True
             assert len(manager.bots) == 2
-            assert len(manager.tasks) == 2
+            assert len(manager.tasks) == 3  # 2 bot tasks + 1 health monitoring task
             assert manager.running is True
             assert manager.shutdown_initiated is False
 

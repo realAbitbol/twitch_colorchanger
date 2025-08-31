@@ -58,6 +58,10 @@ class BotManager:
 
         self.running = True
         self.shutdown_initiated = False  # Reset shutdown flag for new run
+        
+        # Start health monitoring
+        self._start_health_monitoring()
+        
         print_log("✅ All bots started successfully!", BColors.OKGREEN)
         return True
 
@@ -187,6 +191,111 @@ class BotManager:
         self.new_config = None
 
         return success
+
+    async def _monitor_bot_health(self):
+        """Monitor bot health and attempt reconnections if needed"""
+        while self.running and not self.shutdown_initiated:
+            try:
+                await asyncio.sleep(3600)  # Check every hour
+                
+                if not self.running or self.shutdown_initiated:
+                    break
+                
+                print_log("🔍 Performing hourly bot health check...", BColors.OKCYAN)
+                await self._perform_health_check()
+                    
+            except asyncio.CancelledError:
+                print_log("🔍 Health monitoring cancelled", BColors.WARNING)
+                raise  # Re-raise CancelledError
+            except Exception as e:
+                print_log(f"❌ Error during health check: {e}", BColors.FAIL)
+                await asyncio.sleep(60)  # Wait a minute before trying again
+
+    async def _perform_health_check(self):
+        """Perform the actual health check logic"""
+        unhealthy_bots = self._identify_unhealthy_bots()
+        
+        if unhealthy_bots:
+            await self._reconnect_unhealthy_bots(unhealthy_bots)
+        else:
+            print_log("✅ All bots are healthy", BColors.OKGREEN)
+
+    def _identify_unhealthy_bots(self):
+        """Identify bots that appear unhealthy"""
+        unhealthy_bots = []
+        for bot in self.bots:
+            if bot.irc and not bot.irc.is_healthy():
+                unhealthy_bots.append(bot)
+                self._log_bot_health_issues(bot)
+        return unhealthy_bots
+
+    def _log_bot_health_issues(self, bot):
+        """Log health issues for a specific bot"""
+        print_log(f"⚠️ Bot {bot.username} appears unhealthy", BColors.WARNING)
+        
+        # Get detailed stats for logging
+        stats = bot.irc.get_connection_stats()
+        print_log(
+            f"📊 {bot.username} health stats: "
+            f"time_since_activity={stats['time_since_activity']:.1f}s, "
+            f"consecutive_ping_failures={stats['consecutive_ping_failures']}, "
+            f"connection_failures={stats['connection_failures']}",
+            BColors.WARNING
+        )
+
+    async def _reconnect_unhealthy_bots(self, unhealthy_bots):
+        """Attempt to reconnect all unhealthy bots"""
+        print_log(
+            f"🔧 Attempting to reconnect {len(unhealthy_bots)} unhealthy bot(s)...",
+            BColors.WARNING
+        )
+        
+        for bot in unhealthy_bots:
+            success = await self._attempt_bot_reconnection(bot)
+            if success:
+                print_log(f"✅ Successfully reconnected {bot.username}", BColors.OKGREEN)
+            else:
+                print_log(f"❌ Failed to reconnect {bot.username}", BColors.FAIL)
+
+    async def _attempt_bot_reconnection(self, bot) -> bool:
+        """Attempt to reconnect a bot's IRC connection"""
+        try:
+            if not bot.irc:
+                print_log(f"❌ {bot.username}: No IRC connection to reconnect", BColors.FAIL)
+                return False
+            
+            # Force reconnection in the IRC client
+            success = bot.irc.force_reconnect()
+            
+            if success:
+                # Give it a moment to stabilize
+                await asyncio.sleep(2)
+                
+                # Verify the connection is actually healthy now
+                if bot.irc.is_healthy():
+                    return True
+                else:
+                    print_log(
+                        f"⚠️ {bot.username}: Reconnection succeeded but health check still fails",
+                        BColors.WARNING
+                    )
+                    return False
+            else:
+                print_log(f"❌ {bot.username}: IRC reconnection failed", BColors.FAIL)
+                return False
+                
+        except Exception as e:
+            print_log(f"❌ Error reconnecting {bot.username}: {e}", BColors.FAIL)
+            return False
+
+    def _start_health_monitoring(self):
+        """Start the health monitoring task"""
+        if self.running:
+            health_task = asyncio.create_task(self._monitor_bot_health())
+            self.tasks.append(health_task)
+            print_log("🔍 Started bot health monitoring", BColors.OKCYAN)
+            return health_task
+        return None
 
     def _save_statistics(self) -> Dict[str, Dict[str, int]]:
         """Save current bot statistics"""
