@@ -139,10 +139,19 @@ class TwitchColorBot:
 
         # Create IRC connection
         self.irc = SimpleTwitchIRC()
-        self.irc.connect(self.access_token, self.username, self.channels[0])
+        
+        # Deduplicate and normalize channels
+        unique_channels = list(dict.fromkeys([ch.lower().replace('#', '') for ch in self.channels]))
+        self.channels = unique_channels  # Update bot's channel list with deduplicated channels
+        
+        # Set up all channels in IRC object before connecting
+        self.irc.channels = unique_channels.copy()
+        
+        # Connect to IRC with the first channel
+        self.irc.connect(self.access_token, self.username, unique_channels[0])
 
-        # Join all configured channels
-        for channel in self.channels:
+        # Join all configured channels (join_channel now checks for duplicates)
+        for channel in unique_channels:
             self.irc.join_channel(channel)
 
         # Set up message handler
@@ -228,7 +237,7 @@ class TwitchColorBot:
 
                 if self.running:  # Check if still running after sleep
                     await self._check_and_refresh_token()
-                    
+
                     # Also check IRC connection health
                     await self._check_irc_health()
 
@@ -250,11 +259,11 @@ class TwitchColorBot:
         """Check IRC connection health and reconnect if needed"""
         if not self.irc:
             return
-            
+
         try:
             # Get connection health stats
             stats = self.irc.get_connection_stats()
-            
+
             # Log health status in debug mode
             print_log(
                 f"🏥 {self.username} IRC health: {stats['is_healthy']}, "
@@ -263,7 +272,7 @@ class TwitchColorBot:
                 BColors.OKBLUE,
                 debug_only=True
             )
-            
+
             # Check if connection is unhealthy
             if not stats['is_healthy']:
                 print_log(
@@ -271,10 +280,10 @@ class TwitchColorBot:
                     f"last activity {stats['time_since_activity']:.1f}s ago",
                     BColors.WARNING
                 )
-                
+
                 # Attempt to force reconnection
                 await self._reconnect_irc()
-                
+
         except Exception as e:
             print_log(
                 f"⚠️ Error checking IRC health for {self.username}: {e}",
@@ -285,7 +294,7 @@ class TwitchColorBot:
         """Attempt to reconnect IRC connection"""
         try:
             print_log(f"🔄 {self.username}: Attempting IRC reconnection...", BColors.WARNING)
-            
+
             # Cancel current IRC task if running
             if self.irc_task and not self.irc_task.done():
                 self.irc_task.cancel()
@@ -293,17 +302,17 @@ class TwitchColorBot:
                     await asyncio.wait_for(self.irc_task, timeout=2.0)
                 except (asyncio.TimeoutError, asyncio.CancelledError):
                     pass
-            
+
             # Force reconnection
             if self.irc.force_reconnect():
                 # Restart IRC listening task
                 loop = asyncio.get_event_loop()
                 self.irc_task = loop.run_in_executor(None, self.irc.listen)
-                
+
                 print_log(f"✅ {self.username}: IRC reconnection successful", BColors.OKGREEN)
             else:
                 print_log(f"❌ {self.username}: IRC reconnection failed", BColors.FAIL)
-                
+
         except Exception as e:
             print_log(
                 f"❌ Error reconnecting IRC for {self.username}: {e}",
@@ -646,8 +655,8 @@ class TwitchColorBot:
         error_text = str(e)
         if ("Turbo or Prime user" in error_text or "Hex color code" in error_text) and self.use_random_colors:
             logger.warning(
-                f"User {
-                    self.username} requires Turbo/Prime for hex colors. Disabling random colors and using preset colors.",
+                f"User {self.username} requires Turbo/Prime for hex colors. "
+                "Disabling random colors and using preset colors.",
                 user=self.username)
 
             # Disable random colors for this user

@@ -4,7 +4,7 @@ Tests for simple_irc.py module
 
 import socket
 import time
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock, MagicMock, patch, call
 
 import pytest
 from src.logger import BColors
@@ -140,18 +140,18 @@ class TestSimpleTwitchIRC:
         assert "testchannel" in irc_client.joined_channels
 
     def test_join_channel_retry(self, irc_client, mock_socket):
-        """Test joining a channel with retry logic"""
+        """Test that joining a channel twice prevents duplicate joins"""
         irc_client.sock = mock_socket
         irc_client.connected = True
 
         # First join
         irc_client.join_channel("testchannel")
-        # Second join (retry)
+        # Second join attempt (should be prevented)
         irc_client.join_channel("testchannel")
 
-        # Should have 2 send calls
-        assert mock_socket.send.call_count == 2
-        assert irc_client.pending_joins["testchannel"]["attempts"] == 2
+        # Should have only 1 send call (duplicate prevented)
+        assert mock_socket.send.call_count == 1
+        assert irc_client.pending_joins["testchannel"]["attempts"] == 1
 
     def test_join_channel_not_connected(self, irc_client, mock_socket):
         """Test joining channel when not connected"""
@@ -783,3 +783,772 @@ class TestSimpleIRCBranchCoverage:
 
         processed = [c.args[0] for c in mock_process.call_args_list]
         assert processed == ["PING :tmi.twitch.tv"]
+
+
+class TestIRCHealthMonitoring:
+    """Test IRC health monitoring functionality"""
+
+    @pytest.fixture
+    def irc_client(self):
+        """Create IRC client for testing"""
+        return SimpleTwitchIRC()
+
+    @pytest.fixture
+    def bot_config(self):
+        """Bot configuration for testing"""
+        return {
+            'token': 'test_token',
+            'refresh_token': 'test_refresh_token',
+            'client_id': 'test_client_id',
+            'client_secret': 'test_client_secret',
+            'nick': 'testuser',
+            'channels': ['testchannel'],
+            'is_prime_or_turbo': True,
+            'config_file': None,
+            'user_id': None
+        }
+
+    def test_health_monitoring_initialization(self, irc_client):
+        """Test health monitoring fields are initialized"""
+        assert irc_client.last_client_ping_sent == 0
+        assert irc_client.last_pong_received == 0
+        assert irc_client.last_server_activity == 0
+        assert irc_client.last_ping_from_server == 0
+        assert irc_client.server_activity_timeout == 300
+        assert irc_client.expected_ping_interval == 270
+        assert irc_client.client_ping_interval == 300
+        assert irc_client.pong_timeout == 15
+        assert irc_client.consecutive_ping_failures == 0
+        assert irc_client.max_consecutive_ping_failures == 3
+
+    def test_handle_pong(self, irc_client):
+        """Test PONG message handling"""
+        test_time = time.time()
+        
+        with patch('src.simple_irc.time.time', return_value=test_time):
+            with patch('src.simple_irc.print_log'):
+                irc_client._handle_pong("PONG :tmi.twitch.tv")
+        
+        assert irc_client.last_pong_received == test_time
+        assert irc_client.last_server_activity == test_time
+
+    def test_send_client_ping_success(self, irc_client):
+        """Test successful client PING sending"""
+        mock_socket = MagicMock()
+        irc_client.sock = mock_socket
+        irc_client.connected = True
+        
+        test_time = time.time()
+        with patch('src.simple_irc.time.time', return_value=test_time):
+            with patch('src.simple_irc.print_log'):
+                result = irc_client._send_client_ping()
+        
+        assert result is True
+        assert irc_client.last_client_ping_sent == test_time
+        mock_socket.send.assert_called_once()
+
+    def test_send_client_ping_failure(self, irc_client):
+        """Test client PING sending failure"""
+        mock_socket = MagicMock()
+        mock_socket.send.side_effect = Exception("Send failed")
+        irc_client.sock = mock_socket
+        irc_client.connected = True
+        
+        with patch('src.simple_irc.print_log'):
+            result = irc_client._send_client_ping()
+        
+        assert result is False
+
+    def test_send_client_ping_not_connected(self, irc_client):
+        """Test client PING sending when not connected"""
+        result = irc_client._send_client_ping()
+        assert result is False
+
+    def test_check_connection_health_healthy(self, irc_client):
+        """Test connection health check when healthy"""
+        now = time.time()
+        irc_client.last_server_activity = now - 30  # 30 seconds ago
+        irc_client.last_pong_received = now
+        irc_client.last_client_ping_sent = now - 10
+        irc_client.last_ping_from_server = now - 100
+        
+        with patch('src.simple_irc.time.time', return_value=now):
+            result = irc_client._check_connection_health()
+        
+        assert result is True
+
+    def test_check_connection_health_pong_timeout(self, irc_client):
+        """Test connection health check with PONG timeout"""
+        now = time.time()
+        irc_client.last_client_ping_sent = now - 20  # 20 seconds ago
+        irc_client.last_pong_received = now - 30  # 30 seconds ago
+        irc_client.pong_timeout = 15  # Expect PONG within 15 seconds
+        irc_client.last_server_activity = now - 10  # Recent activity
+        
+        with patch('src.simple_irc.time.time', return_value=now):
+            with patch('src.simple_irc.print_log'):
+                result = irc_client._check_connection_health()
+        
+        assert result is False
+
+    def test_check_connection_health_send_client_ping(self, irc_client):
+        """Test connection health check sends client PING when needed"""
+        now = time.time()
+        irc_client.last_server_activity = now - 30  # Recent activity
+        irc_client.last_client_ping_sent = now - 310  # > client_ping_interval
+        irc_client.last_pong_received = now - 50  # Before last ping
+        irc_client.client_ping_interval = 300
+        irc_client.consecutive_ping_failures = 0  # No previous failures
+        
+        with patch('src.simple_irc.time.time', return_value=now):
+            with patch.object(irc_client, '_send_client_ping', return_value=True) as mock_send_ping:
+                result = irc_client._check_connection_health()
+        
+        mock_send_ping.assert_called_once()
+        assert result is True
+
+    def test_is_connection_stale_activity_timeout(self, irc_client):
+        """Test stale connection detection by activity timeout"""
+        now = time.time()
+        irc_client.last_server_activity = now - 400  # > server_activity_timeout
+        irc_client.server_activity_timeout = 300
+        
+        with patch('src.simple_irc.time.time', return_value=now):
+            result = irc_client._is_connection_stale()
+        
+        assert result is True
+
+    def test_is_connection_stale_pong_timeout(self, irc_client):
+        """Test stale connection detection by PONG timeout"""
+        now = time.time()
+        irc_client.last_client_ping_sent = now - 20
+        irc_client.last_pong_received = now - 30
+        irc_client.pong_timeout = 15
+        irc_client.last_server_activity = now - 10  # Recent activity
+        
+        with patch('src.simple_irc.time.time', return_value=now):
+            result = irc_client._is_connection_stale()
+        
+        assert result is True
+
+    def test_is_connection_stale_healthy(self, irc_client):
+        """Test stale connection detection when healthy"""
+        now = time.time()
+        irc_client.last_server_activity = now - 30
+        irc_client.last_client_ping_sent = now - 10
+        irc_client.last_pong_received = now - 5
+        
+        with patch('src.simple_irc.time.time', return_value=now):
+            result = irc_client._is_connection_stale()
+        
+        assert result is False
+
+    def test_process_line_updates_activity(self, irc_client):
+        """Test that processing lines updates server activity"""
+        test_time = time.time()
+        
+        with patch('src.simple_irc.time.time', return_value=test_time):
+            with patch.object(irc_client, '_parse_message', return_value=None):
+                irc_client._process_line("SOME IRC LINE")
+        
+        assert irc_client.last_server_activity == test_time
+
+    def test_process_line_handles_pong(self, irc_client):
+        """Test that PONG messages are handled"""
+        with patch.object(irc_client, '_handle_pong') as mock_handle_pong:
+            irc_client._process_line("PONG :tmi.twitch.tv")
+        
+        mock_handle_pong.assert_called_once_with("PONG :tmi.twitch.tv")
+
+    def test_perform_periodic_checks_health_failure(self, irc_client):
+        """Test periodic checks when health check fails"""
+        with patch.object(irc_client, '_check_join_timeouts'):
+            with patch.object(irc_client, '_is_connection_stale', return_value=True):
+                with patch('src.simple_irc.print_log'):
+                    result = irc_client._perform_periodic_checks()
+        
+        assert result is True  # Should trigger disconnection
+
+    def test_perform_periodic_checks_health_success(self, irc_client):
+        """Test periodic checks when health check succeeds"""
+        with patch.object(irc_client, '_check_join_timeouts'):
+            with patch.object(irc_client, '_is_connection_stale', return_value=False):
+                result = irc_client._perform_periodic_checks()
+        
+        assert result is False  # Should continue
+
+    def test_listen_initializes_health_monitoring(self, irc_client):
+        """Test that listen() initializes health monitoring timestamps"""
+        mock_socket = MagicMock()
+        mock_socket.recv.return_value = b""  # Empty data to break loop
+        irc_client.sock = mock_socket
+        irc_client.running = True
+        irc_client.connected = True
+        
+        test_time = time.time()
+        with patch('src.simple_irc.time.time', return_value=test_time):
+            with patch('src.simple_irc.print_log'):
+                irc_client.listen()
+        
+        assert irc_client.last_server_activity == test_time
+
+    def test_listen_detects_stale_connection_on_timeout(self, irc_client):
+        """Test that listen() detects stale connections on socket timeout"""
+        mock_socket = MagicMock()
+        mock_socket.recv.side_effect = [Exception("timeout"), b""]  # Timeout then empty
+        irc_client.sock = mock_socket
+        irc_client.running = True
+        irc_client.connected = True
+        
+        with patch.object(irc_client, '_is_connection_stale', return_value=True):
+            with patch('src.simple_irc.print_log'):
+                irc_client.listen()
+
+    def test_is_healthy(self, irc_client):
+        """Test is_healthy() method"""
+        irc_client.connected = True
+        irc_client.running = True
+        irc_client.sock = MagicMock()
+        
+        # Not connected
+        irc_client.connected = False
+        assert irc_client.is_healthy() is False
+        
+        # Connected but unhealthy
+        irc_client.connected = True
+        with patch.object(irc_client, '_check_connection_health', return_value=False):
+            assert irc_client.is_healthy() is False
+        
+        # Connected and healthy
+        with patch.object(irc_client, '_check_connection_health', return_value=True):
+            assert irc_client.is_healthy() is True
+
+    def test_get_connection_stats(self, irc_client):
+        """Test get_connection_stats() method"""
+        now = time.time()
+        irc_client.connected = True
+        irc_client.running = True
+        irc_client.last_server_activity = now - 30
+        irc_client.last_ping_from_server = now - 100
+        irc_client.last_client_ping_sent = now - 50
+        irc_client.last_pong_received = now - 40
+        irc_client.consecutive_ping_failures = 1
+        
+        with patch('src.simple_irc.time.time', return_value=now):
+            with patch.object(irc_client, 'is_healthy', return_value=True):
+                stats = irc_client.get_connection_stats()
+        
+        assert stats['connected'] is True
+        assert stats['running'] is True
+        assert stats['last_server_activity'] == now - 30
+        assert stats['time_since_activity'] == 30
+        assert stats['last_client_ping_sent'] == now - 50
+        assert stats['last_pong_received'] == now - 40
+        assert stats['consecutive_ping_failures'] == 1
+        assert stats['is_healthy'] is True
+
+    def test_force_reconnect_success(self, irc_client):
+        """Test successful force reconnection"""
+        irc_client.username = "testuser"
+        irc_client.token = "oauth:token"
+        irc_client.channels = ["channel1", "channel2", "channel3"]  # Multiple channels to test the loop
+        
+        with patch.object(irc_client, 'disconnect'):
+            with patch.object(irc_client, 'connect', return_value=True) as mock_connect:
+                with patch.object(irc_client, 'join_channel') as mock_join:
+                    with patch('src.simple_irc.time.sleep'):
+                        with patch('src.simple_irc.print_log'):
+                            result = irc_client.force_reconnect()
+        
+        assert result is True
+        mock_connect.assert_called_once_with("oauth:token", "testuser", "channel1")
+        # Should join all 3 channels after reconnection
+        assert mock_join.call_count == 3
+
+    def test_force_reconnect_missing_details(self, irc_client):
+        """Test force reconnection with missing connection details"""
+        with patch('src.simple_irc.print_log'):
+            result = irc_client.force_reconnect()
+        
+        assert result is False
+
+
+class TestBotIRCHealthIntegration:
+    """Test bot IRC health monitoring integration"""
+
+    @pytest.fixture
+    def bot_config(self):
+        """Bot configuration for testing"""
+        return {
+            'token': 'test_token',
+            'refresh_token': 'test_refresh_token',
+            'client_id': 'test_client_id',
+            'client_secret': 'test_client_secret',
+            'nick': 'testuser',
+            'channels': ['testchannel'],
+            'is_prime_or_turbo': True,
+            'config_file': None,
+            'user_id': None
+        }
+
+    async def test_check_irc_health_healthy(self, bot_config):
+        """Test IRC health check when connection is healthy"""
+        from src.bot import TwitchColorBot
+        bot = TwitchColorBot(**bot_config)
+        mock_irc = MagicMock()
+        mock_irc.get_connection_stats.return_value = {
+            'is_healthy': True,
+            'time_since_activity': 30.0,
+            'connection_failures': 0
+        }
+        bot.irc = mock_irc
+        
+        with patch('src.bot.print_log'):
+            await bot._check_irc_health()
+        
+        mock_irc.get_connection_stats.assert_called_once()
+
+    async def test_check_irc_health_unhealthy(self, bot_config):
+        """Test IRC health check when connection is unhealthy"""
+        from src.bot import TwitchColorBot
+        bot = TwitchColorBot(**bot_config)
+        mock_irc = MagicMock()
+        mock_irc.get_connection_stats.return_value = {
+            'is_healthy': False,
+            'time_since_activity': 150.0,
+            'connection_failures': 2
+        }
+        bot.irc = mock_irc
+        
+        with patch.object(bot, '_reconnect_irc') as mock_reconnect:
+            with patch('src.bot.print_log'):
+                await bot._check_irc_health()
+        
+        mock_reconnect.assert_called_once()
+
+    async def test_check_irc_health_no_irc(self, bot_config):
+        """Test IRC health check when no IRC connection exists"""
+        from src.bot import TwitchColorBot
+        bot = TwitchColorBot(**bot_config)
+        bot.irc = None
+        
+        # Should not raise exception
+        await bot._check_irc_health()
+
+    async def test_check_irc_health_exception(self, bot_config):
+        """Test IRC health check with exception"""
+        from src.bot import TwitchColorBot
+        bot = TwitchColorBot(**bot_config)
+        mock_irc = MagicMock()
+        mock_irc.get_connection_stats.side_effect = Exception("Stats error")
+        bot.irc = mock_irc
+        
+        with patch('src.bot.print_log'):
+            # Should not raise exception
+            await bot._check_irc_health()
+
+    async def test_reconnect_irc_success(self, bot_config):
+        """Test successful IRC reconnection"""
+        import asyncio
+        from src.bot import TwitchColorBot
+        bot = TwitchColorBot(**bot_config)
+        mock_irc = MagicMock()
+        mock_irc.force_reconnect.return_value = True
+        bot.irc = mock_irc
+        
+        mock_task = MagicMock()
+        mock_task.done.return_value = False
+        bot.irc_task = mock_task
+        
+        with patch('src.bot.asyncio.get_event_loop') as mock_get_loop:
+            mock_loop = MagicMock()
+            mock_get_loop.return_value = mock_loop
+            
+            with patch('src.bot.print_log'):
+                with patch('src.bot.asyncio.wait_for'):
+                    await bot._reconnect_irc()
+        
+        mock_irc.force_reconnect.assert_called_once()
+        mock_loop.run_in_executor.assert_called_once()
+
+    async def test_reconnect_irc_failure(self, bot_config):
+        """Test failed IRC reconnection"""
+        from src.bot import TwitchColorBot
+        bot = TwitchColorBot(**bot_config)
+        mock_irc = MagicMock()
+        mock_irc.force_reconnect.return_value = False
+        bot.irc = mock_irc
+        bot.irc_task = None
+        
+        with patch('src.bot.print_log'):
+            await bot._reconnect_irc()
+        
+        mock_irc.force_reconnect.assert_called_once()
+
+    async def test_reconnect_irc_exception(self, bot_config):
+        """Test IRC reconnection with exception"""
+        from src.bot import TwitchColorBot
+        bot = TwitchColorBot(**bot_config)
+        mock_irc = MagicMock()
+        mock_irc.force_reconnect.side_effect = Exception("Reconnect error")
+        bot.irc = mock_irc
+        
+        with patch('src.bot.print_log'):
+            # Should not raise exception
+            await bot._reconnect_irc()
+
+    async def test_periodic_token_check_includes_irc_health(self, bot_config):
+        """Test that periodic token check includes IRC health monitoring"""
+        import asyncio
+        from src.bot import TwitchColorBot
+        bot = TwitchColorBot(**bot_config)
+        bot.running = True
+        
+        check_count = 0
+        
+        async def mock_token_check():
+            nonlocal check_count
+            check_count += 1
+            if check_count >= 2:
+                bot.running = False  # Stop after 2 iterations
+            await asyncio.sleep(0.01)  # Simulate async work
+            return True
+        
+        async def mock_irc_check():
+            # Mock IRC health check - no actual work needed
+            await asyncio.sleep(0.001)
+        
+        with patch.object(bot, '_check_and_refresh_token', side_effect=mock_token_check):
+            with patch.object(bot, '_check_irc_health', side_effect=mock_irc_check) as mock_irc_health:
+                with patch.object(bot, '_get_token_check_interval', return_value=0.01):
+                    try:
+                        await asyncio.wait_for(bot._periodic_token_check(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        bot.running = False
+        
+        # Should have called IRC health check
+        assert mock_irc_health.call_count >= 1
+
+
+class TestFinalCoverage:
+    """Test to achieve 100% coverage for the final branch"""
+
+    def test_force_reconnect_preserves_multiple_channels(self):
+        """Test that force_reconnect properly preserves multiple channels"""
+        irc = SimpleTwitchIRC()
+        irc.username = "testuser"
+        irc.token = "oauth:testtoken"
+        irc.channels = ["channel1", "channel2", "channel3"]
+        irc.connected = True
+        
+        # Mock socket operations to avoid actual network calls
+        irc.socket = MagicMock()
+        
+        # Mock disconnect and connect methods
+        with patch.object(irc, 'disconnect') as mock_disconnect:
+            with patch.object(irc, 'connect', return_value=True) as mock_connect:
+                with patch.object(irc, 'join_channel') as mock_join:
+                    
+                    result = irc.force_reconnect()
+                    
+                    # Verify it returns True for successful reconnect
+                    assert result is True
+                    
+                    # Verify disconnect was called
+                    mock_disconnect.assert_called_once()
+                    
+                    # Verify connect was called with first channel
+                    mock_connect.assert_called_once_with("oauth:testtoken", "testuser", "channel1")
+                    
+                    # Verify all channels were joined
+                    expected_join_calls = [call("channel1"), call("channel2"), call("channel3")]
+                    mock_join.assert_has_calls(expected_join_calls)
+                    
+                    # Verify channels list is preserved
+                    assert irc.channels == ["channel1", "channel2", "channel3"]
+
+    def test_force_reconnect_connect_failure_branch(self):
+        """Test the false branch of 'if success:' in force_reconnect"""
+        irc = SimpleTwitchIRC()
+        irc.username = "testuser"
+        irc.token = "oauth:testtoken"
+        irc.channels = ["channel1", "channel2"]
+        
+        # Mock disconnect method
+        with patch.object(irc, 'disconnect') as mock_disconnect:
+            # Mock connect to return False to hit the false branch
+            with patch.object(irc, 'connect', return_value=False) as mock_connect:
+                with patch.object(irc, 'join_channel') as mock_join:
+                    
+                    # This should trigger the false branch
+                    result = irc.force_reconnect()
+                    
+                    # Verify disconnect was called
+                    mock_disconnect.assert_called_once()
+                    
+                    # Verify connect was called
+                    mock_connect.assert_called_once()
+                    
+                    # Result should be False
+                    assert result is False
+                    
+                    # join_channel should NOT be called when connect fails
+                    mock_join.assert_not_called()
+                    
+                    # Channels should still be preserved even if reconnect failed
+                    assert irc.channels == ["channel1", "channel2"]
+
+
+class TestIRCHealthMonitoringCoverage:
+    """Test missing coverage in IRC health monitoring"""
+
+    @pytest.fixture
+    def irc_client(self):
+        """Create an IRC client for testing"""
+        irc = SimpleTwitchIRC()
+        # Set up basic state
+        irc.username = "testuser"
+        irc.token = "testtoken"
+        irc.channels = ["#testchannel"]
+        return irc
+
+    def test_handle_pong_with_pending_client_ping(self, irc_client):
+        """Test handling PONG when we have a pending client ping"""
+        now = time.time()
+        irc_client.last_client_ping_sent = now - 5  # Sent 5 seconds ago
+        irc_client.last_pong_received = now - 10  # Older pong
+        irc_client.consecutive_ping_failures = 2
+        
+        irc_client._handle_pong("PONG :tmi.twitch.tv")
+        
+        # Should update last_pong_received and reset failures
+        assert irc_client.last_pong_received > now - 1  # Recent
+        assert irc_client.consecutive_ping_failures == 0
+
+    def test_handle_pong_without_pending_client_ping(self, irc_client):
+        """Test handling PONG when no client ping is pending"""
+        now = time.time()
+        irc_client.last_client_ping_sent = 0  # No client ping sent yet
+        irc_client.last_pong_received = now - 5  # Older pong
+        irc_client.consecutive_ping_failures = 1
+        
+        irc_client._handle_pong("PONG :tmi.twitch.tv")
+        
+        # Should still update last_pong_received but not reset failures (since no client ping was sent)
+        assert irc_client.last_pong_received > now - 1  # Recent
+        assert irc_client.consecutive_ping_failures == 1  # Should remain unchanged
+
+    def test_send_client_ping_socket_send_exception(self, irc_client):
+        """Test client ping when socket send raises exception"""
+        irc_client.socket = MagicMock()
+        irc_client.socket.send.side_effect = Exception("Send failed")
+        
+        result = irc_client._send_client_ping()
+        
+        assert result is False
+
+    def test_check_connection_health_max_ping_failures(self, irc_client):
+        """Test connection health when max ping failures reached"""
+        now = time.time()
+        irc_client.last_server_activity = now - 30  # Recent activity
+        irc_client.consecutive_ping_failures = 3  # At max
+        irc_client.max_consecutive_ping_failures = 3
+        
+        result = irc_client._check_connection_health()
+        
+        assert result is False
+
+    def test_check_connection_health_pending_pong_timeout(self, irc_client):
+        """Test connection health when pending PONG times out"""
+        now = time.time()
+        irc_client.last_server_activity = now - 30  # Recent activity
+        irc_client.consecutive_ping_failures = 0
+        irc_client.last_client_ping_sent = now - 5  # Recent ping
+        irc_client.last_pong_received = now - 20  # Older pong (so ping is pending)
+        irc_client.pong_timeout = 3  # 3 second timeout
+        
+        with patch('src.simple_irc.time.time', return_value=now):
+            result = irc_client._check_connection_health()
+        
+        assert result is False
+        assert irc_client.consecutive_ping_failures == 1  # Should increment
+
+    def test_check_connection_health_server_ping_timeout(self, irc_client):
+        """Test connection health when server ping times out"""
+        now = time.time()
+        irc_client.last_server_activity = now - 30  # Recent activity
+        irc_client.consecutive_ping_failures = 0
+        irc_client.last_ping_from_server = now - 310  # 310 seconds ago
+        irc_client.expected_ping_interval = 300  # Expected every 300 seconds
+        
+        result = irc_client._check_connection_health()
+        
+        assert result is False
+
+    def test_check_connection_health_triggers_client_ping(self, irc_client):
+        """Test connection health triggers client ping when needed"""
+        now = time.time()
+        irc_client.last_server_activity = now - 30  # Recent activity
+        irc_client.last_client_ping_sent = now - 310  # 310 seconds ago
+        irc_client.last_pong_received = now - 300  # Received PONG for previous ping
+        irc_client.client_ping_interval = 300  # Send every 300 seconds
+        irc_client.consecutive_ping_failures = 0
+        irc_client.last_ping_from_server = now - 100  # Recent server ping
+        
+        with patch('src.simple_irc.time.time', return_value=now):
+            with patch.object(irc_client, '_send_client_ping', return_value=True) as mock_ping:
+                result = irc_client._check_connection_health()
+        
+        mock_ping.assert_called_once()
+        assert result is True
+
+    def test_check_connection_health_client_ping_fails(self, irc_client):
+        """Test connection health when client ping fails"""
+        now = time.time()
+        irc_client.last_server_activity = now - 30  # Recent activity
+        irc_client.last_client_ping_sent = now - 310  # 310 seconds ago
+        irc_client.last_pong_received = now - 300  # Received PONG for previous ping
+        irc_client.client_ping_interval = 300  # Send every 300 seconds
+        irc_client.consecutive_ping_failures = 0
+        irc_client.last_ping_from_server = now - 100  # Recent server ping
+        
+        with patch('src.simple_irc.time.time', return_value=now):
+            with patch.object(irc_client, '_send_client_ping', return_value=False) as mock_ping:
+                result = irc_client._check_connection_health()
+        
+        mock_ping.assert_called_once()
+        assert result is False
+
+
+class TestIRCMiscCoverage:
+    """Test other missing IRC coverage"""
+
+    @pytest.fixture
+    def irc_client(self):
+        """Create an IRC client for testing"""
+        irc = SimpleTwitchIRC()
+        # Set up basic state
+        irc.username = "testuser"
+        irc.token = "testtoken"
+        irc.channels = ["#testchannel"]
+        return irc
+
+    def test_force_reconnect_missing_details(self):
+        """Test force_reconnect when missing connection details"""
+        irc = SimpleTwitchIRC()  # Missing details (all None)
+        
+        result = irc.force_reconnect()
+        
+        assert result is False
+
+    def test_force_reconnect_with_channels(self):
+        """Test force_reconnect when connection succeeds and joins channels"""
+        import socket
+        irc = SimpleTwitchIRC()
+        irc.username = "testuser"
+        irc.token = "testtoken"
+        irc.channels = ["#testchannel1", "#testchannel2"]
+        
+        with patch.object(irc, 'disconnect'), \
+             patch.object(irc, 'connect', return_value=True), \
+             patch.object(irc, 'join_channel') as mock_join, \
+             patch('src.simple_irc.time.sleep'):
+            
+            result = irc.force_reconnect()
+            
+        # Should return True (based on connect success)
+        assert result is True
+        # Should join all channels
+        assert mock_join.call_count == 2
+        mock_join.assert_any_call("#testchannel1")
+        mock_join.assert_any_call("#testchannel2")
+
+    def test_perform_periodic_checks_failure(self):
+        """Test periodic checks failure in listen loop"""
+        import socket
+        irc = SimpleTwitchIRC()
+        irc.username = "testuser"
+        irc.sock = MagicMock()
+        irc.connected = True
+        irc.running = True
+        
+        # Mock recv to simulate timeout, then failure
+        calls = 0
+        def recv_side_effect(size):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise socket.timeout()
+            else:
+                return b"PRIVMSG #test :hello\r\n"
+        
+        irc.sock.recv.side_effect = recv_side_effect
+        
+        with patch.object(irc, '_perform_periodic_checks', return_value=True), \
+             patch.object(irc, '_is_connection_stale', return_value=False):
+            # Should break on periodic checks failure
+            irc.listen()
+    
+    def test_connection_stale_in_listen(self):
+        """Test connection stale detection in listen loop"""
+        import socket
+        irc = SimpleTwitchIRC()
+        irc.username = "testuser"
+        irc.sock = MagicMock()
+        irc.connected = True
+        irc.running = True
+        
+        # Mock recv to raise timeout
+        irc.sock.recv.side_effect = socket.timeout()
+        
+        with patch.object(irc, '_perform_periodic_checks', return_value=False), \
+             patch.object(irc, '_is_connection_stale', return_value=True):
+            # Should break on stale connection
+            irc.listen()
+
+
+class TestDirectCoverage:
+    """Direct tests for the remaining uncovered lines"""
+
+    def test_simple_irc_force_reconnect_channel_join_path(self):
+        """Test force_reconnect successfully reconnects and joins channels"""
+        # Create IRC client and set up multiple channels to trigger the loop
+        irc = SimpleTwitchIRC()
+        irc.token = "oauth:test_token"
+        irc.username = "testuser"
+        irc.channels = ["channel1", "channel2"]
+        
+        # Track if the success branch was taken
+        success_branch_executed = False
+        
+        def track_join_channel(channel):
+            nonlocal success_branch_executed
+            success_branch_executed = True
+            # Don't actually try to send to socket
+            return None
+        
+        # Mock the underlying socket operations but let force_reconnect run naturally
+        with patch('socket.socket') as mock_socket_class:
+            mock_socket_instance = MagicMock()
+            mock_socket_class.return_value = mock_socket_instance
+            mock_socket_instance.connect.return_value = None
+            mock_socket_instance.settimeout.return_value = None
+            mock_socket_instance.send.return_value = None  # Don't actually send data
+            
+            # Mock join_channel to track execution
+            with patch.object(irc, 'join_channel', side_effect=track_join_channel) as mock_join:
+                # Call force_reconnect to exercise the actual code path
+                result = irc.force_reconnect()
+                
+                # Should return True for successful reconnection
+                assert result is True
+                
+                # Should have executed the success branch (if success:)
+                assert success_branch_executed, "Success branch was not executed"
+                
+                # Should join each channel once in the loop (lines 442-444)
+                assert mock_join.call_count == 2  # channel1 and channel2
+                
+                # Verify the specific channels were joined
+                expected_calls = [call('channel1'), call('channel2')]
+                mock_join.assert_has_calls(expected_calls)
