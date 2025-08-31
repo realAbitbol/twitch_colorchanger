@@ -29,7 +29,7 @@ class TestPrintLog:
 
     def test_print_log_debug_mode_enabled(self, capsys):
         """Test debug message when debug mode is enabled"""
-        with patch.dict(os.environ, {'DEBUG': '1'}):
+        with patch.dict(os.environ, {"DEBUG": "1"}):
             print_log("Debug message", debug_only=True)
             captured = capsys.readouterr()
             assert "Debug message" in captured.out
@@ -50,13 +50,13 @@ class TestPrintLog:
     def test_print_log_debug_dynamic_check(self, capsys):
         """Test that DEBUG is checked dynamically, not just at import"""
         # Start with debug disabled
-        with patch.dict(os.environ, {'DEBUG': 'false'}):
+        with patch.dict(os.environ, {"DEBUG": "false"}):
             print_log("Should not print", debug_only=True)
             captured1 = capsys.readouterr()
             assert "Should not print" not in captured1.out
 
         # Change environment and test again
-        with patch.dict(os.environ, {'DEBUG': 'true'}):
+        with patch.dict(os.environ, {"DEBUG": "true"}):
             print_log("Should print now", debug_only=True)
             captured2 = capsys.readouterr()
             assert "Should print now" in captured2.out
@@ -81,9 +81,10 @@ class TestPrintInstructions:
 
         # Instructions should contain some guidance
         output_lower = captured.out.lower()
-        assert any(keyword in output_lower for keyword in [
-            'config', 'setup', 'bot', 'twitch', 'color', 'usage'
-        ])
+        assert any(
+            keyword in output_lower
+            for keyword in ["config", "setup", "bot", "twitch", "color", "usage"]
+        )
 
 
 class TestUtilsIntegration:
@@ -107,7 +108,7 @@ class TestUtilsIntegration:
         for color in colors:
             assert color in captured.out
 
-    @patch.dict(os.environ, {'DEBUG': '1'})
+    @patch.dict(os.environ, {"DEBUG": "1"})
     def test_debug_and_normal_messages(self, capsys):
         """Test combination of debug and normal messages"""
         print_log("Normal message")
@@ -126,7 +127,7 @@ class TestUtilsIntegration:
         # Test with various input types
         print_log(123)  # Integer
         print_log(None)  # None
-        print_log("")   # Empty string
+        print_log("")  # Empty string
 
         captured = capsys.readouterr()
 

@@ -50,7 +50,7 @@ class TestSimpleRetry:
         mock_func = AsyncMock()
         mock_func.side_effect = [Exception("Error 1"), Exception("Error 2"), "success"]
 
-        with patch('asyncio.sleep') as mock_sleep:
+        with patch("asyncio.sleep") as mock_sleep:
             result = await simple_retry(mock_func, max_retries=3, delay=1)
 
         assert result == "success"
@@ -65,7 +65,7 @@ class TestSimpleRetry:
         mock_func = AsyncMock()
         mock_func.side_effect = Exception("Persistent error")
 
-        with patch('asyncio.sleep') as mock_sleep:
+        with patch("asyncio.sleep") as mock_sleep:
             with pytest.raises(Exception, match="Persistent error"):
                 await simple_retry(mock_func, max_retries=2, delay=0.5)
 
@@ -80,7 +80,7 @@ class TestSimpleRetry:
         mock_func = AsyncMock()
         mock_func.side_effect = [Exception("Error"), Exception("Error"), "success"]
 
-        with patch('asyncio.sleep') as mock_sleep:
+        with patch("asyncio.sleep") as mock_sleep:
             result = await simple_retry(mock_func, max_retries=2, delay=0.1)
 
         assert result == "success"
@@ -104,8 +104,8 @@ class TestSimpleRetry:
         """Test that user context is included in retry logging"""
         mock_func = AsyncMock(side_effect=Exception("Test error"))
 
-        with patch('src.error_handling.logger') as mock_logger:
-            with patch('asyncio.sleep'):
+        with patch("src.error_handling.logger") as mock_logger:
+            with patch("asyncio.sleep"):
                 with pytest.raises(Exception):
                     await simple_retry(mock_func, max_retries=1, user="testuser")
 
@@ -120,8 +120,8 @@ class TestSimpleRetry:
         """Test retry logging without user context"""
         mock_func = AsyncMock(side_effect=Exception("Test error"))
 
-        with patch('src.error_handling.logger') as mock_logger:
-            with patch('asyncio.sleep'):
+        with patch("src.error_handling.logger") as mock_logger:
+            with patch("asyncio.sleep"):
                 with pytest.raises(Exception):
                     await simple_retry(mock_func, max_retries=1)
 
@@ -138,9 +138,10 @@ class TestSimpleRetry:
         mock_func.side_effect = [
             ValueError("Value error"),
             RuntimeError("Runtime error"),
-            "success"]
+            "success",
+        ]
 
-        with patch('asyncio.sleep'):
+        with patch("asyncio.sleep"):
             result = await simple_retry(mock_func, max_retries=3)
 
         assert result == "success"
@@ -151,7 +152,7 @@ class TestSimpleRetry:
         """Test that CancelledError is not retried (special case)"""
         mock_func = AsyncMock(side_effect=asyncio.CancelledError("Cancelled"))
 
-        with patch('asyncio.sleep') as mock_sleep:
+        with patch("asyncio.sleep") as mock_sleep:
             with pytest.raises(asyncio.CancelledError):
                 await simple_retry(mock_func, max_retries=2)
 
@@ -167,7 +168,7 @@ class TestLogError:
         """Test logging error without user context"""
         test_error = Exception("Test error message")
 
-        with patch('src.error_handling.logger') as mock_logger:
+        with patch("src.error_handling.logger") as mock_logger:
             log_error("Test message", test_error)
 
         mock_logger.error.assert_called_once()
@@ -179,7 +180,7 @@ class TestLogError:
         """Test logging error with user context"""
         test_error = Exception("Test error message")
 
-        with patch('src.error_handling.logger') as mock_logger:
+        with patch("src.error_handling.logger") as mock_logger:
             log_error("Test message", test_error, user="testuser")
 
         mock_logger.error.assert_called_once()
@@ -191,7 +192,7 @@ class TestLogError:
         """Test logging error with empty user string (should not include user context)"""
         test_error = Exception("Test error message")
 
-        with patch('src.error_handling.logger') as mock_logger:
+        with patch("src.error_handling.logger") as mock_logger:
             log_error("Test message", test_error, user="")
 
         mock_logger.error.assert_called_once()
@@ -203,7 +204,7 @@ class TestLogError:
         """Test logging error with None user (should be treated as no user)"""
         test_error = Exception("Test error message")
 
-        with patch('src.error_handling.logger') as mock_logger:
+        with patch("src.error_handling.logger") as mock_logger:
             log_error("Test message", test_error, user=None)
 
         mock_logger.error.assert_called_once()
@@ -217,10 +218,10 @@ class TestLogError:
             ValueError("Value error"),
             RuntimeError("Runtime error"),
             ConnectionError("Connection error"),
-            APIError("API error", 500)
+            APIError("API error", 500),
         ]
 
-        with patch('src.error_handling.logger') as mock_logger:
+        with patch("src.error_handling.logger") as mock_logger:
             for error in errors_to_test:
                 mock_logger.reset_mock()
                 log_error("Error occurred", error, user="testuser")
@@ -240,12 +241,13 @@ class TestIntegration:
         """Test retry mechanism with APIError"""
         mock_func = AsyncMock()
         mock_func.side_effect = [
-            APIError(
-                "API Error", 500), APIError(
-                "API Error", 502), "success"]
+            APIError("API Error", 500),
+            APIError("API Error", 502),
+            "success",
+        ]
 
-        with patch('src.error_handling.logger') as mock_logger:
-            with patch('asyncio.sleep'):
+        with patch("src.error_handling.logger") as mock_logger:
+            with patch("asyncio.sleep"):
                 result = await simple_retry(mock_func, max_retries=2, user="testuser")
 
         assert result == "success"
@@ -263,8 +265,8 @@ class TestIntegration:
         """Test that max retries exceeded logs final error"""
         mock_func = AsyncMock(side_effect=APIError("Persistent API Error", 500))
 
-        with patch('src.error_handling.logger') as mock_logger:
-            with patch('asyncio.sleep'):
+        with patch("src.error_handling.logger") as mock_logger:
+            with patch("asyncio.sleep"):
                 with pytest.raises(APIError):
                     await simple_retry(mock_func, max_retries=1, user="testuser")
 

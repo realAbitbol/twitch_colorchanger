@@ -19,14 +19,14 @@ from tests.fixtures.sample_configs import MULTI_USER_CONFIG
 
 def _create_temp_config_file(config_data):
     """Helper to create temporary config file for testing"""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".conf", delete=False) as f:
         json.dump(config_data, f)
         return f.name
 
 
 def _update_config_file(config_file, new_config):
     """Helper to update config file for testing"""
-    with open(config_file, 'w') as cf:
+    with open(config_file, "w") as cf:
         json.dump(new_config, cf, indent=2)
 
 
@@ -37,17 +37,19 @@ class TestBotManagerIntegration:
     @pytest.mark.asyncio
     async def test_run_multiple_bots(self, temp_config_file):
         """Test running multiple bots simultaneously"""
-        with patch('src.bot_manager.BotManager._start_all_bots', return_value=True) as mock_start:
-            with patch('src.bot_manager._run_main_loop') as mock_main_loop:
+        with patch(
+            "src.bot_manager.BotManager._start_all_bots", return_value=True
+        ) as mock_start:
+            with patch("src.bot_manager._run_main_loop") as mock_main_loop:
                 # Mock the main loop to set shutdown flag and return
                 def mock_main_loop_impl(manager):
                     manager.shutdown_initiated = True
 
                 mock_main_loop.side_effect = mock_main_loop_impl
 
-                with patch('src.config_watcher.start_config_watcher'):
+                with patch("src.config_watcher.start_config_watcher"):
                     # Instead of calling get_configuration, use the test config directly
-                    users_config = MULTI_USER_CONFIG['users']
+                    users_config = MULTI_USER_CONFIG["users"]
 
                     # This should start and complete quickly
                     await run_bots(users_config, temp_config_file)
@@ -71,9 +73,14 @@ class TestBotManagerIntegration:
                 watcher_callback = callback
                 return Mock()
 
-            with patch('src.config_watcher.start_config_watcher', side_effect=mock_start_watcher):
-                with patch('src.bot_manager.BotManager._start_all_bots', return_value=True):
-                    with patch('src.bot_manager._run_main_loop') as mock_main_loop:
+            with patch(
+                "src.config_watcher.start_config_watcher",
+                side_effect=mock_start_watcher,
+            ):
+                with patch(
+                    "src.bot_manager.BotManager._start_all_bots", return_value=True
+                ):
+                    with patch("src.bot_manager._run_main_loop") as mock_main_loop:
                         # Mock the main loop to set shutdown flag and return
                         def mock_main_loop_impl(manager):
                             manager.shutdown_initiated = True
@@ -82,7 +89,7 @@ class TestBotManagerIntegration:
                         mock_main_loop.side_effect = mock_main_loop_impl
 
                         # Use test config directly instead of calling get_configuration
-                        users_config = MULTI_USER_CONFIG['users']
+                        users_config = MULTI_USER_CONFIG["users"]
 
                         # Start bots and complete quickly
                         await run_bots(users_config, config_file)
@@ -91,7 +98,7 @@ class TestBotManagerIntegration:
                         if watcher_callback:
                             # Modify and save config using helper
                             modified_config = MULTI_USER_CONFIG.copy()
-                            modified_config['users'][0]['channels'] = ['newchannel']
+                            modified_config["users"][0]["channels"] = ["newchannel"]
                             _update_config_file(config_file, modified_config)
 
                             # Trigger callback
@@ -113,20 +120,20 @@ class TestFullApplicationFlow:
         try:
             from src.bot import TwitchColorBot
 
-            user_config = MULTI_USER_CONFIG['users'][0]
+            user_config = MULTI_USER_CONFIG["users"][0]
             bot = TwitchColorBot(
-                token=user_config['access_token'],
-                refresh_token=user_config['refresh_token'],
-                client_id=user_config['client_id'],
-                client_secret=user_config['client_secret'],
-                nick=user_config['username'],
-                channels=user_config['channels'],
-                is_prime_or_turbo=user_config['is_prime_or_turbo'],
+                token=user_config["access_token"],
+                refresh_token=user_config["refresh_token"],
+                client_id=user_config["client_id"],
+                client_secret=user_config["client_secret"],
+                nick=user_config["username"],
+                channels=user_config["channels"],
+                is_prime_or_turbo=user_config["is_prime_or_turbo"],
                 config_file=config_file,
-                user_id="123456789"  # Provide user_id directly for testing
+                user_id="123456789",  # Provide user_id directly for testing
             )
 
-            with patch('src.bot.aiohttp.ClientSession') as mock_session_class:
+            with patch("src.bot.aiohttp.ClientSession") as mock_session_class:
                 mock_session = AsyncMock()
                 mock_session_class.return_value.__aenter__.return_value = mock_session
 
@@ -143,7 +150,7 @@ class TestFullApplicationFlow:
 
                 # Setup different responses for different endpoints
                 def mock_request_side_effect(*args, **kwargs):
-                    if 'oauth2/token' in str(args):
+                    if "oauth2/token" in str(args):
                         return token_response
                     return user_response
 
@@ -155,24 +162,38 @@ class TestFullApplicationFlow:
                 mock_post_cm.__aexit__.return_value = None
                 mock_session.post.return_value = mock_post_cm
 
-                with patch('src.bot.SimpleTwitchIRC') as mock_irc_class:
-                    with patch('src.config.update_user_in_config', return_value=True):
-                        with patch('asyncio.sleep', return_value=None):  # Mock sleep to return immediately
-                            with patch('src.bot.get_rate_limiter') as mock_rate_limiter:
+                with patch("src.bot.SimpleTwitchIRC") as mock_irc_class:
+                    with patch("src.config.update_user_in_config", return_value=True):
+                        with patch(
+                            "asyncio.sleep", return_value=None
+                        ):  # Mock sleep to return immediately
+                            with patch("src.bot.get_rate_limiter") as mock_rate_limiter:
                                 # Configure the mock rate limiter
                                 mock_rate_limiter_instance = Mock()
-                                mock_rate_limiter_instance.wait_if_needed.return_value = None
-                                mock_rate_limiter_instance.update_from_headers.return_value = None
-                                mock_rate_limiter_instance.handle_429_error.return_value = None
-                                mock_rate_limiter.return_value = mock_rate_limiter_instance
+                                mock_rate_limiter_instance.wait_if_needed.return_value = (
+                                    None
+                                )
+                                mock_rate_limiter_instance.update_from_headers.return_value = (
+                                    None
+                                )
+                                mock_rate_limiter_instance.handle_429_error.return_value = (
+                                    None
+                                )
+                                mock_rate_limiter.return_value = (
+                                    mock_rate_limiter_instance
+                                )
 
                                 # Configure the mock IRC
                                 mock_irc_instance = Mock()
-                                mock_irc_instance.listen.return_value = None  # Make listen return immediately
+                                mock_irc_instance.listen.return_value = (
+                                    None  # Make listen return immediately
+                                )
                                 mock_irc_instance.disconnect.return_value = None
                                 mock_irc_instance.connect.return_value = True
                                 mock_irc_instance.join_channel.return_value = None
-                                mock_irc_instance.set_message_handler.return_value = None
+                                mock_irc_instance.set_message_handler.return_value = (
+                                    None
+                                )
                                 mock_irc_class.return_value = mock_irc_instance
 
                                 # Mock the bot's start method to avoid the circular
@@ -181,7 +202,8 @@ class TestFullApplicationFlow:
                                     await asyncio.sleep(0)  # Make it truly async
                                     bot.running = True
                                     bot.user_id = "123456789"
-                                bot.start = mock_start                                # Start bot
+
+                                bot.start = mock_start  # Start bot
                                 await bot.start()
 
                                 assert bot.running is True
@@ -192,8 +214,11 @@ class TestFullApplicationFlow:
                                     await asyncio.sleep(0)  # Make it truly async
                                     bot.access_token = "new_access_token_12345"
                                     bot.refresh_token = "new_refresh_token_67890"
-                                    bot.token_expiry = datetime.now() + timedelta(seconds=14400)
+                                    bot.token_expiry = datetime.now() + timedelta(
+                                        seconds=14400
+                                    )
                                     return True
+
                                 bot._refresh_access_token = mock_refresh
 
                                 # Simulate token refresh
@@ -214,25 +239,27 @@ class TestFullApplicationFlow:
         from src.bot import TwitchColorBot
         from src.colors import generate_random_hex_color
 
-        user_config = MULTI_USER_CONFIG['users'][0]
+        user_config = MULTI_USER_CONFIG["users"][0]
         bot = TwitchColorBot(
-            token=user_config['access_token'],
-            refresh_token=user_config['refresh_token'],
-            client_id=user_config['client_id'],
-            client_secret=user_config['client_secret'],
-            nick=user_config['username'],
-            channels=user_config['channels'],
-            is_prime_or_turbo=user_config['is_prime_or_turbo']
+            token=user_config["access_token"],
+            refresh_token=user_config["refresh_token"],
+            client_id=user_config["client_id"],
+            client_secret=user_config["client_secret"],
+            nick=user_config["username"],
+            channels=user_config["channels"],
+            is_prime_or_turbo=user_config["is_prime_or_turbo"],
         )
 
         bot.user_id = "123456789"
         bot.running = True
 
-        with patch('src.bot._make_api_request') as mock_api:
+        with patch("src.bot._make_api_request") as mock_api:
             # Mock successful color change
             mock_api.return_value = ({}, 204, {})
 
-            with patch.object(bot.rate_limiter, 'wait_if_needed', new_callable=AsyncMock):
+            with patch.object(
+                bot.rate_limiter, "wait_if_needed", new_callable=AsyncMock
+            ):
                 # Test hex color change (Prime user)
                 hex_color = generate_random_hex_color()
                 result = await bot._change_color(hex_color)
@@ -242,9 +269,9 @@ class TestFullApplicationFlow:
 
                 # Verify API was called with correct parameters
                 call_args = mock_api.call_args
-                assert call_args[0][0] == 'PUT'  # HTTP method
-                assert 'chat/color' in call_args[0][1]  # endpoint
-                assert call_args[1]['params']['color'] == hex_color
+                assert call_args[0][0] == "PUT"  # HTTP method
+                assert "chat/color" in call_args[0][1]  # endpoint
+                assert call_args[1]["params"]["color"] == hex_color
 
 
 @pytest.mark.integration
@@ -257,24 +284,26 @@ class TestPerformanceIntegration:
         """Test handling of multiple rapid color changes"""
         from src.bot import TwitchColorBot
 
-        user_config = MULTI_USER_CONFIG['users'][0]
+        user_config = MULTI_USER_CONFIG["users"][0]
         bot = TwitchColorBot(
-            token=user_config['access_token'],
-            refresh_token=user_config['refresh_token'],
-            client_id=user_config['client_id'],
-            client_secret=user_config['client_secret'],
-            nick=user_config['username'],
-            channels=user_config['channels'],
-            is_prime_or_turbo=user_config['is_prime_or_turbo']
+            token=user_config["access_token"],
+            refresh_token=user_config["refresh_token"],
+            client_id=user_config["client_id"],
+            client_secret=user_config["client_secret"],
+            nick=user_config["username"],
+            channels=user_config["channels"],
+            is_prime_or_turbo=user_config["is_prime_or_turbo"],
         )
 
         bot.user_id = "123456789"
         bot.running = True
 
-        with patch('src.bot._make_api_request') as mock_api:
+        with patch("src.bot._make_api_request") as mock_api:
             mock_api.return_value = ({}, 204, {})
 
-            with patch.object(bot.rate_limiter, 'wait_if_needed', new_callable=AsyncMock):
+            with patch.object(
+                bot.rate_limiter, "wait_if_needed", new_callable=AsyncMock
+            ):
                 # Simulate rapid message sending
                 for i in range(10):
                     bot._handle_message("primeuser", f"Message {i}", "#testchannel")

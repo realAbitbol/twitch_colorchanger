@@ -66,11 +66,12 @@ class TestConfigFileHandler:
         mock_event.is_directory = False
         mock_event.src_path = "/path/to/config.json"
 
-        with patch('src.config_watcher.logger') as mock_logger:
+        with patch("src.config_watcher.logger") as mock_logger:
             handler.on_modified(mock_event)
 
             mock_logger.debug.assert_called_with(
-                "📝 Config change ignored (bot-initiated)")
+                "📝 Config change ignored (bot-initiated)"
+            )
             mock_watcher._on_config_changed.assert_not_called()
 
     def test_on_modified_debounced(self):
@@ -96,8 +97,8 @@ class TestConfigFileHandler:
         # Should only trigger once due to debouncing
         assert mock_watcher._on_config_changed.call_count == 1
 
-    @patch('src.config_watcher.threading.Thread')
-    @patch('src.config_watcher.logger')
+    @patch("src.config_watcher.threading.Thread")
+    @patch("src.config_watcher.logger")
     def test_on_modified_success(self, mock_logger, mock_thread):
         """Test successful config file modification handling"""
         mock_watcher = MagicMock()
@@ -115,11 +116,12 @@ class TestConfigFileHandler:
         handler.on_modified(mock_event)
 
         mock_logger.info.assert_called_with(
-            "📁 Config file changed: /path/to/config.json")
+            "📁 Config file changed: /path/to/config.json"
+        )
         mock_thread.assert_called_once()
         _, kwargs = mock_thread.call_args
-        assert kwargs['target'] == mock_watcher._on_config_changed
-        assert kwargs['daemon'] is True
+        assert kwargs["target"] == mock_watcher._on_config_changed
+        assert kwargs["daemon"] is True
 
 
 class TestConfigWatcher:
@@ -136,7 +138,7 @@ class TestConfigWatcher:
         assert watcher.running is False
         assert watcher.paused is False
 
-    @patch('src.config_watcher.logger')
+    @patch("src.config_watcher.logger")
     def test_pause_watching(self, mock_logger):
         """Test pausing the config watcher"""
         mock_callback = MagicMock()
@@ -146,9 +148,10 @@ class TestConfigWatcher:
 
         assert watcher.paused is True
         mock_logger.debug.assert_called_with(
-            "⏸️ Config watcher paused (bot update in progress)")
+            "⏸️ Config watcher paused (bot update in progress)"
+        )
 
-    @patch('src.config_watcher.logger')
+    @patch("src.config_watcher.logger")
     def test_resume_watching(self, mock_logger):
         """Test resuming the config watcher"""
         mock_callback = MagicMock()
@@ -171,8 +174,8 @@ class TestConfigWatcher:
         # Should not create observer or change state
         assert watcher.observer is None
 
-    @patch('src.config_watcher.os.path.exists')
-    @patch('src.config_watcher.logger')
+    @patch("src.config_watcher.os.path.exists")
+    @patch("src.config_watcher.logger")
     def test_start_config_dir_not_exists(self, mock_logger, mock_exists):
         """Test starting when config directory doesn't exist"""
         mock_exists.return_value = False
@@ -182,12 +185,13 @@ class TestConfigWatcher:
         watcher.start()
 
         mock_logger.warning.assert_called_with(
-            "Config directory does not exist: /path/to")
+            "Config directory does not exist: /path/to"
+        )
         assert watcher.running is False
 
-    @patch('src.config_watcher.os.path.exists')
-    @patch('src.config_watcher.Observer')
-    @patch('src.config_watcher.logger')
+    @patch("src.config_watcher.os.path.exists")
+    @patch("src.config_watcher.Observer")
+    @patch("src.config_watcher.logger")
     def test_start_success(self, mock_logger, mock_observer_class, mock_exists):
         """Test successful watcher start"""
         mock_exists.return_value = True
@@ -204,11 +208,12 @@ class TestConfigWatcher:
         mock_observer.schedule.assert_called_once()
         mock_observer.start.assert_called_once()
         mock_logger.info.assert_called_with(
-            "👀 Started watching config file: /path/to/config.json")
+            "👀 Started watching config file: /path/to/config.json"
+        )
 
-    @patch('src.config_watcher.os.path.exists')
-    @patch('src.config_watcher.Observer')
-    @patch('src.config_watcher.logger')
+    @patch("src.config_watcher.os.path.exists")
+    @patch("src.config_watcher.Observer")
+    @patch("src.config_watcher.logger")
     def test_start_exception(self, mock_logger, mock_observer_class, mock_exists):
         """Test watcher start with exception"""
         mock_exists.return_value = True
@@ -223,9 +228,10 @@ class TestConfigWatcher:
 
         assert watcher.running is False
         mock_logger.error.assert_called_with(
-            "Failed to start config watcher: Test error")
+            "Failed to start config watcher: Test error"
+        )
 
-    @patch('src.config_watcher.logger')
+    @patch("src.config_watcher.logger")
     def test_stop_not_running(self, mock_logger):
         """Test stopping when not running"""
         mock_callback = MagicMock()
@@ -236,7 +242,7 @@ class TestConfigWatcher:
         # Should not call any observer methods
         mock_logger.info.assert_not_called()
 
-    @patch('src.config_watcher.logger')
+    @patch("src.config_watcher.logger")
     def test_stop_success(self, mock_logger):
         """Test successful watcher stop"""
         mock_callback = MagicMock()
@@ -253,11 +259,12 @@ class TestConfigWatcher:
         mock_observer.join.assert_called_once()
         mock_logger.info.assert_called_with("👁️ Stopped config file watcher")
 
-    @patch('src.config_watcher.load_users_from_config')
-    @patch('src.config_watcher.get_valid_users')
-    @patch('src.config_watcher.logger')
+    @patch("src.config_watcher.load_users_from_config")
+    @patch("src.config_watcher.get_valid_users")
+    @patch("src.config_watcher.logger")
     def test_on_config_changed_empty_config(
-            self, mock_logger, mock_get_valid, mock_load):
+        self, mock_logger, mock_get_valid, mock_load
+    ):
         """Test config change with empty config"""
         mock_callback = MagicMock()
         watcher = ConfigWatcher("/path/to/config.json", mock_callback)
@@ -267,14 +274,16 @@ class TestConfigWatcher:
         watcher._on_config_changed()
 
         mock_logger.warning.assert_called_with(
-            "⚠️ Config file is empty or invalid, ignoring changes")
+            "⚠️ Config file is empty or invalid, ignoring changes"
+        )
         mock_callback.assert_not_called()
 
-    @patch('src.config_watcher.load_users_from_config')
-    @patch('src.config_watcher.get_valid_users')
-    @patch('src.config_watcher.logger')
+    @patch("src.config_watcher.load_users_from_config")
+    @patch("src.config_watcher.get_valid_users")
+    @patch("src.config_watcher.logger")
     def test_on_config_changed_no_valid_users(
-            self, mock_logger, mock_get_valid, mock_load):
+        self, mock_logger, mock_get_valid, mock_load
+    ):
         """Test config change with no valid users"""
         mock_callback = MagicMock()
         watcher = ConfigWatcher("/path/to/config.json", mock_callback)
@@ -285,12 +294,13 @@ class TestConfigWatcher:
         watcher._on_config_changed()
 
         mock_logger.error.assert_called_with(
-            "❌ New config contains no valid users, ignoring changes")
+            "❌ New config contains no valid users, ignoring changes"
+        )
         mock_callback.assert_not_called()
 
-    @patch('src.config_watcher.load_users_from_config')
-    @patch('src.config_watcher.get_valid_users')
-    @patch('src.config_watcher.logger')
+    @patch("src.config_watcher.load_users_from_config")
+    @patch("src.config_watcher.get_valid_users")
+    @patch("src.config_watcher.logger")
     def test_on_config_changed_success(self, mock_logger, mock_get_valid, mock_load):
         """Test successful config change handling"""
         mock_callback = MagicMock()
@@ -302,11 +312,12 @@ class TestConfigWatcher:
         watcher._on_config_changed()
 
         mock_logger.info.assert_called_with(
-            "✅ Config validation passed - 2 valid user(s)")
+            "✅ Config validation passed - 2 valid user(s)"
+        )
         mock_callback.assert_called_once_with([{"name": "user1"}, {"name": "user2"}])
 
-    @patch('src.config_watcher.load_users_from_config')
-    @patch('src.config_watcher.logger')
+    @patch("src.config_watcher.load_users_from_config")
+    @patch("src.config_watcher.logger")
     def test_on_config_changed_exception(self, mock_logger, mock_load):
         """Test config change with exception"""
         mock_callback = MagicMock()
@@ -317,14 +328,15 @@ class TestConfigWatcher:
         watcher._on_config_changed()
 
         mock_logger.error.assert_called_with(
-            "Error processing config change: Test error")
+            "Error processing config change: Test error"
+        )
         mock_callback.assert_not_called()
 
 
 class TestConfigWatcherFunctions:
     """Test standalone functions in config_watcher module"""
 
-    @patch('src.config_watcher.ConfigWatcher')
+    @patch("src.config_watcher.ConfigWatcher")
     def test_start_config_watcher(self, mock_watcher_class):
         """Test start_config_watcher function"""
         mock_callback = MagicMock()
@@ -336,8 +348,8 @@ class TestConfigWatcherFunctions:
         assert result == mock_watcher
         mock_watcher.start.assert_called_once()
 
-    @patch('src.config_watcher.ConfigWatcher')
-    @patch('src.config_watcher.asyncio.get_event_loop')
+    @patch("src.config_watcher.ConfigWatcher")
+    @patch("src.config_watcher.asyncio.get_event_loop")
     async def test_create_config_watcher(self, mock_get_loop, mock_watcher_class):
         """Test create_config_watcher function"""
         mock_callback = MagicMock()

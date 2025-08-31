@@ -39,6 +39,7 @@ class ConfigFileHandler(FileSystemEventHandler):
 
             # Debounce rapid fire events (some editors trigger multiple events)
             import time
+
             current_time = time.time()
             if current_time - self.last_modified < 1.0:  # 1 second debounce
                 return
@@ -48,8 +49,8 @@ class ConfigFileHandler(FileSystemEventHandler):
 
             # Run callback in a thread to avoid blocking the file watcher
             threading.Thread(
-                target=self.watcher._on_config_changed,
-                daemon=True).start()
+                target=self.watcher._on_config_changed, daemon=True
+            ).start()
 
 
 class ConfigWatcher:
@@ -122,7 +123,8 @@ class ConfigWatcher:
                 return
 
             logger.info(
-                f"✅ Config validation passed - {len(valid_users)} valid user(s)")
+                f"✅ Config validation passed - {len(valid_users)} valid user(s)"
+            )
 
             # Trigger bot restart with new config
             self.restart_callback(valid_users)
@@ -131,8 +133,9 @@ class ConfigWatcher:
             logger.error(f"Error processing config change: {e}")
 
 
-async def create_config_watcher(config_file: str,
-                                restart_callback: Callable) -> ConfigWatcher:
+async def create_config_watcher(
+    config_file: str, restart_callback: Callable
+) -> ConfigWatcher:
     """Create and start a config file watcher"""
     watcher = ConfigWatcher(config_file, restart_callback)
 

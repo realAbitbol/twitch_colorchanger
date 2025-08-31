@@ -28,7 +28,7 @@ class DeviceCodeFlow:
         """Request a device code from Twitch"""
         data = {
             "client_id": self.client_id,
-            "scopes": "chat:read user:manage:chat_color"
+            "scopes": "chat:read user:manage:chat_color",
         }
 
         async with aiohttp.ClientSession() as session:
@@ -37,14 +37,14 @@ class DeviceCodeFlow:
                     if response.status == 200:
                         result = await response.json()
                         print_log(
-                            "✅ Device code generated successfully",
-                            BColors.OKGREEN)
+                            "✅ Device code generated successfully", BColors.OKGREEN
+                        )
                         return result
                     else:
                         error_data = await response.json()
                         print_log(
-                            f"❌ Failed to get device code: {error_data}",
-                            BColors.FAIL)
+                            f"❌ Failed to get device code: {error_data}", BColors.FAIL
+                        )
                         return None
 
             except Exception as e:
@@ -52,15 +52,14 @@ class DeviceCodeFlow:
                 return None
 
     async def poll_for_tokens(
-            self,
-            device_code: str,
-            expires_in: int) -> Optional[Dict]:
+        self, device_code: str, expires_in: int
+    ) -> Optional[Dict]:
         """Poll for token authorization completion"""
         data = {
             "client_id": self.client_id,
             "client_secret": self.client_secret,
             "device_code": device_code,
-            "grant_type": "urn:ietf:params:oauth:grant-type:device_code"
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
         }
 
         start_time = time.time()
@@ -78,19 +77,22 @@ class DeviceCodeFlow:
                         if response.status == 200:
                             print_log(
                                 "✅ Authorization successful! Tokens received.",
-                                BColors.OKGREEN)
+                                BColors.OKGREEN,
+                            )
                             return result
 
                         elif response.status == 400:
                             error_result = self._handle_polling_error(
-                                result, elapsed, poll_count)
+                                result, elapsed, poll_count
+                            )
                             if error_result is not None:
                                 return error_result
                         else:
                             print_log(
                                 f"❌ Unexpected response: {
                                     response.status} - {result}",
-                                BColors.FAIL)
+                                BColors.FAIL,
+                            )
                             return None
 
                 except Exception as e:
@@ -104,10 +106,8 @@ class DeviceCodeFlow:
         return None
 
     def _handle_polling_error(
-            self,
-            result: Dict,
-            elapsed: int,
-            poll_count: int) -> Optional[Dict]:
+        self, result: Dict, elapsed: int, poll_count: int
+    ) -> Optional[Dict]:
         """Handle polling errors and return None to continue, or a value to return"""
         # Twitch API returns errors in 'message' field, not 'error'
         error = result.get("message", result.get("error", "unknown"))
@@ -118,14 +118,16 @@ class DeviceCodeFlow:
             print_log(
                 f"🔍 Device flow error details: {result}",
                 BColors.WARNING,
-                debug_only=True)
+                debug_only=True,
+            )
 
         if error == "authorization_pending":
             # Still waiting for user authorization
             if poll_count % 6 == 0:  # Show message every 30 seconds
                 print_log(
                     f"⏳ Still waiting for authorization... ({elapsed}s elapsed)",
-                    BColors.OKCYAN)
+                    BColors.OKCYAN,
+                )
             return None  # Continue polling
 
         elif error == "slow_down":
@@ -134,7 +136,8 @@ class DeviceCodeFlow:
             print_log(
                 f"⚠️ Slowing down polling to {
                     self.poll_interval}s",
-                BColors.WARNING)
+                BColors.WARNING,
+            )
             return None  # Continue polling
 
         elif error == "expired_token":
@@ -148,8 +151,8 @@ class DeviceCodeFlow:
         else:
             if error_description:
                 print_log(
-                    f"❌ Device flow error: {error} - {error_description}",
-                    BColors.FAIL)
+                    f"❌ Device flow error: {error} - {error_description}", BColors.FAIL
+                )
             else:
                 print_log(f"❌ Unknown device flow error: {error}", BColors.FAIL)
             return {}  # Stop polling
@@ -160,8 +163,8 @@ class DeviceCodeFlow:
         Returns (access_token, refresh_token) on success, None on failure
         """
         print_log(
-            f"\n🔧 Starting automatic token setup for user: {username}",
-            BColors.HEADER)
+            f"\n🔧 Starting automatic token setup for user: {username}", BColors.HEADER
+        )
         print_log("📱 You will need to authorize this bot on Twitch", BColors.OKCYAN)
 
         # Step 1: Request device code
@@ -185,7 +188,8 @@ class DeviceCodeFlow:
         print_log(
             f"⏳ Waiting for authorization... (checking every {
                 self.poll_interval}s)",
-            BColors.OKCYAN)
+            BColors.OKCYAN,
+        )
 
         # Step 3: Poll for authorization
         token_data = await self.poll_for_tokens(device_code, expires_in)

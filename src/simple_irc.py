@@ -21,7 +21,7 @@ class SimpleTwitchIRC:
         self.message_handler = None
 
         # IRC connection
-        self.server = 'irc.chat.twitch.tv'
+        self.server = "irc.chat.twitch.tv"
         self.port = 6667
         self.sock = None
         self.running = False
@@ -36,7 +36,9 @@ class SimpleTwitchIRC:
 
         # Connection health monitoring (Twitch-specific)
         self.last_server_activity = 0  # Track when we last heard from server
-        self.server_activity_timeout = 300  # 5 minutes without any server activity = dead connection
+        self.server_activity_timeout = (
+            300  # 5 minutes without any server activity = dead connection
+        )
         self.last_ping_from_server = 0  # When server last sent us a PING
         self.expected_ping_interval = 270  # Twitch typically pings every ~4.5 minutes
 
@@ -52,11 +54,11 @@ class SimpleTwitchIRC:
         """Connect to Twitch IRC with the given credentials"""
         # Set connection details
         self.username = username.lower()
-        self.token = token if token.startswith('oauth:') else f'oauth:{token}'
-        
+        self.token = token if token.startswith("oauth:") else f"oauth:{token}"
+
         # Initialize channels list with the provided channel if not already set
         if not self.channels:
-            self.channels = [channel.lower().replace('#', '')]
+            self.channels = [channel.lower().replace("#", "")]
 
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -64,13 +66,13 @@ class SimpleTwitchIRC:
             self.sock.connect((self.server, self.port))
 
             # Send authentication
-            self.sock.send(f"PASS {self.token}\r\n".encode('utf-8'))
-            self.sock.send(f"NICK {self.username}\r\n".encode('utf-8'))
+            self.sock.send(f"PASS {self.token}\r\n".encode("utf-8"))
+            self.sock.send(f"NICK {self.username}\r\n".encode("utf-8"))
 
             # Request capabilities
-            self.sock.send("CAP REQ :twitch.tv/membership\r\n".encode('utf-8'))
-            self.sock.send("CAP REQ :twitch.tv/tags\r\n".encode('utf-8'))
-            self.sock.send("CAP REQ :twitch.tv/commands\r\n".encode('utf-8'))
+            self.sock.send("CAP REQ :twitch.tv/membership\r\n".encode("utf-8"))
+            self.sock.send("CAP REQ :twitch.tv/tags\r\n".encode("utf-8"))
+            self.sock.send("CAP REQ :twitch.tv/commands\r\n".encode("utf-8"))
 
             self.connected = True
             self.running = True  # Enable the listening loop
@@ -87,68 +89,78 @@ class SimpleTwitchIRC:
 
     def join_channel(self, channel: str, _is_retry: bool = False):
         """Join a Twitch channel"""
-        channel = channel.lower().replace('#', '')
-        
+        channel = channel.lower().replace("#", "")
+
         # Don't join if already confirmed
         if channel in self.confirmed_channels:
             if not _is_retry:  # Only log for user calls, not internal retries
-                print_log(f"ℹ️ {self.username}: Already joined #{channel}, skipping", BColors.OKBLUE)
+                print_log(
+                    f"ℹ️ {self.username}: Already joined #{channel}, skipping",
+                    BColors.OKBLUE,
+                )
             return
-        
+
         # Don't join if already pending (unless it's an internal retry)
         if channel in self.pending_joins and not _is_retry:
-            print_log(f"ℹ️ {self.username}: Join already pending for #{channel}, skipping", BColors.OKBLUE)
+            print_log(
+                f"ℹ️ {self.username}: Join already pending for #{channel}, skipping",
+                BColors.OKBLUE,
+            )
             return
-            
+
         if self.sock and self.connected:
-            self.sock.send(f"JOIN #{channel}\r\n".encode('utf-8'))
+            self.sock.send(f"JOIN #{channel}\r\n".encode("utf-8"))
             self.joined_channels.add(channel)
             # Track pending join (or increment attempts if retrying)
             if _is_retry and channel in self.pending_joins:
-                self.pending_joins[channel]['attempts'] += 1
-                self.pending_joins[channel]['sent_at'] = time.time()
+                self.pending_joins[channel]["attempts"] += 1
+                self.pending_joins[channel]["sent_at"] = time.time()
             else:
-                self.pending_joins[channel] = {'sent_at': time.time(), 'attempts': 1}
+                self.pending_joins[channel] = {"sent_at": time.time(), "attempts": 1}
 
     def _parse_message(self, raw_message: str) -> Optional[dict]:
         """Parse IRC message into components"""
         try:
             # Split line depending on presence of tags; unify variable extraction
-            if raw_message.startswith('@'):
-                parts = raw_message.split(' ', 3)
+            if raw_message.startswith("@"):
+                parts = raw_message.split(" ", 3)
                 if len(parts) < 4:
                     return None
                 _, prefix, command, params = parts
             else:
-                parts = raw_message.split(' ', 2)
+                parts = raw_message.split(" ", 2)
                 if len(parts) < 3:
                     return None
                 prefix, command, params = parts
 
-            sender = prefix.split('!')[0].replace(
-                ':', '') if '!' in prefix else prefix.replace(
-                ':', '')
+            sender = (
+                prefix.split("!")[0].replace(":", "")
+                if "!" in prefix
+                else prefix.replace(":", "")
+            )
 
-            if command == 'PRIVMSG':
-                channel_msg = params.split(' :', 1)
+            if command == "PRIVMSG":
+                channel_msg = params.split(" :", 1)
                 if len(channel_msg) < 2:
                     return None
-                channel = channel_msg[0].replace('#', '')
+                channel = channel_msg[0].replace("#", "")
                 message = channel_msg[1]
                 return {
-                    'sender': sender,
-                    'channel': channel,
-                    'message': message,
-                    'command': command,
-                    'raw': raw_message}
-            if command == '366':  # RPL_ENDOFNAMES - successful join
-                channel = params.split(' ')[1].replace('#', '')
+                    "sender": sender,
+                    "channel": channel,
+                    "message": message,
+                    "command": command,
+                    "raw": raw_message,
+                }
+            if command == "366":  # RPL_ENDOFNAMES - successful join
+                channel = params.split(" ")[1].replace("#", "")
                 self.confirmed_channels.add(channel)
                 self.pending_joins.pop(channel, None)
                 print_log(
                     f"✅ {
                         self.username} successfully joined #{channel}",
-                    BColors.OKGREEN)
+                    BColors.OKGREEN,
+                )
             return None
         except Exception as e:
             print_log(f"⚠️ Parse error: {e}", BColors.WARNING)
@@ -162,8 +174,8 @@ class SimpleTwitchIRC:
         self.last_ping_from_server = now
 
         # Respond with PONG (standard IRC behavior)
-        pong = line.replace('PING', 'PONG')
-        self.sock.send(f"{pong}\r\n".encode('utf-8'))
+        pong = line.replace("PING", "PONG")
+        self.sock.send(f"{pong}\r\n".encode("utf-8"))
         print_log("🏓 Responded to server PING", BColors.OKCYAN, debug_only=True)
 
     def _handle_pong(self, line: str):
@@ -175,7 +187,9 @@ class SimpleTwitchIRC:
         # Reset failure counter on successful PONG
         if self.last_client_ping_sent > 0:
             self.consecutive_ping_failures = 0
-            print_log(f"🏓 Received PONG response: {line}", BColors.OKCYAN, debug_only=True)
+            print_log(
+                f"🏓 Received PONG response: {line}", BColors.OKCYAN, debug_only=True
+            )
 
     def _send_client_ping(self) -> bool:
         """Send a client-initiated PING to test connection health"""
@@ -184,9 +198,11 @@ class SimpleTwitchIRC:
 
         try:
             ping_msg = f"PING :health_check_{int(time.time())}"
-            self.sock.send(f"{ping_msg}\r\n".encode('utf-8'))
+            self.sock.send(f"{ping_msg}\r\n".encode("utf-8"))
             self.last_client_ping_sent = time.time()
-            print_log("🏓 Sent client health check PING", BColors.OKCYAN, debug_only=True)
+            print_log(
+                "🏓 Sent client health check PING", BColors.OKCYAN, debug_only=True
+            )
             return True
         except Exception as e:
             print_log(f"❌ Failed to send client PING: {e}", BColors.FAIL)
@@ -203,15 +219,16 @@ class SimpleTwitchIRC:
             print_log(
                 f"⚠️ {self.username}: No server activity for {time_since_activity:.1f}s "
                 f"(threshold: {self.server_activity_timeout}s)",
-                BColors.WARNING
+                BColors.WARNING,
             )
             return False
 
         # Check for too many consecutive client ping failures
         if self.consecutive_ping_failures >= self.max_consecutive_ping_failures:
             print_log(
-                f"⚠️ {self.username}: Too many consecutive client ping failures ({self.consecutive_ping_failures})",
-                BColors.WARNING
+                f"⚠️ {self.username}: Too many consecutive client ping failures "
+                f"({self.consecutive_ping_failures})",
+                BColors.WARNING,
             )
             return False
 
@@ -221,18 +238,21 @@ class SimpleTwitchIRC:
             if time_since_ping > self.pong_timeout:
                 print_log(
                     f"⚠️ {self.username}: Client PING timeout ({time_since_ping:.1f}s since PING)",
-                    BColors.WARNING
+                    BColors.WARNING,
                 )
                 self.consecutive_ping_failures += 1
                 return False
 
         # Check when server last sent us a PING (Twitch-specific)
         time_since_ping = now - self.last_ping_from_server
-        if time_since_ping > self.expected_ping_interval and self.last_ping_from_server > 0:
+        if (
+            time_since_ping > self.expected_ping_interval
+            and self.last_ping_from_server > 0
+        ):
             print_log(
                 f"⚠️ {self.username}: No PING from server for {time_since_ping:.1f}s "
                 f"(expected every ~{self.expected_ping_interval}s)",
-                BColors.WARNING
+                BColors.WARNING,
             )
             return False
 
@@ -250,12 +270,12 @@ class SimpleTwitchIRC:
 
     def _handle_privmsg(self, parsed: dict):
         """Handle PRIVMSG messages"""
-        sender = parsed['sender']
-        channel = parsed['channel']
-        message = parsed['message']
+        sender = parsed["sender"]
+        channel = parsed["channel"]
+        message = parsed["message"]
 
         # Log message - only show other users' messages in debug mode
-        display_msg = message[:50] + ('...' if len(message) > 50 else '')
+        display_msg = message[:50] + ("..." if len(message) > 50 else "")
         is_own_message = sender.lower() == self.username.lower()
         debug_only = not is_own_message  # Only show other users' messages in debug mode
         color = BColors.OKCYAN if is_own_message else BColors.OKBLUE
@@ -271,17 +291,17 @@ class SimpleTwitchIRC:
         # Update server activity timestamp for any message
         self.last_server_activity = time.time()
 
-        if line.startswith('PING'):
+        if line.startswith("PING"):
             self._handle_ping(line)
             return
 
-        if line.startswith('PONG'):
+        if line.startswith("PONG"):
             self._handle_pong(line)
             return
 
         # Parse message
         parsed = self._parse_message(line)
-        if parsed and parsed.get('command') == 'PRIVMSG':
+        if parsed and parsed.get("command") == "PRIVMSG":
             self._handle_privmsg(parsed)
 
     def _perform_periodic_checks(self):
@@ -300,17 +320,18 @@ class SimpleTwitchIRC:
         """Process incoming IRC data and return updated buffer"""
         print_log(
             f"📡 IRC received data: {repr(data[:100])}{'...' if len(data) > 100 else ''}",
-            BColors.OKCYAN, debug_only=True
+            BColors.OKCYAN,
+            debug_only=True,
         )
         buffer += data
 
-        while '\r\n' in buffer:
-            line, buffer = buffer.split('\r\n', 1)
+        while "\r\n" in buffer:
+            line, buffer = buffer.split("\r\n", 1)
             if line:
                 print_log(
                     f"📝 Processing IRC line: {repr(line)}",
                     BColors.OKGREEN,
-                    debug_only=True
+                    debug_only=True,
                 )
                 self._process_line(line)
 
@@ -327,7 +348,7 @@ class SimpleTwitchIRC:
 
         while self.running and self.connected:
             try:
-                data = self.sock.recv(4096).decode('utf-8', errors='ignore')
+                data = self.sock.recv(4096).decode("utf-8", errors="ignore")
                 if not data:
                     print_log("❌ IRC connection lost", BColors.FAIL)
                     break
@@ -338,13 +359,15 @@ class SimpleTwitchIRC:
                 if self._perform_periodic_checks():
                     print_log(
                         f"❌ {self.username}: Max connection failures reached, disconnecting",
-                        BColors.FAIL
+                        BColors.FAIL,
                     )
                     break
 
             except socket.timeout:
                 if self._is_connection_stale():
-                    print_log(f"❌ {self.username}: Connection appears stale", BColors.FAIL)
+                    print_log(
+                        f"❌ {self.username}: Connection appears stale", BColors.FAIL
+                    )
                     break
                 continue
             except Exception as e:
@@ -367,9 +390,9 @@ class SimpleTwitchIRC:
         """Handle timeout logic for a single pending JOIN.
         Returns True if the channel should be removed from pending joins."""
         # Still waiting
-        if (now - info['sent_at']) < self.join_timeout:
+        if (now - info["sent_at"]) < self.join_timeout:
             return False
-        attempts = info['attempts']
+        attempts = info["attempts"]
         can_retry = attempts < self.max_join_attempts
         connected = self.sock and self.connected
         if can_retry and connected:
@@ -378,27 +401,31 @@ class SimpleTwitchIRC:
                     self.username} retrying join for #{channel} (attempt {
                     attempts +
                     1})",
-                BColors.WARNING)
+                BColors.WARNING,
+            )
             try:
-                self.sock.send(f"JOIN #{channel}\r\n".encode('utf-8'))
-                info['sent_at'] = now
-                info['attempts'] = attempts + 1
+                self.sock.send(f"JOIN #{channel}\r\n".encode("utf-8"))
+                info["sent_at"] = now
+                info["attempts"] = attempts + 1
                 return False  # Keep pending
             except Exception as e:
                 print_log(
                     f"❌ {
                         self.username} failed to resend JOIN for #{channel}: {e}",
-                    BColors.FAIL)
+                    BColors.FAIL,
+                )
         elif can_retry and not connected:
             print_log(
                 f"❌ {
                     self.username} cannot retry join for #{channel} (not connected)",
-                BColors.FAIL)
+                BColors.FAIL,
+            )
         # Failure path
         print_log(
             f"❌ {
                 self.username} failed to join #{channel} after {attempts} attempts (timeout)",
-            BColors.FAIL)
+            BColors.FAIL,
+        )
         return True
 
     def disconnect(self):
@@ -411,12 +438,12 @@ class SimpleTwitchIRC:
             except (OSError, AttributeError):
                 pass
             self.sock = None
-        
+
         # Clear channel state on disconnect
         self.joined_channels.clear()
         self.confirmed_channels.clear()
         self.pending_joins.clear()
-        
+
         print_log("🔌 Disconnected from IRC", BColors.WARNING)
 
     def is_healthy(self) -> bool:
@@ -430,17 +457,25 @@ class SimpleTwitchIRC:
         """Get connection health statistics"""
         now = time.time()
         return {
-            'connected': self.connected,
-            'running': self.running,
-            'last_server_activity': self.last_server_activity,
-            'time_since_activity': now - self.last_server_activity,
-            'last_ping_from_server': self.last_ping_from_server,
-            'time_since_server_ping': now - self.last_ping_from_server if self.last_ping_from_server > 0 else 0,
-            'last_client_ping_sent': self.last_client_ping_sent,
-            'last_pong_received': self.last_pong_received,
-            'time_since_client_ping': now - self.last_client_ping_sent if self.last_client_ping_sent > 0 else 0,
-            'consecutive_ping_failures': self.consecutive_ping_failures,
-            'is_healthy': self.is_healthy()
+            "connected": self.connected,
+            "running": self.running,
+            "last_server_activity": self.last_server_activity,
+            "time_since_activity": now - self.last_server_activity,
+            "last_ping_from_server": self.last_ping_from_server,
+            "time_since_server_ping": (
+                now - self.last_ping_from_server
+                if self.last_ping_from_server > 0
+                else 0
+            ),
+            "last_client_ping_sent": self.last_client_ping_sent,
+            "last_pong_received": self.last_pong_received,
+            "time_since_client_ping": (
+                now - self.last_client_ping_sent
+                if self.last_client_ping_sent > 0
+                else 0
+            ),
+            "consecutive_ping_failures": self.consecutive_ping_failures,
+            "is_healthy": self.is_healthy(),
         }
 
     def force_reconnect(self) -> bool:
