@@ -1552,3 +1552,57 @@ class TestDirectCoverage:
                 # Verify the specific channels were joined
                 expected_calls = [call('channel1'), call('channel2')]
                 mock_join.assert_has_calls(expected_calls)
+
+
+class TestRemainingJoinChannelCoverage:
+    """Additional tests to cover remaining join_channel branches (lines 94-96, 108-109)."""
+
+    def test_join_channel_already_confirmed_no_retry_logs_and_returns(self):
+        """Covers branch where channel is already in confirmed_channels and _is_retry is False (lines 94-96)."""
+        irc = SimpleTwitchIRC()
+        irc.username = 'tester'
+        irc.sock = MagicMock()
+        irc.connected = True
+        irc.confirmed_channels.add('testchannel')
+
+        with patch('src.simple_irc.print_log') as mock_log:
+            irc.join_channel('testchannel', _is_retry=False)
+
+        # Should not attempt to send JOIN again
+        irc.sock.send.assert_not_called()
+        # Should have logged the skip message
+        assert mock_log.call_count == 1
+        logged = mock_log.call_args[0][0]
+        assert 'Already joined' in logged
+
+    def test_join_channel_retry_existing_pending_increments_attempts(self):
+        """Covers retry branch updating attempts & sent_at (lines 108-109)."""
+        irc = SimpleTwitchIRC()
+        irc.username = 'tester'
+        irc.sock = MagicMock()
+        irc.connected = True
+        # Seed pending join entry
+        irc.pending_joins['testchannel'] = {'sent_at': time.time() - 5, 'attempts': 1}
+
+        with patch('src.simple_irc.time.time', return_value=time.time()) as mock_time:
+            irc.join_channel('testchannel', _is_retry=True)
+
+        # JOIN should be re-sent
+        irc.sock.send.assert_called_with('JOIN #testchannel\r\n'.encode('utf-8'))
+        assert irc.pending_joins['testchannel']['attempts'] == 2
+        # sent_at should have been updated to mocked time()
+        assert irc.pending_joins['testchannel']['sent_at'] == mock_time.return_value
+
+    def test_join_channel_already_confirmed_retry_no_log(self):
+        """Covers confirmed channel branch with _is_retry=True (no logging path for lines 94-96 branch variant)."""
+        irc = SimpleTwitchIRC()
+        irc.username = 'tester'
+        irc.sock = MagicMock()
+        irc.connected = True
+        irc.confirmed_channels.add('testchannel')
+        # With _is_retry True, should return without logging or sending
+        with patch('src.simple_irc.print_log') as mock_log:
+            irc.join_channel('testchannel', _is_retry=True)
+        irc.sock.send.assert_not_called()
+        # No log because _is_retry True suppresses logging for confirmed channel early exit
+        mock_log.assert_not_called()
