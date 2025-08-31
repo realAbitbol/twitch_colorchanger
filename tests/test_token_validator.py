@@ -1,7 +1,7 @@
 """Tests for token_validator module."""
 
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock, Mock
 import asyncio
 import httpx
 
@@ -224,19 +224,105 @@ class TestTokenValidator:
             mock_validate.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_check_and_refresh_token_force_with_refresh(self):
-        """Test forced check with refresh token."""
+    def test_check_and_refresh_token_force_with_refresh(self):
+        """Test check_and_refresh_token with force=True and refresh token."""
+        validator = TokenValidator(
+            access_token="test_token",
+            refresh_token="test_refresh",
+            client_id="test_client",
+            client_secret="test_secret"
+        )
+
+        with patch.object(validator, '_refresh_token') as mock_refresh:
+            mock_refresh.return_value = True
+            result = asyncio.run(validator.check_and_refresh_token(force=True))
+            assert result is True
+            mock_refresh.assert_called_once()
+
+    def test_validate_token_invalid_no_refresh_token(self):
+        """Test validate_token when token is invalid and no refresh token."""
+        validator = TokenValidator(
+            access_token="test_token",
+            refresh_token=None,  # No refresh token
+            client_id="test_client",
+            client_secret="test_secret"
+        )
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_response = MagicMock()
+            mock_response.status_code = 401
+            mock_response.json.return_value = {"status": 401, "message": "invalid access token"}
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+                return_value=mock_response
+            )
+
+            result = asyncio.run(validator.validate_token())
+            assert result is False
+
+    def test_validate_token_expires_soon_no_refresh_token(self):
+        """Test validate_token when token expires soon but no refresh token."""
+        validator = TokenValidator(
+            access_token="test_token",
+            refresh_token=None,  # No refresh token
+            client_id="test_client",
+            client_secret="test_secret"
+        )
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {
+                "expires_in": 1800,  # 30 minutes - less than 2 hour threshold
+                "user_id": "123456"
+            }
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+                return_value=mock_response
+            )
+
+            result = asyncio.run(validator.validate_token())
+            # When token expires soon but no refresh token, it falls through to return True
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_validate_token_invalid_with_refresh_token(self):
+        """Test validate_token when token is invalid but a refresh token exists (covers branch)."""
         validator = TokenValidator(
             client_id="test_client",
             client_secret="test_secret",
-            access_token="test_token",
-            refresh_token="test_refresh",
+            access_token="expired_token",
+            refresh_token="refresh_token_value",
         )
 
-        with patch.object(validator, "_refresh_token", return_value=True) as mock_refresh:
-            result = await validator.check_and_refresh_token(force=True)
+        # Patch httpx client to return 401 for validation, and refresh flow to return False
+        with patch("httpx.AsyncClient") as mock_client, patch.object(
+            validator, "_refresh_token", new=AsyncMock(return_value=False)
+        ) as mock_refresh:
+            mock_response = MagicMock()
+            mock_response.status_code = 401
+            mock_response.json.return_value = {"status": 401, "message": "invalid access token"}
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+                return_value=mock_response
+            )
+
+            result = await validator.validate_token()
+            # Should attempt refresh and propagate its False result
+            assert result is False
+            mock_refresh.assert_awaited_once()
+
+    def test_check_and_refresh_token_no_force_no_refresh_token(self):
+        """Test check_and_refresh_token with force=False and no refresh token."""
+        validator = TokenValidator(
+            access_token="test_token",
+            refresh_token=None,  # No refresh token
+            client_id="test_client",
+            client_secret="test_secret"
+        )
+
+        with patch.object(validator, 'validate_token') as mock_validate:
+            mock_validate.return_value = True
+            result = asyncio.run(validator.check_and_refresh_token(force=False))
             assert result is True
-            mock_refresh.assert_called_once()
+            mock_validate.assert_called_once()
 
 
 class TestValidateUserTokens:
