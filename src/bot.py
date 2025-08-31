@@ -228,6 +228,9 @@ class TwitchColorBot:
 
                 if self.running:  # Check if still running after sleep
                     await self._check_and_refresh_token()
+                    
+                    # Also check IRC connection health
+                    await self._check_irc_health()
 
             except asyncio.CancelledError:
                 print_log(
@@ -242,6 +245,70 @@ class TwitchColorBot:
                     BColors.WARNING)
                 # Wait 5 minutes before retrying
                 await asyncio.sleep(300)
+
+    async def _check_irc_health(self):
+        """Check IRC connection health and reconnect if needed"""
+        if not self.irc:
+            return
+            
+        try:
+            # Get connection health stats
+            stats = self.irc.get_connection_stats()
+            
+            # Log health status in debug mode
+            print_log(
+                f"🏥 {self.username} IRC health: {stats['is_healthy']}, "
+                f"activity: {stats['time_since_activity']:.1f}s ago, "
+                f"failures: {stats['connection_failures']}",
+                BColors.OKBLUE,
+                debug_only=True
+            )
+            
+            # Check if connection is unhealthy
+            if not stats['is_healthy']:
+                print_log(
+                    f"⚠️ {self.username}: IRC connection appears unhealthy - "
+                    f"last activity {stats['time_since_activity']:.1f}s ago",
+                    BColors.WARNING
+                )
+                
+                # Attempt to force reconnection
+                await self._reconnect_irc()
+                
+        except Exception as e:
+            print_log(
+                f"⚠️ Error checking IRC health for {self.username}: {e}",
+                BColors.WARNING
+            )
+
+    async def _reconnect_irc(self):
+        """Attempt to reconnect IRC connection"""
+        try:
+            print_log(f"🔄 {self.username}: Attempting IRC reconnection...", BColors.WARNING)
+            
+            # Cancel current IRC task if running
+            if self.irc_task and not self.irc_task.done():
+                self.irc_task.cancel()
+                try:
+                    await asyncio.wait_for(self.irc_task, timeout=2.0)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
+            
+            # Force reconnection
+            if self.irc.force_reconnect():
+                # Restart IRC listening task
+                loop = asyncio.get_event_loop()
+                self.irc_task = loop.run_in_executor(None, self.irc.listen)
+                
+                print_log(f"✅ {self.username}: IRC reconnection successful", BColors.OKGREEN)
+            else:
+                print_log(f"❌ {self.username}: IRC reconnection failed", BColors.FAIL)
+                
+        except Exception as e:
+            print_log(
+                f"❌ Error reconnecting IRC for {self.username}: {e}",
+                BColors.FAIL
+            )
 
     def _get_token_check_interval(self) -> int:
         """Get dynamic check interval based on token expiry time"""
