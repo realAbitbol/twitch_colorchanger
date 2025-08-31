@@ -267,6 +267,53 @@ async def test_start_multiple_channels(
     mock_irc.join_channel.assert_any_call('channel3')
 
 
+def test_channel_deduplication_persistence(bot_config, tmp_path):
+    """Test channel deduplication persistence to config file"""
+    import json
+    
+    # Create a temporary config file
+    config_file = tmp_path / "test_config.json"
+    initial_config = {
+        "users": [{
+            "username": "testuser",
+            "access_token": "testtoken",
+            "refresh_token": "refreshtoken", 
+            "client_id": "clientid",
+            "client_secret": "clientsecret",
+            "channels": ["#CHANNEL1", "channel1", "#channel1", "CHANNEL2", "channel2"],
+            "is_prime_or_turbo": True
+        }]
+    }
+    with open(config_file, 'w') as f:
+        json.dump(initial_config, f, indent=2)
+    
+    # Setup bot with duplicate channels and config file
+    config = bot_config.copy()
+    config['channels'] = ["#CHANNEL1", "channel1", "#channel1", "CHANNEL2", "channel2"]  # Contains duplicates
+    config['config_file'] = str(config_file)
+    bot = TwitchColorBot(**config)
+    
+    # Test the deduplication logic directly
+    original_channels = bot.channels.copy()
+    unique_channels = list(dict.fromkeys([ch.lower().replace('#', '') for ch in bot.channels]))
+    
+    # Verify deduplication works
+    assert len(original_channels) == 5
+    assert len(unique_channels) == 2
+    assert unique_channels == ['channel1', 'channel2']
+    
+    # If channels changed, test persistence
+    if unique_channels != bot.channels:
+        bot.channels = unique_channels
+        bot._persist_channel_deduplication()
+        
+        # Verify the config file was updated with deduplicated channels
+        with open(config_file, 'r') as f:
+            saved_config = json.load(f)
+            saved_channels = saved_config['users'][0]['channels']
+            assert saved_channels == ['channel1', 'channel2']
+
+
 @patch('src.bot.print_log')
 async def test_stop(mock_print_log, bot_config, mock_irc):
     """Test bot stop"""
