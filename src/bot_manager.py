@@ -10,6 +10,10 @@ from typing import Any, Dict, List, Optional
 from .bot import TwitchColorBot
 from .colors import BColors
 from .config_watcher import create_config_watcher
+from .constants import (
+    HEALTH_MONITOR_INTERVAL,
+    TASK_WATCHDOG_INTERVAL,
+)
 from .utils import print_log
 from .watcher_globals import set_global_watcher
 
@@ -64,6 +68,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
 
         # Start health monitoring
         self._start_health_monitoring()
+        self._start_task_watchdog()
 
         print_log("✅ All bots started successfully!", BColors.OKGREEN)
         return True
@@ -199,12 +204,12 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         """Monitor bot health and attempt reconnections if needed"""
         while self.running and not self.shutdown_initiated:
             try:
-                await asyncio.sleep(3600)  # Check every hour
+                await asyncio.sleep(HEALTH_MONITOR_INTERVAL)  # Check every 5 minutes
 
                 if not self.running or self.shutdown_initiated:
                     break
 
-                print_log("🔍 Performing hourly bot health check...", BColors.OKCYAN)
+                print_log("🔍 Performing regular bot health check...", BColors.OKCYAN)
                 await self._perform_health_check()
 
             except asyncio.CancelledError:
@@ -222,6 +227,46 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             await self._reconnect_unhealthy_bots(unhealthy_bots)
         else:
             print_log("✅ All bots are healthy", BColors.OKGREEN)
+
+    async def _monitor_task_health(self):
+        """Monitor individual task health and detect hanging tasks"""
+        while self.running and not self.shutdown_initiated:
+            try:
+                await asyncio.sleep(TASK_WATCHDOG_INTERVAL)  # Check every 2 minutes
+
+                if not self.running or self.shutdown_initiated:
+                    break
+
+                print_log("🐕 Performing task watchdog check...", BColors.OKCYAN)
+                self._check_task_health()
+
+            except asyncio.CancelledError:
+                print_log("🐕 Task watchdog cancelled", BColors.WARNING)
+                raise  # Re-raise CancelledError
+            except Exception as e:
+                print_log(f"❌ Error during task watchdog: {e}", BColors.FAIL)
+                await asyncio.sleep(30)  # Wait 30 seconds before trying again
+
+    def _check_task_health(self):
+        """Check health of individual tasks"""
+        dead_tasks = []
+        for i, task in enumerate(self.tasks):
+            if task.done():
+                if task.exception():
+                    print_log(f"⚠️ Task {i} died with exception: {task.exception()}", BColors.WARNING)
+                else:
+                    print_log(f"ℹ️ Task {i} completed normally", BColors.OKCYAN)
+                dead_tasks.append(i)
+
+        # Remove dead tasks from the list (in reverse order to maintain indices)
+        for i in reversed(dead_tasks):
+            self.tasks.pop(i)
+            print_log(f"🗑️ Removed dead task {i}", BColors.WARNING)
+
+        if dead_tasks:
+            print_log(f"⚠️ Found {len(dead_tasks)} dead tasks", BColors.WARNING)
+        else:
+            print_log("✅ All tasks are alive", BColors.OKGREEN)
 
     def _identify_unhealthy_bots(self):
         """Identify bots that appear unhealthy"""
@@ -301,6 +346,15 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             self.tasks.append(health_task)
             print_log("🔍 Started bot health monitoring", BColors.OKCYAN)
             return health_task
+        return None
+
+    def _start_task_watchdog(self):
+        """Start the task watchdog monitoring"""
+        if self.running:
+            watchdog_task = asyncio.create_task(self._monitor_task_health())
+            self.tasks.append(watchdog_task)
+            print_log("🐕 Started task watchdog monitoring", BColors.OKCYAN)
+            return watchdog_task
         return None
 
     def _save_statistics(self) -> Dict[str, Dict[str, int]]:

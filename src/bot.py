@@ -16,7 +16,7 @@ from .config import disable_random_colors_for_user, update_user_in_config
 from .error_handling import APIError, simple_retry
 from .logger import logger
 from .rate_limiter import get_rate_limiter
-from .simple_irc import SimpleTwitchIRC
+from .async_irc_adapter import AsyncIRCAdapter
 from .utils import print_log
 
 # Constants
@@ -142,8 +142,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 BColors.OKGREEN,
             )
 
-        # Create IRC connection
-        self.irc = SimpleTwitchIRC()
+        # Create IRC connection using async IRC adapter
+        print_log(f"🚀 {self.username}: Using async IRC adapter", BColors.OKCYAN)
+        self.irc = AsyncIRCAdapter()
 
         # Deduplicate and normalize channels
         unique_channels = list(
@@ -171,15 +172,15 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         # Set up all channels in IRC object before connecting
         self.irc.channels = unique_channels.copy()
 
+        # Set up message handler BEFORE connecting to avoid race condition
+        self.irc.set_message_handler(self.handle_irc_message)
+
         # Connect to IRC with the first channel
         self.irc.connect(self.access_token, self.username, unique_channels[0])
 
         # Join all configured channels (join_channel now checks for duplicates)
         for channel in unique_channels:
             self.irc.join_channel(channel)
-
-        # Set up message handler
-        self.irc.set_message_handler(self.handle_irc_message)
 
         # Start background tasks
         self.token_task = asyncio.create_task(self._periodic_token_check())
@@ -234,7 +235,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         await asyncio.sleep(0.1)
 
     def handle_irc_message(self, sender: str, channel: str, message: str):
-        """Handle IRC messages from SimpleTwitchIRC"""
+        """Handle IRC messages from the async IRC client"""
         # Suppress unused argument warnings
         _ = channel
         _ = message
@@ -723,7 +724,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         if status_code == 204:
             self.colors_changed += 1
             self.last_color = color  # Store the successfully applied color
-            rate_status = self._get_rate_limit_display()
+            rate_status = self._get_rate_limit_display(debug_only=True)
             logger.info(f"Color changed to {color}{rate_status}", user=self.username)
             return True
         if status_code == 429:
@@ -796,7 +797,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             if status_code == 204:
                 self.colors_changed += 1
                 self.last_color = color
-                rate_status = self._get_rate_limit_display()
+                rate_status = self._get_rate_limit_display(debug_only=True)
                 logger.info(
                     f"Color changed to {color} (using preset colors){rate_status}",
                     user=self.username,
@@ -817,8 +818,17 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             )
             return False
 
-    def _get_rate_limit_display(self):
+    def _get_rate_limit_display(self, debug_only=False):
         """Get rate limit information for display in messages"""
+        import os
+        
+        # Check if debug mode is enabled
+        debug_enabled = os.environ.get("DEBUG", "false").lower() in ("true", "1", "yes")
+        
+        # If debug_only is True and debug is not enabled, return empty string
+        if debug_only and not debug_enabled:
+            return ""
+            
         if not self.rate_limiter.user_bucket:
             return " [rate limit info pending]"
 
