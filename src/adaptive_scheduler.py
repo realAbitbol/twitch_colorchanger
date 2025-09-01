@@ -237,6 +237,16 @@ class AdaptiveScheduler:
         """Get number of scheduled tasks"""
         return len(self.tasks)
 
+    def get_health_status(self) -> dict:
+        """Get scheduler health information"""
+        return {
+            "running": self.running,
+            "task_count": len(self.tasks),
+            "next_task_delay": self.get_next_task_delay(),
+            "has_scheduler_task": self.scheduler_task is not None
+            and not self.scheduler_task.done(),
+        }
+
     async def _run_scheduler(self):
         """Main scheduler loop"""
         while self.running:
