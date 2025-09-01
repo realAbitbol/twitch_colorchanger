@@ -34,7 +34,12 @@ class ScheduledTask:
     interval: Optional[float]  # None for one-time tasks
     args: tuple
     kwargs: dict
-    priority: int = 0  # Lower number = higher priority
+    priority: int  # Lower number = higher priority
+
+    def __post_init__(self):
+        """Set default priority if not provided"""
+        if not hasattr(self, 'priority') or self.priority is None:
+            self.priority = 0
 
     def __lt__(self, other):
         """For heap ordering - compare by next_run time, then priority"""
@@ -99,9 +104,9 @@ class AdaptiveScheduler:
         callback: Callable,
         interval: float,
         name: str,
+        *args,
         priority: int = 0,
         initial_delay: float = 0,
-        *args,
         **kwargs,
     ) -> bool:
         """
@@ -146,8 +151,8 @@ class AdaptiveScheduler:
         callback: Callable,
         delay: float,
         name: str,
-        priority: int = 0,
         *args,
+        priority: int = 0,
         **kwargs,
     ) -> bool:
         """

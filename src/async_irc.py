@@ -129,12 +129,12 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                     BColors.OKGREEN,
                 )
                 return True
-            else:
-                print_log(
-                    f"❌ {self.username}: Failed to join #{channel}", BColors.FAIL
-                )
-                await self.disconnect()
-                return False
+
+            print_log(
+                f"❌ {self.username}: Failed to join #{channel}", BColors.FAIL
+            )
+            await self.disconnect()
+            return False
 
         except asyncio.TimeoutError:
             timeout_msg = (
@@ -748,6 +748,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
     def get_connection_stats(self) -> dict:
         """Get connection statistics for health monitoring"""
         current_time = time.time()
+        time_since_activity = current_time - self.last_server_activity
         return {
             "connected": self.connected,
             "running": self.running,
@@ -755,7 +756,8 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             "confirmed_channels": list(self.confirmed_channels),
             "last_server_activity": self.last_server_activity,
             "last_ping_from_server": self.last_ping_from_server,
-            "time_since_last_activity": current_time - self.last_server_activity,
+            "time_since_activity": time_since_activity,  # Key expected by bot.py
+            "time_since_last_activity": time_since_activity,  # Alternative key
             "time_since_last_ping": (
                 current_time - self.last_ping_from_server
                 if self.last_ping_from_server > 0
@@ -763,6 +765,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             ),
             "consecutive_failures": self.consecutive_failures,
             "pending_joins": len(self.pending_joins),
+            "is_healthy": self.is_healthy(),  # Include health status
         }
 
     def is_healthy(self) -> bool:

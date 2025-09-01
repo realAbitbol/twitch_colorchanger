@@ -76,9 +76,9 @@ class TokenService:
                 new_refresh_token,
                 new_expiry,
             )
-        else:
-            print_log(f"❌ {username}: Token refresh failed", BColors.FAIL)
-            return TokenStatus.FAILED, None, None, None
+
+        print_log(f"❌ {username}: Token refresh failed", BColors.FAIL)
+        return TokenStatus.FAILED, None, None, None
 
     def _is_token_still_valid(self, token_expiry: Optional[datetime]) -> bool:
         """Check if token is still valid based on expiry time"""
@@ -99,13 +99,13 @@ class TokenService:
             async with self.http_session.get(url, headers=headers) as response:
                 if response.status == 200:
                     return True
-                else:
-                    print_log(
-                        f"⚠️ {username}: Token validation failed with status "
-                        f"{response.status}",
-                        BColors.WARNING,
-                    )
-                    return False
+
+                print_log(
+                    f"⚠️ {username}: Token validation failed with status "
+                    f"{response.status}",
+                    BColors.WARNING,
+                )
+                return False
 
         except Exception as e:
             print_log(f"❌ {username}: Token validation error: {e}", BColors.FAIL)
@@ -135,14 +135,14 @@ class TokenService:
                     expires_in = response_data.get("expires_in")
 
                     return new_access_token, new_refresh_token, expires_in
-                else:
-                    error_text = await response.text()
-                    print_log(
-                        f"❌ {username}: Token refresh failed: {response.status} - "
-                        f"{error_text}",
-                        BColors.FAIL,
-                    )
-                    return None, None, None
+
+                error_text = await response.text()
+                print_log(
+                    f"❌ {username}: Token refresh failed: {response.status} - "
+                    f"{error_text}",
+                    BColors.FAIL,
+                )
+                return None, None, None
 
         except Exception as e:
             print_log(f"❌ {username}: Token refresh error: {e}", BColors.FAIL)
