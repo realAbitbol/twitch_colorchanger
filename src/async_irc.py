@@ -3,7 +3,10 @@ Async IRC client for Twitch - Pure async implementation
 """
 
 import asyncio
+import inspect
+import secrets
 import time
+import traceback
 from typing import Any, Callable, Optional
 
 from .colors import BColors
@@ -540,8 +543,6 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
 
         try:
             # Check if handler is async and call appropriately
-            import inspect
-
             if inspect.iscoroutinefunction(self.message_handler):
                 await self.message_handler(username, channel, message)
             else:
@@ -558,7 +559,6 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             )
         except Exception as e:
             print_log(f"❌ Message handler error: {e}", BColors.FAIL)
-            import traceback
             print_log(f"❌ Full traceback: {traceback.format_exc()}", BColors.FAIL)
 
     async def _handle_color_change_command(
@@ -717,8 +717,6 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
 
     def _calculate_backoff_delay(self) -> float:
         """Calculate exponential backoff delay with jitter"""
-        import secrets
-
         if self.consecutive_failures == 0:
             return 0.0
 
@@ -732,7 +730,6 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
 
         # Add jitter to avoid thundering herd
         # Use secrets for cryptographically secure random numbers
-        import secrets
         jitter = (
             delay * BACKOFF_JITTER_FACTOR * (secrets.SystemRandom().random() * 2 - 1)
         )  # ±10% jitter
