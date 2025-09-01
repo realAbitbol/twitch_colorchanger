@@ -228,6 +228,22 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         self.running = False
 
         # Cancel background tasks
+        await self._cancel_token_task()
+
+        # Disconnect IRC
+        await self._disconnect_irc()
+
+        # Wait for IRC task to finish
+        await self._wait_for_irc_task()
+
+        # Ensure running flag is set to False (in case early return happened)
+        self.running = False
+
+        # Add a small delay to ensure cleanup
+        await asyncio.sleep(0.1)
+
+    async def _cancel_token_task(self):
+        """Cancel the token refresh background task"""
         if self.token_task and not self.token_task.done():
             self.token_task.cancel()
             try:
@@ -240,21 +256,22 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 # Re-raise CancelledError as per asyncio best practices
                 raise
 
-        # Disconnect IRC (now async)
+    async def _disconnect_irc(self):
+        """Disconnect IRC connection"""
         if self.irc:
             try:
                 await self.irc.disconnect()
             except Exception as e:
                 print_log(f"⚠️ Error disconnecting IRC: {e}", BColors.WARNING)
 
-        # Wait for IRC task to finish (disconnect should cause it to exit)
+    async def _wait_for_irc_task(self):
+        """Wait for IRC task to finish with timeout"""
         if self.irc_task and not self.irc_task.done():
             try:
                 await asyncio.wait_for(self.irc_task, timeout=2.0)
             except asyncio.TimeoutError:
                 print_log(
-                    f"⚠️ IRC task didn't finish within timeout for {
-                        self.username}",
+                    f"⚠️ IRC task didn't finish within timeout for {self.username}",
                     BColors.WARNING,
                 )
                 # Cancel the task if it's still running
@@ -265,12 +282,6 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 raise
             except Exception as e:
                 print_log(f"⚠️ Error waiting for IRC task: {e}", BColors.WARNING)
-
-        # Ensure running flag is set to False (in case early return happened)
-        self.running = False
-
-        # Add a small delay to ensure cleanup
-        await asyncio.sleep(0.1)
 
     async def handle_irc_message(self, sender: str, channel: str, message: str):
         """Handle IRC messages from the async IRC client"""
@@ -422,6 +433,30 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
 
     async def _check_and_refresh_token(self, force: bool = False):
         """Check and refresh token using TokenService"""
+        if not self._validate_token_prerequisites():
+            return False
+
+        try:
+            status, new_access_token, new_refresh_token, new_expiry = (
+                await self.token_service.validate_and_refresh(
+                    self.access_token,
+                    self.refresh_token,
+                    self.username,
+                    self.token_expiry,
+                    force,
+                )
+            )
+
+            return self._handle_token_status(
+                status, new_access_token, new_refresh_token, new_expiry
+            )
+
+        except Exception as e:
+            print_log(f"❌ {self.username}: Error in token service: {e}", BColors.FAIL)
+            return False
+
+    def _validate_token_prerequisites(self) -> bool:
+        """Validate that we have the necessary components for token refresh"""
         if not self.refresh_token:
             print_log(
                 f"⚠️ {self.username}: No refresh token available",
@@ -437,42 +472,37 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             )
             return False
 
-        try:
-            status, new_access_token, new_refresh_token, new_expiry = (
-                await self.token_service.validate_and_refresh(
-                    self.access_token,
-                    self.refresh_token,
-                    self.username,
-                    self.token_expiry,
-                    force,
-                )
-            )
+        return True
 
-            if status == TokenStatus.VALID:
-                # Update expiry even for valid tokens
-                if new_expiry:
-                    self.token_expiry = new_expiry
-                return True
+    def _handle_token_status(
+        self,
+        status: "TokenStatus",
+        new_access_token: str,
+        new_refresh_token: str,
+        new_expiry: "datetime",
+    ) -> bool:
+        """Handle the result of token validation/refresh"""
+        if status == TokenStatus.VALID:
+            # Update expiry even for valid tokens
+            if new_expiry:
+                self.token_expiry = new_expiry
+            return True
 
-            if status == TokenStatus.REFRESHED:
-                # Update all token information
-                if new_access_token:
-                    self.access_token = new_access_token
-                if new_refresh_token:
-                    self.refresh_token = new_refresh_token
-                if new_expiry:
-                    self.token_expiry = new_expiry
+        if status == TokenStatus.REFRESHED:
+            # Update all token information
+            if new_access_token:
+                self.access_token = new_access_token
+            if new_refresh_token:
+                self.refresh_token = new_refresh_token
+            if new_expiry:
+                self.token_expiry = new_expiry
 
-                # Persist changes to config file
-                self._persist_token_changes()
-                return True
+            # Persist changes to config file
+            self._persist_token_changes()
+            return True
 
-            # TokenStatus.FAILED
-            return False
-
-        except Exception as e:
-            print_log(f"❌ {self.username}: Error in token service: {e}", BColors.FAIL)
-            return False
+        # TokenStatus.FAILED
+        return False
 
     async def _get_user_info(self):
         """Retrieve user information from Twitch API"""
