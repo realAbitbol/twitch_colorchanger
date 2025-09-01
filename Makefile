@@ -32,37 +32,37 @@ install-dev:
 # Code quality
 lint:
 	@echo "Running Ruff linter..."
-	python -m ruff check src/
+	.venv/bin/python -m ruff check src/
 	@echo "Running mypy..."
-	python -m mypy src/
+	.venv/bin/python -m mypy src/
 	@echo "Running bandit..."
-	python -m bandit -r src/
+	.venv/bin/python -m bandit -r src/
 
 # Ruff commands (modern alternative)
 ruff-lint:
 	@echo "Running Ruff linter..."
-	python -m ruff check src/ --fix
+	.venv/bin/python -m ruff check src/ --fix
 
 ruff-format:
 	@echo "Formatting with Ruff..."
-	python -m ruff format src/
+	.venv/bin/python -m ruff format src/
 
 ruff-check:
 	@echo "Running Ruff checks..."
-	python -m ruff check src/
-	python -m ruff format src/ --check
+	.venv/bin/python -m ruff check src/
+	.venv/bin/python -m ruff format src/ --check
 
 # Markdown formatting commands
 md-format:
 	@echo "Formatting Markdown files..."
-	python -m mdformat README.md FUNCTIONAL_DOCUMENTATION.md
+	.venv/bin/python -m mdformat README.md FUNCTIONAL_DOCUMENTATION.md
 
 md-check:
 	@echo "Checking Markdown formatting..."
-	python -m mdformat --check README.md FUNCTIONAL_DOCUMENTATION.md
+	.venv/bin/python -m mdformat --check README.md FUNCTIONAL_DOCUMENTATION.md
 
 security:
-	python -m bandit -r src/
+	.venv/bin/python -m bandit -r src/
 
 # Comprehensive checks
 check-all: ruff-check lint security
@@ -134,4 +134,4 @@ check-env:
 	@echo "Pip version: $(shell pip --version)"
 	@echo "Virtual environment: $(VIRTUAL_ENV)"
 	@echo "Dependencies:"
-	@pip list | grep -E "(aiohttp|watchdog|ruff|mypy|bandit)"
+	@pip list | grep -E "(aiohttp|watchdog|ruff|mypy|bandit|mdformat)"
