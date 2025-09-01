@@ -66,7 +66,9 @@ class AdaptiveScheduler:
             return
 
         self.running = True
-        self.scheduler_task = asyncio.create_task(self._run_scheduler())
+        # Use async context for task creation
+        async with self._lock:
+            self.scheduler_task = asyncio.create_task(self._run_scheduler())
         print_log("🕒 Adaptive scheduler started", BColors.OKGREEN)
 
     async def stop(self):
@@ -81,7 +83,10 @@ class AdaptiveScheduler:
             try:
                 await self.scheduler_task
             except asyncio.CancelledError:
-                pass
+                # Cleanup: Clear running flag on cancellation
+                self.running = False
+                # Re-raise as per asyncio best practices
+                raise
 
         # Clear all tasks
         async with self._lock:
@@ -289,6 +294,8 @@ class AdaptiveScheduler:
             print_log(
                 f"🚫 Task '{task.name}' cancelled", BColors.WARNING, debug_only=True
             )
+            # Re-raise as per asyncio best practices
+            raise
 
         except Exception as e:
             print_log(f"❌ Task '{task.name}' failed: {e}", BColors.FAIL)
