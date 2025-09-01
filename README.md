@@ -461,7 +461,6 @@ If issues persist, open an issue with: platform, Python/Docker version, relevant
 For developers and technical implementation details:
 
 - **[FUNCTIONAL_DOCUMENTATION.md](FUNCTIONAL_DOCUMENTATION.md)** - Detailed feature specifications and behavior
-- **[IMPLEMENTATION_GUIDE.md](IMPLEMENTATION_GUIDE.md)** - Complete technical guide to rebuild this application from scratch
 
 ---
 
