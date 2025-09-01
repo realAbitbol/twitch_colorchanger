@@ -4,6 +4,7 @@ Main bot class for Twitch color changing functionality
 
 import asyncio
 import json
+import threading
 import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Tuple
@@ -247,8 +248,6 @@ class TwitchColorBot:
                 # Don't wait for completion to avoid blocking the IRC thread
             except RuntimeError:
                 # Fallback: run in new thread
-                import threading
-
                 threading.Thread(
                     target=lambda: asyncio.run(self._change_color()), daemon=True
                 ).start()

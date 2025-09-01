@@ -11,6 +11,13 @@ from .bot import TwitchColorBot
 from .colors import BColors
 from .utils import print_log
 
+try:
+    from .config_watcher import create_config_watcher  # type: ignore
+    from .watcher_globals import set_global_watcher  # type: ignore
+except ImportError:
+    create_config_watcher = None  # type: ignore
+    set_global_watcher = None  # type: ignore
+
 
 class BotManager:
     """Manages multiple Twitch bots"""
@@ -377,8 +384,8 @@ async def _setup_config_watcher(manager: BotManager, config_file: str = None):
         return None
 
     try:
-        from .config_watcher import create_config_watcher
-        from .watcher_globals import set_global_watcher
+        if create_config_watcher is None or set_global_watcher is None:
+            return None
 
         # Create restart callback that the watcher will call
         def restart_callback(new_config):
@@ -446,10 +453,9 @@ def _cleanup_watcher(watcher):
 
     # Clear global watcher reference
     try:
-        from .watcher_globals import set_global_watcher
-
-        set_global_watcher(None)
-    except ImportError:
+        if set_global_watcher is not None:
+            set_global_watcher(None)
+    except (ImportError, AttributeError):
         pass
 
 
