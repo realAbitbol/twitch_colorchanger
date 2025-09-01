@@ -19,8 +19,19 @@ Automatically change your Twitch username color after each message you send in c
 - [Features](#features)
 - [Requirements](#requirements)
 - [Quick Start](#quick-start)
+  - [1. Get Twitch Credentials](#1-get-twitch-credentials)
+  - [2. Run the Bot](#2-run-the-bot)
 - [Usage](#usage)
+  - [Local Development](#local-development)
+  - [Docker Deployment](#docker-deployment)
 - [Configuration](#configuration)
+  - [Configuration File](#configuration-file)
+  - [Token Management Features](#token-management-features)
+  - [Configuration Features](#configuration-features)
+  - [Advanced Configuration](#advanced-configuration)
+  - [Runtime Configuration Changes](#runtime-configuration-changes)
+  - [Docker Configuration](#docker-configuration)
+  - [Debug Mode](#debug-mode)
 - [Troubleshooting](#troubleshooting)
 - [Technical Documentation](#technical-documentation)
 - [Contributing](#contributing)
@@ -538,17 +549,55 @@ On startup the bot forces a token refresh (if a refresh token exists) for a full
 
 ## Troubleshooting
 
-### Authentication
+### Startup Script Issues
 
-- Missing scopes: ensure tokens include `chat:read` and `user:manage:chat_color` (and optionally `chat:edit`).
-- Invalid / expired tokens: regenerate tokens at [twitchtokengenerator.com](https://twitchtokengenerator.com).
-- Client credentials mismatch: verify Client ID and Secret match the generated tokens.
+**Windows (`start_bot.bat`):**
 
-### Docker
+- If you get "Python is not installed", install Python from [python.org](https://python.org) and make sure "Add to PATH" is checked
+- If you get permission errors, run Command Prompt as Administrator
+- For dependency installation issues, the script will automatically create a virtual environment
 
-- Config not loading: confirm config file is mounted correctly `-v $(pwd)/twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf`
-- Configuration issues: check that your config file has valid JSON format and contains user configurations
-- Color not changing: non‑Prime/Turbo accounts can only use preset colors
+**macOS/Linux (`start_bot.sh`):**
+
+- If you get "Permission denied", run: `chmod +x start_bot.sh`
+- If Python version is too old, update using your package manager (brew, apt, yum, etc.)
+- The script handles externally-managed environments by creating a virtual environment automatically
+
+### Configuration Issues
+
+**"Configuration file not found":**
+
+```bash
+cp twitch_colorchanger.conf.sample twitch_colorchanger.conf
+```
+
+**"Bot exits immediately":**
+
+- Check your Client ID and Client Secret are correct
+- Verify your OAuth Redirect URL is set to `https://twitchtokengenerator.com`
+- Make sure you have the required scopes: `chat:read`, `user:manage:chat_color`
+
+**Virtual Environment:**
+If you prefer to manage your own virtual environment:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate.bat
+pip install -r requirements.txt
+python -m src.main
+```
+
+### Authentication Issues
+
+- **Missing scopes**: ensure tokens include `chat:read` and `user:manage:chat_color` (and optionally `chat:edit`)
+- **Invalid / expired tokens**: regenerate tokens at [twitchtokengenerator.com](https://twitchtokengenerator.com)
+- **Client credentials mismatch**: verify Client ID and Secret match the generated tokens
+
+### Docker Issues
+
+- **Config not loading**: confirm config file is mounted correctly `-v $(pwd)/twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf`
+- **Configuration issues**: check that your config file has valid JSON format and contains user configurations
+- **Color not changing**: non‑Prime/Turbo accounts can only use preset colors
 
 ### Turbo/Prime Limitations
 
@@ -559,13 +608,13 @@ On startup the bot forces a token refresh (if a refresh token exists) for a full
 
 ### Rate / API Issues
 
-- Too many requests: Twitch may temporarily limit rapid color changes; the bot already spaces them—avoid manual spamming.
-- Network errors: transient failures are retried automatically; persistent 401 means token refresh failed (recreate tokens).
+- **Too many requests**: Twitch may temporarily limit rapid color changes; the bot already spaces them—avoid manual spamming
+- **Network errors**: transient failures are retried automatically; persistent 401 means token refresh failed (recreate tokens)
 
 ### Logging & Debugging
 
-- Set `DEBUG=true` for verbose logs.
-- All logs are colored for easy reading.
+- Set `DEBUG=true` for verbose logs
+- All logs are colored for easy reading
 
 If issues persist, open an issue with: platform, Python/Docker version, relevant log snippet (exclude tokens).
 
@@ -634,50 +683,6 @@ This project is licensed under the GNU General Public License v3.0 - see the [LI
 ### Why GPL v3?
 
 We chose GPL v3 to ensure this software remains free and open source. Any derivative works must also be open source under compatible licenses, fostering a community of shared improvements.
-
----
-
----
-
-## 🔧 Troubleshooting
-
-### Startup Script Issues
-
-**Windows (`start_bot.bat`):**
-
-- If you get "Python is not installed", install Python from [python.org](https://python.org) and make sure "Add to PATH" is checked
-- If you get permission errors, run Command Prompt as Administrator
-- For dependency installation issues, the script will automatically create a virtual environment
-
-**macOS/Linux (`start_bot.sh`):**
-
-- If you get "Permission denied", run: `chmod +x start_bot.sh`
-- If Python version is too old, update using your package manager (brew, apt, yum, etc.)
-- The script handles externally-managed environments by creating a virtual environment automatically
-
-### Common Issues
-
-**"Configuration file not found":**
-
-```bash
-cp twitch_colorchanger.conf.sample twitch_colorchanger.conf
-```
-
-**"Bot exits immediately":**
-
-- Check your Client ID and Client Secret are correct
-- Verify your OAuth Redirect URL is set to `https://twitchtokengenerator.com`
-- Make sure you have the required scopes: `chat:read`, `user:manage:chat_color`
-
-**Virtual Environment:**
-If you prefer to manage your own virtual environment:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate.bat
-pip install -r requirements.txt
-python -m src.main
-```
 
 ---
 
