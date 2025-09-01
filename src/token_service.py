@@ -48,10 +48,11 @@ class TokenService:
 
         # Validate current token first
         if not force_refresh:
-            is_valid = await self._validate_token(access_token, username)
+            is_valid, actual_expiry = await self._validate_token(access_token, username)
             if is_valid:
-                # Token is valid, keep the original expiry time
-                return TokenStatus.VALID, access_token, refresh_token, token_expiry
+                # Token is valid, use actual expiry from validation or keep original
+                final_expiry = actual_expiry if actual_expiry else token_expiry
+                return TokenStatus.VALID, access_token, refresh_token, final_expiry
 
         # Token is invalid or refresh is forced, try to refresh
         print_log(f"🔄 {username}: Token needs refresh", BColors.OKCYAN)
@@ -89,30 +90,39 @@ class TokenService:
         # Token should be refreshed if it expires in less than 1 hour (3600 seconds)
         return time_until_expiry > 3600
 
-    async def _validate_token(self, access_token: str, username: str) -> bool:
-        """Validate token by making a test API call"""
+    async def _validate_token(
+        self, access_token: str, username: str
+    ) -> tuple[bool, datetime | None]:
+        """Validate the token with Twitch API and get expiry information"""
         try:
             headers = {
-                "Authorization": f"Bearer {access_token}",
-                "Client-Id": self.client_id,
+                "Authorization": f"OAuth {access_token}",
             }
 
             url = "https://id.twitch.tv/oauth2/validate"
 
             async with self.http_session.get(url, headers=headers) as response:
                 if response.status == 200:
-                    return True
+                    response_data = await response.json()
+                    expires_in = response_data.get("expires_in")
+
+                    # Calculate expiry time from expires_in seconds
+                    expiry_time = None
+                    if expires_in:
+                        expiry_time = datetime.now() + timedelta(seconds=expires_in)
+
+                    return True, expiry_time
 
                 print_log(
                     f"⚠️ {username}: Token validation failed with status "
                     f"{response.status}",
                     BColors.WARNING,
                 )
-                return False
+                return False, None
 
         except Exception as e:
             print_log(f"❌ {username}: Token validation error: {e}", BColors.FAIL)
-            return False
+            return False, None
 
     async def _refresh_token(
         self, refresh_token: str, username: str
@@ -159,6 +169,13 @@ class TokenService:
         now = datetime.now()
         time_until_expiry = (token_expiry - now).total_seconds()
 
+        # Debug logging to understand scheduling decisions
+        print_log(
+            f"🕐 Token scheduling: {time_until_expiry:.0f}s remaining",
+            BColors.OKCYAN,
+            debug_only=True,
+        )
+
         # If token is already expired or expires very soon, check immediately
         if time_until_expiry <= 60:  # Less than 1 minute
             return 10  # Check in 10 seconds
@@ -173,13 +190,14 @@ class TokenService:
         elif time_until_expiry <= 1800:  # Less than 30 minutes
             # Check every 5 minutes
             return 300
-        elif time_until_expiry <= 3600:  # Less than 1 hour
-            # Check every 10 minutes
-            return 600
+        elif time_until_expiry <= 3600:  # Less than or equal to 1 hour
+            # This should ideally not happen - token should have been refreshed
+            # But check very frequently as a safety measure
+            return 300  # Check every 5 minutes instead of 10
         else:
-            # For tokens with >1 hour remaining, check 15 minutes before expiry
-            # but with a maximum interval of 30 minutes
-            check_time = token_expiry - timedelta(minutes=15)
+            # For tokens with >1 hour remaining, check 55 minutes before expiry
+            # This ensures we catch tokens before they hit the 1-hour refresh threshold
+            check_time = token_expiry - timedelta(minutes=55)
             delay = (check_time - now).total_seconds()
 
             # Ensure reasonable bounds: min 10 minutes, max 30 minutes
