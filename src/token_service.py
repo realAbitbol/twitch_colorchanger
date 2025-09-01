@@ -50,9 +50,8 @@ class TokenService:
         if not force_refresh:
             is_valid = await self._validate_token(access_token, username)
             if is_valid:
-                # Token is valid, calculate next expiry check
-                new_expiry: datetime | None = datetime.now() + timedelta(minutes=30)
-                return TokenStatus.VALID, access_token, refresh_token, new_expiry
+                # Token is valid, keep the original expiry time
+                return TokenStatus.VALID, access_token, refresh_token, token_expiry
 
         # Token is invalid or refresh is forced, try to refresh
         print_log(f"🔄 {username}: Token needs refresh", BColors.OKCYAN)
@@ -80,10 +79,15 @@ class TokenService:
         return TokenStatus.FAILED, None, None, None
 
     def _is_token_still_valid(self, token_expiry: datetime | None) -> bool:
-        """Check if token is still valid based on expiry time"""
+        """Check if token is still valid and has more than 1 hour remaining"""
         if not token_expiry:
             return False
-        return datetime.now() < token_expiry
+
+        now = datetime.now()
+        time_until_expiry = (token_expiry - now).total_seconds()
+
+        # Token should be refreshed if it expires in less than 1 hour (3600 seconds)
+        return time_until_expiry > 3600
 
     async def _validate_token(self, access_token: str, username: str) -> bool:
         """Validate token by making a test API call"""
@@ -148,13 +152,35 @@ class TokenService:
             return None, None, None
 
     def next_check_delay(self, token_expiry: datetime | None) -> float:
-        """Calculate the next token check delay in seconds"""
+        """Calculate the next token check delay in seconds with smart timing"""
         if not token_expiry:
             return 300  # Default 5 minutes if no expiry info
 
-        # Check again 5 minutes before expiry
-        check_time = token_expiry - timedelta(minutes=5)
-        delay = (check_time - datetime.now()).total_seconds()
+        now = datetime.now()
+        time_until_expiry = (token_expiry - now).total_seconds()
 
-        # Ensure minimum 1 minute delay and maximum 1 hour
-        return max(60, min(delay, 3600))
+        # If token is already expired or expires very soon, check immediately
+        if time_until_expiry <= 60:  # Less than 1 minute
+            return 10  # Check in 10 seconds
+
+        # Smart adaptive timing based on remaining time:
+        if time_until_expiry <= 300:  # Less than 5 minutes
+            # Check every minute when close to expiry
+            return 60
+        elif time_until_expiry <= 900:  # Less than 15 minutes
+            # Check every 2 minutes when moderately close
+            return 120
+        elif time_until_expiry <= 1800:  # Less than 30 minutes
+            # Check every 5 minutes
+            return 300
+        elif time_until_expiry <= 3600:  # Less than 1 hour
+            # Check every 10 minutes
+            return 600
+        else:
+            # For tokens with >1 hour remaining, check 15 minutes before expiry
+            # but with a maximum interval of 30 minutes
+            check_time = token_expiry - timedelta(minutes=15)
+            delay = (check_time - now).total_seconds()
+
+            # Ensure reasonable bounds: min 10 minutes, max 30 minutes
+            return max(600, min(delay, 1800))
