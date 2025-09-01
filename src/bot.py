@@ -7,13 +7,17 @@ import json
 import os
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 import aiohttp
 
 from .async_irc import AsyncTwitchIRC
 from .colors import BColors, generate_random_hex_color, get_different_twitch_color
-from .config import disable_random_colors_for_user, update_user_in_config, normalize_channels
+from .config import (
+    disable_random_colors_for_user,
+    normalize_channels,
+    update_user_in_config,
+)
 from .error_handling import APIError, simple_retry
 from .logger import logger
 from .rate_limiter import get_rate_limiter
@@ -29,10 +33,10 @@ async def _make_api_request(  # pylint: disable=too-many-arguments
     endpoint: str,
     access_token: str,
     client_id: str,
-    data: Dict[str, Any] = None,
-    params: Dict[str, Any] = None,
+    data: dict[str, Any] = None,
+    params: dict[str, Any] = None,
     session: "aiohttp.ClientSession" = None,
-) -> Tuple[Dict[str, Any], int, Dict[str, str]]:
+) -> tuple[dict[str, Any], int, dict[str, str]]:
     """Make a simple HTTP request to Twitch API using shared session"""
     if not session:
         raise ValueError(
@@ -70,7 +74,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         client_id: str,
         client_secret: str,
         nick: str,
-        channels: List[str],
+        channels: list[str],
         http_session: "aiohttp.ClientSession",
         is_prime_or_turbo: bool = True,
         config_file: str = None,
@@ -87,7 +91,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         self.client_id = client_id
         self.client_secret = client_secret
         self.user_id = user_id
-        self.token_expiry: Optional[datetime] = None
+        self.token_expiry: datetime | None = None
 
         # HTTP session for API requests (required)
         if not http_session:
@@ -136,15 +140,12 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             if user_info and "id" in user_info:
                 self.user_id = user_info["id"]
                 print_log(
-                    f"✅ {
-                        self.username}: Retrieved user_id: {
-                        self.user_id}",
+                    f"✅ {self.username}: Retrieved user_id: {self.user_id}",
                     BColors.OKGREEN,
                 )
             else:
                 print_log(
-                    f"❌ {
-                        self.username}: Failed to retrieve user_id",
+                    f"❌ {self.username}: Failed to retrieve user_id",
                     BColors.FAIL,
                 )
                 return
@@ -154,8 +155,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         if current_color:
             self.last_color = current_color
             print_log(
-                f"✅ {
-                    self.username}: Initialized with current color: {current_color}",
+                f"✅ {self.username}: Initialized with current color: {current_color}",
                 BColors.OKGREEN,
             )
 
@@ -263,7 +263,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         if self.irc_task and not self.irc_task.done():
             try:
                 await asyncio.wait_for(self.irc_task, timeout=2.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 print_log(
                     f"⚠️ IRC task didn't finish within timeout for {self.username}",
                     BColors.WARNING,
@@ -406,7 +406,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 self.irc_task.cancel()
                 try:
                     await asyncio.wait_for(self.irc_task, timeout=2.0)
-                except (asyncio.TimeoutError, asyncio.CancelledError):
+                except (TimeoutError, asyncio.CancelledError):
                     pass
 
             # Force reconnection (await the coroutine!)
@@ -431,14 +431,17 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             return False
 
         try:
-            status, new_access_token, new_refresh_token, new_expiry = (
-                await self.token_service.validate_and_refresh(
-                    self.access_token,
-                    self.refresh_token,
-                    self.username,
-                    self.token_expiry,
-                    force,
-                )
+            (
+                status,
+                new_access_token,
+                new_refresh_token,
+                new_expiry,
+            ) = await self.token_service.validate_and_refresh(
+                self.access_token,
+                self.refresh_token,
+                self.username,
+                self.token_expiry,
+                force,
             )
 
             return self._handle_token_status(
@@ -471,8 +474,8 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     def _handle_token_status(
         self,
         status: "TokenStatus",
-        new_access_token: Optional[str],
-        new_refresh_token: Optional[str],
+        new_access_token: str | None,
+        new_refresh_token: str | None,
         new_expiry: Optional["datetime"],
     ) -> bool:
         """Handle the result of token validation/refresh"""
@@ -620,8 +623,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 )
             except Exception as e:
                 print_log(
-                    f"⚠️ {
-                        self.username}: Failed to save token changes: {e}",
+                    f"⚠️ {self.username}: Failed to save token changes: {e}",
                     BColors.WARNING,
                 )
 
@@ -699,7 +701,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                     ),
                     timeout=10,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error("Failed to change color (timeout)", user=self.username)
                 return False
 
@@ -751,14 +753,14 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             if self.config_file:
                 if disable_random_colors_for_user(self.username, self.config_file):
                     logger.info(
-                        f"Disabled random colors for {
-                            self.username} in configuration",
+                        f"Disabled random colors for {self.username} in configuration",
                         user=self.username,
                     )
                 else:
                     logger.warning(
                         f"Failed to persist random color setting change for {
-                            self.username}",
+                            self.username
+                        }",
                         user=self.username,
                     )
 
@@ -847,8 +849,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     def close(self):
         """Close the bot and clean up resources"""
         print_log(
-            f"🛑 Closing bot for {
-                self.username}",
+            f"🛑 Closing bot for {self.username}",
             BColors.WARNING,
             debug_only=False,
         )
@@ -862,8 +863,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     def print_statistics(self):
         """Print bot statistics"""
         print_log(
-            f"📊 {
-                self.username}: Messages sent: {
-                self.messages_sent}, Colors changed: {
-                self.colors_changed}"
+            f"📊 {self.username}: Messages sent: {self.messages_sent}, Colors changed: {
+                self.colors_changed
+            }"
         )

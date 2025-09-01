@@ -10,12 +10,14 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import token_validator  # Standalone validator module (no circular import)
-from . import watcher_globals  # Always available within package
+from . import (
+    token_validator,  # Standalone validator module (no circular import)
+    watcher_globals,  # Always available within package
+)
 from .colors import BColors
-from .constants import CONFIG_WRITE_DEBOUNCE
 from .config_validator import get_valid_users
 from .config_validator import validate_user_config as validate_user
+from .constants import CONFIG_WRITE_DEBOUNCE
 from .device_flow import DeviceCodeFlow
 from .logger import logger
 from .utils import print_log
@@ -26,7 +28,7 @@ from .utils import print_log
 def load_users_from_config(config_file):
     """Load users from config file"""
     try:
-        with open(config_file, "r", encoding="utf-8") as f:
+        with open(config_file, encoding="utf-8") as f:
             data = json.load(f)
             # Support both new multi-user format and legacy single-user format
             if isinstance(data, dict) and "users" in data:
@@ -85,18 +87,15 @@ def _set_file_permissions(config_file):
 def _log_save_operation(users, config_file):
     """Log the save operation details"""
     print_log(
-        f"💾 Saving {
-            len(users)} users to {config_file}",
+        f"💾 Saving {len(users)} users to {config_file}",
         BColors.OKBLUE,
         debug_only=True,
     )
     for i, user in enumerate(users, 1):
         print_log(
-            f"  User {i}: {
-                user['username']} -> is_prime_or_turbo: {
-                user.get(
-                    'is_prime_or_turbo',
-                    'MISSING_FIELD')}",
+            f"  User {i}: {user['username']} -> is_prime_or_turbo: {
+                user.get('is_prime_or_turbo', 'MISSING_FIELD')
+            }",
             BColors.OKCYAN,
             debug_only=True,
         )
@@ -111,14 +110,12 @@ def _log_debug_data(save_data):
 def _verify_saved_data(config_file):
     """Verify that the data was saved correctly"""
     try:
-        with open(config_file, "r", encoding="utf-8") as f:
+        with open(config_file, encoding="utf-8") as f:
             verification_data = json.load(f)
         print_log(
             f"✅ VERIFICATION: File actually contains {
-                len(
-                    verification_data.get(
-                        'users',
-                        []))} users",
+                len(verification_data.get('users', []))
+            } users",
             BColors.OKGREEN,
             debug_only=True,
         )
@@ -152,10 +149,8 @@ def save_users_to_config(users, config_file):
                 user["is_prime_or_turbo"] = True  # Default value
                 print_log(
                     f"🔧 Added missing is_prime_or_turbo field for {
-                        user.get(
-                            'username',
-                            'Unknown')}: {
-                        user['is_prime_or_turbo']}",
+                        user.get('username', 'Unknown')
+                    }: {user['is_prime_or_turbo']}",
                     BColors.OKBLUE,
                     debug_only=True,
                 )
@@ -248,10 +243,8 @@ def update_user_in_config(user_config, config_file):
             user_config["is_prime_or_turbo"] = True  # Default value
             print_log(
                 f"🔧 Added missing is_prime_or_turbo field for {
-                    user_config.get(
-                        'username',
-                        'Unknown')}: {
-                    user_config['is_prime_or_turbo']}",
+                    user_config.get('username', 'Unknown')
+                }: {user_config['is_prime_or_turbo']}",
                 BColors.OKBLUE,
                 debug_only=True,
             )
@@ -368,13 +361,11 @@ def print_config_summary(users):
         print_log(f"   Channels: {', '.join(user['channels'])}")
         print_log(
             f"   Is Prime or Turbo: {
-                'Yes' if user.get(
-                    'is_prime_or_turbo',
-                    True) else 'No'}"
+                'Yes' if user.get('is_prime_or_turbo', True) else 'No'
+            }"
         )
         print_log(
-            f"   Has Refresh Token: {
-                'Yes' if user.get('refresh_token') else 'No'}"
+            f"   Has Refresh Token: {'Yes' if user.get('refresh_token') else 'No'}"
         )
 
 
@@ -392,9 +383,11 @@ def normalize_channels(channels):
         return [], True
 
     # Normalize: lowercase, remove #, deduplicate, and sort
-    normalized = sorted(dict.fromkeys(
-        ch.lower().strip().lstrip('#') for ch in channels if ch and ch.strip()
-    ))
+    normalized = sorted(
+        dict.fromkeys(
+            ch.lower().strip().lstrip("#") for ch in channels if ch and ch.strip()
+        )
+    )
 
     # Check if normalization made any changes
     was_changed = normalized != channels
@@ -418,28 +411,20 @@ def normalize_user_channels(users, config_file):
 
     for user in users:
         user_copy = user.copy()
-        original_channels = user_copy.get('channels', [])
+        original_channels = user_copy.get("channels", [])
 
         normalized_channels, was_changed = normalize_channels(original_channels)
-        user_copy['channels'] = normalized_channels
+        user_copy["channels"] = normalized_channels
 
         if was_changed:
             any_changes = True
             print_log(
                 f"📝 {user_copy['username']}: Normalized channels "
                 f"({len(original_channels)} → {len(normalized_channels)})",
-                BColors.OKBLUE
-            )
-            print_log(
-                f"   From: {original_channels}",
                 BColors.OKBLUE,
-                debug_only=True
             )
-            print_log(
-                f"   To: {normalized_channels}",
-                BColors.OKBLUE,
-                debug_only=True
-            )
+            print_log(f"   From: {original_channels}", BColors.OKBLUE, debug_only=True)
+            print_log(f"   To: {normalized_channels}", BColors.OKBLUE, debug_only=True)
 
         updated_users.append(user_copy)
 
@@ -449,12 +434,11 @@ def normalize_user_channels(users, config_file):
             save_users_to_config(updated_users, config_file)
             print_log(
                 "💾 Channel normalization changes saved to configuration",
-                BColors.OKGREEN
+                BColors.OKGREEN,
             )
         except Exception as e:
             print_log(
-                f"⚠️ Failed to save channel normalization changes: {e}",
-                BColors.WARNING
+                f"⚠️ Failed to save channel normalization changes: {e}", BColors.WARNING
             )
 
     return updated_users, any_changes
@@ -537,8 +521,7 @@ async def _get_new_tokens_via_device_flow(user, client_id, client_secret):
             validation_result = await _validate_new_tokens(user)
             if validation_result["valid"]:
                 success_msg = (
-                    f"✅ Successfully obtained and validated new tokens "
-                    f"for {username}"
+                    f"✅ Successfully obtained and validated new tokens for {username}"
                 )
                 print_log(success_msg, BColors.OKGREEN)
                 return {"user": validation_result["user"], "tokens_updated": True}

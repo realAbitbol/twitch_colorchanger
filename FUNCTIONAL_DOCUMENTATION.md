@@ -27,8 +27,8 @@ The Twitch Color Changer Bot automatically changes a user's Twitch chat color af
 ### Color Change Flow
 
 ```text
-User sends message → IRC client receives → Bot detects own message → 
-Generate new color (avoiding current) → API call to Twitch → Color changed → 
+User sends message → IRC client receives → Bot detects own message →
+Generate new color (avoiding current) → API call to Twitch → Color changed →
 Statistics updated
 ```
 
@@ -55,7 +55,7 @@ Statistics updated
 
 ```text
 Bot startup → Check token validity → If invalid/missing → Generate device code →
-Display authorization URL + code → User authorizes in browser → 
+Display authorization URL + code → User authorizes in browser →
 Bot polls for completion → Receives tokens → Saves to config → Continues startup
 ```
 

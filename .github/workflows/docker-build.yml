@@ -24,7 +24,7 @@ jobs:
       contents: read
       packages: write
       id-token: write  # For signing images
-    
+
     # Note: DOCKER_USERNAME and DOCKER_PASSWORD are repository secrets
     # SonarQube may flag these as "potentially invalid" but this is a false positive
     # These secrets are standard GitHub Actions repository secrets

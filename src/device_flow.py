@@ -4,7 +4,6 @@ Device Code Flow implementation for automatic token generation
 
 import asyncio
 import time
-from typing import Dict, Optional, Tuple
 
 import aiohttp
 
@@ -24,7 +23,7 @@ class DeviceCodeFlow:
         self.token_url = "https://id.twitch.tv/oauth2/token"  # nosec B105
         self.poll_interval = 5  # seconds
 
-    async def request_device_code(self) -> Optional[Dict]:
+    async def request_device_code(self) -> dict | None:
         """Request a device code from Twitch"""
         data = {
             "client_id": self.client_id,
@@ -50,9 +49,7 @@ class DeviceCodeFlow:
                 print_log(f"❌ Error requesting device code: {e}", BColors.FAIL)
                 return None
 
-    async def poll_for_tokens(
-        self, device_code: str, expires_in: int
-    ) -> Optional[Dict]:
+    async def poll_for_tokens(self, device_code: str, expires_in: int) -> dict | None:
         """Poll for token authorization completion"""
         data = {
             "client_id": self.client_id,
@@ -88,8 +85,7 @@ class DeviceCodeFlow:
                                 return error_result
                         else:
                             print_log(
-                                f"❌ Unexpected response: {
-                                    response.status} - {result}",
+                                f"❌ Unexpected response: {response.status} - {result}",
                                 BColors.FAIL,
                             )
                             return None
@@ -105,8 +101,8 @@ class DeviceCodeFlow:
         return None
 
     def _handle_polling_error(
-        self, result: Dict, elapsed: int, poll_count: int
-    ) -> Optional[Dict]:
+        self, result: dict, elapsed: int, poll_count: int
+    ) -> dict | None:
         """Handle polling errors and return None to continue, or a value to return"""
         # Twitch API returns errors in 'message' field, not 'error'
         error = result.get("message", result.get("error", "unknown"))
@@ -133,8 +129,7 @@ class DeviceCodeFlow:
             # Increase polling interval
             self.poll_interval = min(self.poll_interval + 1, 10)
             print_log(
-                f"⚠️ Slowing down polling to {
-                    self.poll_interval}s",
+                f"⚠️ Slowing down polling to {self.poll_interval}s",
                 BColors.WARNING,
             )
             return None  # Continue polling
@@ -156,7 +151,7 @@ class DeviceCodeFlow:
             print_log(f"❌ Unknown device flow error: {error}", BColors.FAIL)
         return {}  # Stop polling
 
-    async def get_user_tokens(self, username: str) -> Optional[Tuple[str, str]]:
+    async def get_user_tokens(self, username: str) -> tuple[str, str] | None:
         """
         Complete device code flow to get user tokens
         Returns (access_token, refresh_token) on success, None on failure
@@ -185,8 +180,7 @@ class DeviceCodeFlow:
         print_log(f"⏰ Code expires in: {expires_in // 60} minutes", BColors.WARNING)
         print_log("=" * 60, BColors.PURPLE)
         print_log(
-            f"⏳ Waiting for authorization... (checking every {
-                self.poll_interval}s)",
+            f"⏳ Waiting for authorization... (checking every {self.poll_interval}s)",
             BColors.OKCYAN,
         )
 

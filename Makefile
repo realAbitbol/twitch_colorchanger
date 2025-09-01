@@ -1,6 +1,6 @@
 # Makefile for Twitch ColorChanger Bot Development
 
-.PHONY: help install install-dev lint format format-check security check-all check clean build docker-build docker-run dev-setup pre-commit dev-check ci validate-config docs docs-serve profile version check-env
+.PHONY: help install install-dev lint format format-check security check-all check clean build docker-build docker-run dev-setup pre-commit dev-check ci validate-config docs docs-serve profile version check-env ruff-lint ruff-format ruff-check
 
 # Default target
 help:
@@ -9,6 +9,9 @@ help:
 	@echo "  install-dev     - Install development dependencies"
 	@echo "  lint            - Run all linting tools"
 	@echo "  format          - Format code with black and isort"
+	@echo "  ruff-lint       - Run Ruff linter (fast alternative)"
+	@echo "  ruff-format     - Format code with Ruff (fast alternative)"
+	@echo "  ruff-check      - Check code with Ruff (lint + format check)"
 	@echo "  security        - Run security checks"
 	@echo "  check-all       - Run all quality checks"
 	@echo "  clean           - Clean temporary files"
@@ -43,6 +46,20 @@ format:
 format-check:
 	black --check src/
 	isort --check-only src/
+
+# Ruff commands (modern alternative)
+ruff-lint:
+	@echo "Running Ruff linter..."
+	ruff check src/ --fix
+
+ruff-format:
+	@echo "Formatting with Ruff..."
+	ruff format src/
+
+ruff-check:
+	@echo "Running Ruff checks..."
+	ruff check src/
+	ruff format src/ --check
 
 security:
 	bandit -r src/

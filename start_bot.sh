@@ -57,7 +57,7 @@ fi
 # Install dependencies if requirements.txt exists
 if [ -f "requirements.txt" ]; then
     echo "Installing/updating dependencies..."
-    
+
     # If we're already using a venv, just install directly
     if [ -d ".venv" ]; then
         .venv/bin/pip install -r requirements.txt
@@ -77,7 +77,7 @@ if [ -f "requirements.txt" ]; then
         pip install --user -r requirements.txt 2>/dev/null || {
             echo "Note: Could not install system-wide. Creating virtual environment..."
             $PYTHON_CMD -m venv .venv
-            echo "Virtual environment created in .venv" 
+            echo "Virtual environment created in .venv"
             echo "Installing dependencies in new virtual environment..."
             .venv/bin/pip install -r requirements.txt
             PYTHON_CMD=".venv/bin/python"

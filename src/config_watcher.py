@@ -6,7 +6,7 @@ import asyncio
 import os
 import threading
 import time
-from typing import Callable
+from collections.abc import Callable
 
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
@@ -115,7 +115,9 @@ class ConfigWatcher:
                 return
 
             # Normalize channels for all users
-            new_users_config, _ = normalize_user_channels(new_users_config, self.config_file)
+            new_users_config, _ = normalize_user_channels(
+                new_users_config, self.config_file
+            )
 
             # Validate new configuration
             valid_users = get_valid_users(new_users_config)

@@ -2,21 +2,21 @@ services:
   twitch-colorchanger:
     # Option 1: Build locally
     build: .
-    
+
     # Option 2: Use prebuilt image from Docker Hub
     # image: damastah/twitch-colorchanger:latest
-    
+
     # Option 3: Use prebuilt image from GitHub Container Registry
     # image: ghcr.io/realabitbol/twitch-colorchanger:latest
-    
+
     container_name: twitch-colorchanger
-    
+
     # Configuration via mounted config file
     volumes:
       - ./twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf
-    
+
     # Optional debug environment variable
     environment:
       # - DEBUG=true  # Enable debug-level logging (verbose output)
-    
+
     restart: unless-stopped  # Automatically restart unless manually stopped
