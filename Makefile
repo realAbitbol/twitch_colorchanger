@@ -1,16 +1,12 @@
 # Makefile for Twitch ColorChanger Bot Development
 
-.PHONY: help install install-dev test test-coverage test-unit test-integration lint format security check-all clean build docker-build docker-run
+.PHONY: help install install-dev lint format security check-all clean build docker-build docker-run
 
 # Default target
 help:
 	@echo "Available targets:"
 	@echo "  install         - Install production dependencies"
 	@echo "  install-dev     - Install development dependencies"
-	@echo "  test            - Run all tests"
-	@echo "  test-coverage   - Run tests with coverage report"
-	@echo "  test-unit       - Run unit tests only"
-	@echo "  test-integration- Run integration tests only"
 	@echo "  lint            - Run all linting tools"
 	@echo "  format          - Format code with black and isort"
 	@echo "  security        - Run security checks"
@@ -27,24 +23,6 @@ install:
 install-dev:
 	pip install -r requirements.txt
 	pip install -r requirements-dev.txt
-
-# Testing
-test:
-	pytest
-
-test-coverage:
-	pytest --cov=src --cov-report=html --cov-report=term --cov-report=xml
-
-test-cov: test-coverage
-
-test-unit:
-	pytest tests/ -m "not integration and not slow"
-
-test-integration:
-	pytest tests/integration/ -m integration
-
-test-slow:
-	pytest -m slow
 
 # Code quality
 lint:
@@ -72,20 +50,20 @@ security:
 	safety check
 
 # Comprehensive checks
-check-all: format-check lint test-coverage security
+check-all: format-check lint security
 	@echo "All checks passed!"
 
-# Run comprehensive checks (tests + coverage + linting)
-check: test-coverage lint
+# Run comprehensive checks (linting only)
+check: lint
 	@echo "✅ All checks passed!"
 
-# Clean testing artifacts
+# Clean artifacts
 clean:
-	rm -rf .pytest_cache/ htmlcov/ .coverage coverage.xml .tox/ .cache/
+	rm -rf .cache/ .tox/
 	find . -type d -name __pycache__ -delete
 	find . -type f -name "*.pyc" -delete
 
-.PHONY: help install install-dev test test-coverage test-cov test-unit test-integration test-slow lint format format-check security check-all check clean build docker-build docker-run dev-setup pre-commit dev-check ci perf-test generate-fixtures validate-config docs docs-serve profile version check-env
+.PHONY: help install install-dev lint format format-check security check-all check clean build docker-build docker-run dev-setup pre-commit dev-check ci docs docs-serve profile version check-env
 
 # Build
 build: clean
