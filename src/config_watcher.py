@@ -11,7 +11,7 @@ from typing import Callable
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-from .config import load_users_from_config
+from .config import load_users_from_config, normalize_user_channels
 from .config_validator import get_valid_users
 from .logger import logger
 
@@ -113,6 +113,9 @@ class ConfigWatcher:
             if not new_users_config:
                 logger.warning("⚠️ Config file is empty or invalid, ignoring changes")
                 return
+
+            # Normalize channels for all users
+            new_users_config, _ = normalize_user_channels(new_users_config, self.config_file)
 
             # Validate new configuration
             valid_users = get_valid_users(new_users_config)

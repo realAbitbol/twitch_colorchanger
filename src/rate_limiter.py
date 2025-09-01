@@ -215,7 +215,7 @@ class TwitchRateLimiter:
                 - (current_time - bucket.last_updated)
                 + elapsed_monotonic
             )
-        
+
         # Fallback for old bucket format
         return bucket.reset_timestamp
 
