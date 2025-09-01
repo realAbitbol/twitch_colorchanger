@@ -23,7 +23,7 @@ from .utils import print_log
 CHAT_COLOR_ENDPOINT = "chat/color"
 
 
-async def _make_api_request(
+async def _make_api_request(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     method: str,
     endpoint: str,
     access_token: str,
@@ -52,12 +52,12 @@ async def _make_api_request(
             return response_data, response.status, dict(response.headers)
 
 
-class TwitchColorBot:
+class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     """Bot that changes Twitch username colors after each message"""
 
     OAUTH_PREFIX = "oauth:"
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         token: str,
         refresh_token: str,

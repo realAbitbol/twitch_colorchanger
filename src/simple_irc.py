@@ -10,7 +10,7 @@ from .colors import BColors
 from .utils import print_log
 
 
-class SimpleTwitchIRC:
+class SimpleTwitchIRC:  # pylint: disable=too-many-instance-attributes
     """Simple IRC client for Twitch using raw sockets - based on working version"""
 
     def __init__(self):

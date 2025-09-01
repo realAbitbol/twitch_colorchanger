@@ -7,14 +7,14 @@ import os
 import sys
 import time
 
+from . import token_validator  # Standalone validator module (no circular import)
+from . import watcher_globals  # Always available within package
 from .colors import BColors
 from .config_validator import get_valid_users
 from .config_validator import validate_user_config as validate_user
 from .device_flow import DeviceCodeFlow
 from .logger import logger
 from .utils import print_log
-from . import watcher_globals  # Always available within package
-from . import token_validator  # Standalone validator module (no circular import)
 
 # Constants for repeated messages
 
@@ -139,8 +139,8 @@ def save_users_to_config(users, config_file):
         # Pause watcher during bot-initiated changes
         try:
             watcher_globals.pause_config_watcher()
-        except Exception:
-            pass  # Watcher not initialized
+        except Exception:  # nosec B110
+            pass  # Watcher not initialized - expected in some contexts
 
         # Ensure all users have is_prime_or_turbo field before saving
         for user in users:
@@ -186,8 +186,8 @@ def save_users_to_config(users, config_file):
         # Always resume watcher
         try:
             watcher_globals.resume_config_watcher()
-        except Exception:
-            pass
+        except Exception:  # nosec B110
+            pass  # Watcher not initialized - expected in some contexts
 
 
 def update_user_in_config(user_config, config_file):

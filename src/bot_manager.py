@@ -14,7 +14,7 @@ from .utils import print_log
 from .watcher_globals import set_global_watcher
 
 
-class BotManager:
+class BotManager:  # pylint: disable=too-many-instance-attributes
     """Manages multiple Twitch bots"""
 
     def __init__(self, users_config: List[Dict[str, Any]], config_file: str = None):
