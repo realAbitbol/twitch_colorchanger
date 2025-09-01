@@ -384,35 +384,94 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                 )
                 return False
 
-            # Force reconnection in the IRC client
-            success = await bot.irc.force_reconnect()
-
-            if success:
-                # Give it a moment to stabilize
-                await asyncio.sleep(2)
-
-                # Verify the connection is actually healthy now
-                try:
-                    if bot.irc and bot.irc.is_healthy():
-                        return True
-                except Exception as e:
-                    print_log(
-                        f"⚠️ {bot.username}: Error checking health after reconnect: {e}",
-                        BColors.WARNING,
-                    )
-
-                print_log(
-                    f"⚠️ {bot.username}: Reconnection succeeded but "
-                    "health check still fails",
-                    BColors.WARNING,
-                )
-                return False
-            print_log(f"❌ {bot.username}: IRC reconnection failed", BColors.FAIL)
-            return False
-
-        except Exception as e:
+            lock = self._get_bot_reconnect_lock(bot)
+            async with lock:
+                if self._bot_became_healthy(bot):
+                    return True
+                await self._cancel_stale_listener(bot)
+                if not await self._force_bot_reconnect(bot):
+                    return False
+                if not self._start_fresh_listener(bot):
+                    return False
+                return await self._wait_for_health(bot)
+        except Exception as e:  # noqa: BLE001
             print_log(f"❌ Error reconnecting {bot.username}: {e}", BColors.FAIL)
             return False
+
+    def _get_bot_reconnect_lock(self, bot):
+        if not hasattr(bot, "_reconnect_lock"):
+            import asyncio as _asyncio
+
+            bot._reconnect_lock = _asyncio.Lock()  # type: ignore[attr-defined]
+        return bot._reconnect_lock  # type: ignore[attr-defined]
+
+    def _bot_became_healthy(self, bot) -> bool:
+        try:
+            if bot.irc and bot.irc.is_healthy():
+                print_log(
+                    f"ℹ️ {bot.username}: Bot became healthy before reconnect attempt",
+                    BColors.OKCYAN,
+                )
+                return True
+        except Exception as e:  # noqa: BLE001
+            # Log and continue; health re-check will proceed via full path
+            print_log(
+                f"⚠️ {getattr(bot, 'username', 'unknown')}: Error while pre-checking health: {e}",
+                BColors.WARNING,
+            )
+        return False
+
+    async def _cancel_stale_listener(self, bot):
+        if not hasattr(bot, "irc_task") or not bot.irc_task:
+            return
+        try:
+            if not bot.irc_task.done():
+                bot.irc_task.cancel()
+                try:
+                    await asyncio.wait_for(bot.irc_task, timeout=1.5)
+                except (TimeoutError, asyncio.CancelledError):
+                    pass
+        except Exception as ce:  # noqa: BLE001
+            print_log(
+                f"⚠️ {bot.username}: Error cancelling old listener: {ce}",
+                BColors.WARNING,
+            )
+
+    async def _force_bot_reconnect(self, bot) -> bool:
+        success = await bot.irc.force_reconnect()
+        if not success:
+            print_log(f"❌ {bot.username}: IRC reconnection failed", BColors.FAIL)
+            return False
+        return True
+
+    def _start_fresh_listener(self, bot) -> bool:
+        try:
+            bot.irc_task = asyncio.create_task(bot.irc.listen())  # type: ignore[attr-defined]
+            return True
+        except Exception as e_create:  # noqa: BLE001
+            print_log(
+                f"❌ {bot.username}: Failed to start listener after reconnect: {e_create}",
+                BColors.FAIL,
+            )
+            return False
+
+    async def _wait_for_health(self, bot) -> bool:
+        healthy = False
+        for _ in range(30):  # up to ~3s
+            await asyncio.sleep(0.1)
+            try:
+                if bot.irc and bot.irc.is_healthy():
+                    healthy = True
+                    break
+            except Exception:  # noqa: BLE001
+                break
+        if healthy:
+            return True
+        print_log(
+            f"⚠️ {bot.username}: Reconnected but health still not confirmed after timeout",
+            BColors.WARNING,
+        )
+        return False
 
     def _start_health_monitoring(self):
         """Start the health monitoring task"""
