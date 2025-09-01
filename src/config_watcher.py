@@ -13,6 +13,7 @@ from watchdog.observers import Observer
 
 from .config import load_users_from_config, normalize_user_channels
 from .config_validator import get_valid_users
+from .constants import RELOAD_WATCH_DELAY
 from .logger import logger
 
 
@@ -72,6 +73,10 @@ class ConfigWatcher:
     def resume_watching(self):
         """Resume watching after bot-initiated changes"""
         with self._pause_lock:
+            # Add a small delay before resuming to avoid race conditions
+            import time
+
+            time.sleep(RELOAD_WATCH_DELAY)
             self.paused = False
             logger.debug("▶️ Config watcher resumed")
 

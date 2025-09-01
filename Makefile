@@ -42,7 +42,7 @@ lint:
 # Vulture dead code detection
 vulture-check:
 	@echo "🦢 Running vulture for dead code detection..."
-	.venv/bin/vulture src/ --min-confidence 80
+	.venv/bin/vulture src/ --min-confidence 70
 
 # Ruff commands (modern alternative)
 ruff-lint:
