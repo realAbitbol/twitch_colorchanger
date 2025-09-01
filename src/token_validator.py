@@ -5,11 +5,11 @@ This module provides token validation functionality without depending on the bot
 helping to avoid circular imports between config.py and bot.py.
 """
 
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 import httpx
 
-from .logger import print_log, BColors
+from .logger import BColors, print_log
 
 
 class TokenValidator:

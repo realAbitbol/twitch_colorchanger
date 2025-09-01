@@ -4,14 +4,14 @@ Main entry point for the Twitch Color Changer Bot
 """
 
 import asyncio
-import sys
 import os
+import sys
 
-from .config import get_configuration, print_config_summary, setup_missing_tokens
 from .bot_manager import run_bots
-from .utils import print_instructions
-from .logger import logger
+from .config import get_configuration, print_config_summary, setup_missing_tokens
 from .error_handling import log_error
+from .logger import logger
+from .utils import print_instructions
 
 
 async def main():

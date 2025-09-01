@@ -22,8 +22,8 @@ extend-exclude = '''
 profile = "black"
 multi_line_output = 3
 line_length = 88
-known_first_party = ["src", "tests"]
-known_third_party = ["pytest", "aiohttp", "watchdog"]
+known_first_party = ["src"]
+known_third_party = ["aiohttp", "httpx", "watchdog"]
 
 # MyPy type checking
 [tool.mypy]
@@ -43,16 +43,8 @@ strict_equality = false
 ignore_missing_imports = true
 follow_imports = "silent"
 
-[[tool.mypy.overrides]]
-module = [
-    "tests.*",
-]
-disallow_untyped_defs = false
-disallow_incomplete_defs = false
-
 # Bandit security linting
 [tool.bandit]
-exclude_dirs = ["tests"]
 skips = ["B101"]  # Skip assert_used test
 
 # Flake8 would go in setup.cfg or .flake8, but we'll use pyproject.toml compatible tools

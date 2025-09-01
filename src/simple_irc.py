@@ -174,7 +174,10 @@ class SimpleTwitchIRC:
         # Respond with PONG (standard IRC behavior)
         pong = line.replace("PING", "PONG")
         self.sock.send(f"{pong}\r\n".encode("utf-8"))
-        print_log("🏓 Responded to server PING", BColors.OKCYAN, debug_only=True)
+        print_log(
+            f"🏓 {self.username}: Received PING from server, responded with PONG",
+            BColors.OKCYAN,
+        )
 
     def _check_connection_health(self) -> bool:
         """Check if connection is healthy based on Twitch server activity"""
@@ -438,6 +441,9 @@ class SimpleTwitchIRC:
             for channel in self.channels:
                 self.join_channel(channel)
 
-            print_log(f"✅ {self.username}: Reconnected and rejoined {len(self.channels)} channels", BColors.OKGREEN)
+            print_log(
+                f"✅ {self.username}: Reconnected and rejoined {len(self.channels)} channels",
+                BColors.OKGREEN,
+            )
 
         return success
