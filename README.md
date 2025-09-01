@@ -210,9 +210,15 @@ cp twitch_colorchanger.conf.sample twitch_colorchanger.conf
 Then run:
 
 ```bash
+# Docker Hub
 docker run -it --rm \
   -v $(pwd)/twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf \
   damastah/twitch-colorchanger:latest
+
+# Or GitHub Container Registry
+docker run -it --rm \
+  -v $(pwd)/twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf \
+  ghcr.io/realabitbol/twitch-colorchanger:latest
 ```
 
 ---
@@ -251,6 +257,8 @@ Multi-platform images are available on:
 - **Docker Hub**: `damastah/twitch-colorchanger:latest`
 - **GitHub Container Registry**: `ghcr.io/realabitbol/twitch-colorchanger:latest`
 
+> **Note**: Both registries contain identical images. Choose based on your preference or organizational requirements.
+
 **Supported Architectures:**
 
 - `linux/amd64` - Standard x86_64 (Intel/AMD)
@@ -266,7 +274,9 @@ Copy `docker-compose.yml-sample` to `docker-compose.yml` and customize:
 ```yaml
 services:
   twitch-colorchanger:
+    # Use either Docker Hub or GitHub Container Registry
     image: damastah/twitch-colorchanger:latest
+    # Alternative: image: ghcr.io/realabitbol/twitch-colorchanger:latest
     volumes:
       - ./twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf
     restart: unless-stopped
@@ -277,18 +287,18 @@ services:
 You can override any configuration constant using environment variables:
 
 ```bash
-# Single environment override
+# Single environment override (Docker Hub)
 docker run -e NETWORK_PARTITION_THRESHOLD=1800 \
   -v $(pwd)/twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf \
   damastah/twitch-colorchanger:latest
 
-# Multiple environment overrides
+# Multiple environment overrides (GitHub Container Registry)
 docker run \
   -e NETWORK_PARTITION_THRESHOLD=1800 \
   -e CONFIG_SAVE_TIMEOUT=5.0 \
   -e DEFAULT_BUCKET_LIMIT=1000 \
   -v $(pwd)/twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf \
-  damastah/twitch-colorchanger:latest
+  ghcr.io/realabitbol/twitch-colorchanger:latest
 ```
 
 ---
