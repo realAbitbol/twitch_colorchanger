@@ -37,6 +37,7 @@ Automatically change your Twitch username color after each message you send in c
     - [Docker Compose](#docker-compose)
 - [Configuration](#configuration)
   - [Configuration File](#configuration-file)
+  - [⚠️ Important: Channel List Configuration](#️-important-channel-list-configuration)
   - [Token Management Features](#token-management-features)
   - [Configuration Features](#configuration-features)
   - [Advanced Configuration](#advanced-configuration)
@@ -365,6 +366,23 @@ Configuration file format:
   ]
 }
 ```
+
+### ⚠️ Important: Channel List Configuration
+
+**The `channels` array is mandatory and critical for bot functionality:**
+
+- **Message Tracking**: The bot can only detect your messages in channels it's connected to
+- **Global Color Change**: While color changes apply to your entire Twitch account, the bot needs to see your messages to trigger the color changes
+- **Channel Specificity**: The bot cannot monitor messages you send to channels not in your `channels` list
+- **Multiple Channels**: Add all channels where you want the bot to detect your messages and trigger color changes
+
+**Examples:**
+
+```json
+"channels": ["your_channel", "popular_streamer", "friend_channel"]
+```
+
+**Best Practice**: Include your own channel and any channels where you frequently chat to ensure comprehensive color change coverage.
 
 ### Token Management Features
 
