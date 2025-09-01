@@ -7,6 +7,8 @@ import os
 import signal
 from typing import Any, Dict, List, Optional
 
+import aiohttp
+
 from .bot import TwitchColorBot
 from .colors import BColors
 from .config_watcher import create_config_watcher
@@ -30,10 +32,17 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         self.shutdown_initiated = False
         self.restart_requested = False
         self.new_config: Optional[List[Dict[str, Any]]] = None
+        
+        # Shared HTTP session for all bots
+        self.http_session: Optional[aiohttp.ClientSession] = None
 
     async def _start_all_bots(self):
         """Start all bots and return success status"""
         print_log(f"🚀 Starting {len(self.users_config)} bot(s)...", BColors.HEADER)
+
+        # Create shared HTTP session
+        print_log("🌐 Creating shared HTTP session...", BColors.OKCYAN)
+        self.http_session = aiohttp.ClientSession()
 
         for user_config in self.users_config:
             try:
@@ -78,6 +87,9 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         username = user_config["username"]
         token = user_config["access_token"]
 
+        if not self.http_session:
+            raise ValueError("HTTP session must be created before creating bots")
+
         try:
             bot = TwitchColorBot(
                 token=token,
@@ -86,6 +98,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                 client_secret=user_config.get("client_secret", ""),
                 nick=username,
                 channels=user_config["channels"],
+                http_session=self.http_session,  # Required shared HTTP session
                 is_prime_or_turbo=user_config.get("is_prime_or_turbo", True),
                 config_file=self.config_file,
                 user_id=None,  # Will be fetched by the bot itself
@@ -110,6 +123,12 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
 
         # Close all bots
         self._close_all_bots()
+
+        # Close shared HTTP session
+        if self.http_session:
+            print_log("🌐 Closing shared HTTP session...", BColors.OKCYAN)
+            await self.http_session.close()
+            self.http_session = None
 
         # Wait for tasks to finish cancellation
         await self._wait_for_task_completion()
