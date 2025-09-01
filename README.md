@@ -492,9 +492,9 @@ pip install -r requirements-dev.txt
 # Set up pre-commit hooks (recommended)
 pre-commit install
 
-# Format Python code with Ruff
-python -m ruff format .
-# or: make ruff-format
+# Format Python code with Ruff (ensure venv is activated)
+.venv/bin/python -m ruff format .
+# or: make ruff-format (recommended - uses correct venv automatically)
 
 # Format Markdown files with mdformat (optional)
 make md-format
