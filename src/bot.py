@@ -4,6 +4,7 @@ Main bot class for Twitch color changing functionality
 
 import asyncio
 import json
+import os
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -324,9 +325,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         if self.token_service and self.token_expiry:
             token_check_delay = self.token_service.next_check_delay(self.token_expiry)
             return min(irc_check_interval, token_check_delay)
-        else:
-            # Fallback to IRC interval if no token service or expiry
-            return irc_check_interval
+
+        # Fallback to IRC interval if no token service or expiry
+        return irc_check_interval
 
     async def _perform_scheduled_checks(
         self, current_time: float, last_irc_check: float, irc_check_interval: int
@@ -453,7 +454,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                     self.token_expiry = new_expiry
                 return True
 
-            elif status == TokenStatus.REFRESHED:
+            if status == TokenStatus.REFRESHED:
                 # Update all token information
                 if new_access_token:
                     self.access_token = new_access_token
@@ -466,8 +467,8 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 self._persist_token_changes()
                 return True
 
-            else:  # TokenStatus.FAILED
-                return False
+            # TokenStatus.FAILED
+            return False
 
         except Exception as e:
             print_log(f"❌ {self.username}: Error in token service: {e}", BColors.FAIL)
@@ -788,8 +789,6 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
 
     def _get_rate_limit_display(self, debug_only=False):
         """Get rate limit information for display in messages"""
-        import os
-
         # Check if debug mode is enabled
         debug_enabled = os.environ.get("DEBUG", "false").lower() in ("true", "1", "yes")
 
