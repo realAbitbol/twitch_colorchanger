@@ -844,22 +844,19 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         health_data = self.get_health_snapshot()
         return health_data["healthy"]
 
-    def get_health_snapshot(self) -> dict[str, Any]:
-        """Return structured health info with detailed reasons"""
-        reasons = []
-        current_time = time.time()
-
-        # Check basic connection state
+    def _check_basic_connection_health(self, reasons: list[str]) -> None:
+        """Check basic connection state and add issues to reasons list"""
         if not self.connected:
             reasons.append("not_connected")
         if not self.running:
             reasons.append("not_running")
-
-        # Check stream availability
         if not self.reader or not self.writer:
             reasons.append("missing_streams")
 
-        # Check activity timeouts with early warning
+    def _check_activity_health(
+        self, reasons: list[str], current_time: float
+    ) -> float | None:
+        """Check activity timeouts and return time_since_activity"""
         time_since_activity = (
             current_time - self.last_server_activity
             if self.last_server_activity > 0
@@ -874,19 +871,32 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             if time_since_activity > self.server_activity_timeout:
                 reasons.append("stale_activity")
 
-        # Check ping timeout (if we've received pings before)
+        return time_since_activity
+
+    def _check_ping_health(self, reasons: list[str], current_time: float) -> None:
+        """Check ping timeout health"""
         if self.last_ping_from_server > 0:
             ping_timeout = self.expected_ping_interval * 1.5
             if current_time - self.last_ping_from_server > ping_timeout:
                 reasons.append("ping_timeout")
 
-        # Check for pending joins that might indicate issues
+    def _check_operational_health(self, reasons: list[str]) -> None:
+        """Check operational health indicators"""
         if self.pending_joins:
             reasons.append("pending_joins")
-
-        # Check for recent connection failures
         if self.consecutive_failures > 0:
             reasons.append("recent_failures")
+
+    def get_health_snapshot(self) -> dict[str, Any]:
+        """Return structured health info with detailed reasons"""
+        reasons: list[str] = []
+        current_time = time.time()
+
+        # Check different health aspects
+        self._check_basic_connection_health(reasons)
+        time_since_activity = self._check_activity_health(reasons, current_time)
+        self._check_ping_health(reasons, current_time)
+        self._check_operational_health(reasons)
 
         return {
             "username": self.username,
