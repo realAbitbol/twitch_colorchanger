@@ -13,16 +13,8 @@ from .config_validator import validate_user_config as validate_user
 from .device_flow import DeviceCodeFlow
 from .logger import logger
 from .utils import print_log
-
-try:
-    from . import watcher_globals  # type: ignore
-except ImportError:
-    watcher_globals = None  # type: ignore
-
-try:
-    from . import token_validator  # type: ignore
-except ImportError:
-    token_validator = None  # type: ignore
+from . import watcher_globals  # Always available within package
+from . import token_validator  # Standalone validator module (no circular import)
 
 # Constants for repeated messages
 
@@ -146,10 +138,9 @@ def save_users_to_config(users, config_file):
     try:
         # Pause watcher during bot-initiated changes
         try:
-            if watcher_globals:
-                watcher_globals.pause_config_watcher()
-        except (ImportError, AttributeError):
-            pass  # Watcher not available
+            watcher_globals.pause_config_watcher()
+        except Exception:
+            pass  # Watcher not initialized
 
         # Ensure all users have is_prime_or_turbo field before saving
         for user in users:
@@ -194,9 +185,8 @@ def save_users_to_config(users, config_file):
     finally:
         # Always resume watcher
         try:
-            if watcher_globals:
-                watcher_globals.resume_config_watcher()
-        except (ImportError, AttributeError):
+            watcher_globals.resume_config_watcher()
+        except Exception:
             pass
 
 
@@ -395,10 +385,8 @@ async def _validate_or_refresh_tokens(user):
     This avoids circular imports between config.py and bot.py.
     """
     try:
-        if token_validator:
-            return await token_validator.validate_user_tokens(user)
+        return await token_validator.validate_user_tokens(user)
     except Exception:
-        # In case of any exception, return failure
         return {"valid": False, "user": user, "updated": False}
 
 
@@ -437,10 +425,8 @@ async def _get_new_tokens_via_device_flow(user, client_id, client_secret):
 async def _validate_new_tokens(user):
     """Validate newly obtained tokens."""
     try:
-        if token_validator:
-            return await token_validator.validate_new_tokens(user)
+        return await token_validator.validate_new_tokens(user)
     except Exception:
-        # In case of any exception, return failure
         return {"valid": False, "user": user}
 
 
