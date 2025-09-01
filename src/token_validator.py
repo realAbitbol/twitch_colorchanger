@@ -48,11 +48,10 @@ class TokenValidator:
                         if self.refresh_token:
                             return await self._refresh_token()
                     return True
-                else:
-                    # Token invalid, try to refresh if we have refresh token
-                    if self.refresh_token:
-                        return await self._refresh_token()
-                    return False
+                # Token invalid, try to refresh if we have refresh token
+                if self.refresh_token:
+                    return await self._refresh_token()
+                return False
 
         except Exception as e:
             print_log(
@@ -91,13 +90,12 @@ class TokenValidator:
                         debug_only=True,
                     )
                     return True
-                else:
-                    print_log(
-                        f"❌ Token refresh failed: {response.status_code}",
-                        BColors.FAIL,
-                        debug_only=True,
-                    )
-                    return False
+                print_log(
+                    f"❌ Token refresh failed: {response.status_code}",
+                    BColors.FAIL,
+                    debug_only=True,
+                )
+                return False
 
         except Exception as e:
             print_log(
@@ -112,10 +110,8 @@ class TokenValidator:
         if force:
             if self.refresh_token:
                 return await self._refresh_token()
-            else:
-                return await self.validate_token()
-        else:
             return await self.validate_token()
+        return await self.validate_token()
 
 
 async def validate_user_tokens(user: Dict[str, Any]) -> Dict[str, Any]:
@@ -176,11 +172,10 @@ async def validate_user_tokens(user: Dict[str, Any]) -> Dict[str, Any]:
                 )
 
             return {"valid": True, "user": user, "updated": updated}
-        else:
-            print_log(
-                f"❌ {username}: Token validation failed", BColors.FAIL, debug_only=True
-            )
-            return {"valid": False, "user": user, "updated": False}
+        print_log(
+            f"❌ {username}: Token validation failed", BColors.FAIL, debug_only=True
+        )
+        return {"valid": False, "user": user, "updated": False}
 
     except Exception as e:
         print_log(
@@ -234,13 +229,12 @@ async def validate_new_tokens(user: Dict[str, Any]) -> Dict[str, Any]:
                 debug_only=True,
             )
             return {"valid": True, "user": user}
-        else:
-            print_log(
-                f"⚠️ New tokens for {username} validation failed",
-                BColors.WARNING,
-                debug_only=True,
-            )
-            return {"valid": False, "user": user}
+        print_log(
+            f"⚠️ New tokens for {username} validation failed",
+            BColors.WARNING,
+            debug_only=True,
+        )
+        return {"valid": False, "user": user}
 
     except Exception as e:
         print_log(

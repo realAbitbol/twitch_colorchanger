@@ -186,7 +186,8 @@ class SimpleTwitchIRC:
         time_since_activity = now - self.last_server_activity
         if time_since_activity > self.server_activity_timeout:
             print_log(
-                f"⚠️ {self.username}: No server activity for {time_since_activity:.1f}s "
+                f"⚠️ {self.username}: No server activity for "
+                f"{time_since_activity:.1f}s "
                 f"(threshold: {self.server_activity_timeout}s)",
                 BColors.WARNING,
             )
@@ -262,7 +263,8 @@ class SimpleTwitchIRC:
     def _process_incoming_data(self, buffer: str, data: str) -> str:
         """Process incoming IRC data and return updated buffer"""
         print_log(
-            f"📡 IRC received data: {repr(data[:100])}{'...' if len(data) > 100 else ''}",
+            f"📡 IRC received data: {repr(data[:100])}"
+            f"{'...' if len(data) > 100 else ''}",
             BColors.OKCYAN,
             debug_only=True,
         )
@@ -362,8 +364,8 @@ class SimpleTwitchIRC:
             )
         # Failure path
         print_log(
-            f"❌ {
-                self.username} failed to join #{channel} after {attempts} attempts (timeout)",
+            f"❌ {self.username} failed to join #{channel} after "
+            f"{attempts} attempts (timeout)",
             BColors.FAIL,
         )
         return True

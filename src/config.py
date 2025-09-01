@@ -24,13 +24,12 @@ def load_users_from_config(config_file):
             # Support both new multi-user format and legacy single-user format
             if isinstance(data, dict) and "users" in data:
                 return data["users"]
-            elif isinstance(data, list):
+            if isinstance(data, list):
                 return data
-            elif isinstance(data, dict) and "username" in data:
+            if isinstance(data, dict) and "username" in data:
                 # Legacy single-user format, convert to multi-user
                 return [data]
-            else:
-                return []
+            return []
     except FileNotFoundError:
         return []
     except Exception as e:
@@ -120,7 +119,8 @@ def _verify_saved_data(config_file):
             username = user.get("username", "NO_USERNAME")
             is_prime_or_turbo = user.get("is_prime_or_turbo", "MISSING_FIELD")
             print_log(
-                f"  Verified User {i}: {username} -> is_prime_or_turbo: {is_prime_or_turbo}",
+                f"  Verified User {i}: {username} -> "
+                f"is_prime_or_turbo: {is_prime_or_turbo}",
                 BColors.OKGREEN,
                 debug_only=True,
             )
@@ -269,7 +269,8 @@ def disable_random_colors_for_user(username, config_file):
         else:
             # User not found in config - this shouldn't happen but handle gracefully
             print_log(
-                f"⚠️ User {username} not found in config when trying to disable random colors",
+                f"⚠️ User {username} not found in config when trying to "
+                "disable random colors",
                 BColors.WARNING,
             )
             return False
@@ -363,7 +364,8 @@ async def _setup_user_tokens(user):
     # Check if user has basic credentials
     if not client_id or not client_secret:
         print_log(
-            f"❌ User {username} missing client_id or client_secret - skipping automatic setup",
+            f"❌ User {username} missing client_id or client_secret - "
+            "skipping automatic setup",
             BColors.FAIL,
         )
         return {"user": user, "tokens_updated": False}
@@ -416,15 +418,13 @@ async def _get_new_tokens_via_device_flow(user, client_id, client_secret):
                     BColors.OKGREEN,
                 )
                 return {"user": validation_result["user"], "tokens_updated": True}
-            else:
-                print_log(
-                    f"⚠️ New tokens for {username} failed validation", BColors.WARNING
-                )
-                # Still save them, might work later
-                return {"user": user, "tokens_updated": True}
-        else:
-            print_log(f"❌ Failed to obtain tokens for {username}", BColors.FAIL)
-            return {"user": user, "tokens_updated": False}
+            print_log(
+                f"⚠️ New tokens for {username} failed validation", BColors.WARNING
+            )
+            # Still save them, might work later
+            return {"user": user, "tokens_updated": True}
+        print_log(f"❌ Failed to obtain tokens for {username}", BColors.FAIL)
+        return {"user": user, "tokens_updated": False}
     except Exception as e:
         print_log(f"❌ Error during token setup for {username}: {e}", BColors.FAIL)
         return {"user": user, "tokens_updated": False}

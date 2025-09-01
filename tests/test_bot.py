@@ -2669,6 +2669,7 @@ class TestBotCoverage:
                     with patch("src.bot.print_log") as mock_log:
                         # Mock sleep to speed up test
                         original_sleep = asyncio.sleep
+
                         async def fast_sleep(delay):
                             if delay == 300:  # Error retry delay
                                 await original_sleep(0.01)
@@ -2696,7 +2697,7 @@ class TestBotCoverage:
             "user_id": "12345",
         })
         bot = TwitchColorBot(**bot_config)
-        
+
         # Create mock IRC with unhealthy stats
         mock_irc = MagicMock()
         mock_irc.get_connection_stats.return_value = {
@@ -2734,7 +2735,7 @@ class TestBotCoverage:
             "user_id": "12345",
         })
         bot = TwitchColorBot(**bot_config)
-        
+
         # Create mock IRC that raises exception
         mock_irc = MagicMock()
         mock_irc.get_connection_stats.side_effect = ValueError("Stats error")
@@ -2840,8 +2841,10 @@ class TestBotCoverage:
             with patch.object(bot, "_check_and_refresh_token", side_effect=dummy):
                 with patch.object(bot, "_get_token_check_interval", return_value=300):
                     original_sleep = asyncio.sleep
+
                     async def fast_sleep(delay):
                         await original_sleep(0)
+
                     with patch("asyncio.sleep", side_effect=fast_sleep):
                         task = asyncio.create_task(bot._periodic_token_check())
                         # Let the task start and enter its sleep

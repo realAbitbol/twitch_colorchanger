@@ -26,10 +26,10 @@ async def main():
         config_file = os.environ.get("TWITCH_CONF_FILE", "twitch_colorchanger.conf")
 
         # Get configuration from config file
-        users_config = get_configuration()
+        loaded_config = get_configuration()
 
         # Setup missing tokens automatically (device flow fallback)
-        users_config = await setup_missing_tokens(users_config, config_file)
+        users_config = await setup_missing_tokens(loaded_config, config_file)
 
         # Print configuration summary
         print_config_summary(users_config)
@@ -52,9 +52,9 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--health-check":
         logger.info("🏥 Health check mode")
         try:
-            users_config = get_configuration()
+            health_config = get_configuration()
             logger.info(
-                f"✅ Health check passed - {len(users_config)} user(s) configured"
+                f"✅ Health check passed - {len(health_config)} user(s) configured"
             )
             sys.exit(0)
         except Exception as e:

@@ -199,9 +199,6 @@ class TestMainEntryPoint:
             "src.main.sys.exit"
         ) as mock_exit:
 
-            # Import src.main to trigger the if __name__ == "__main__" logic
-            from src import main as main_module
-            
             # Manually call the health check logic since __name__ != "__main__" in tests
             if len(sys.argv) > 1 and sys.argv[1] == "--health-check":
                 mock_logger.info("🏥 Health check mode")
@@ -233,9 +230,6 @@ class TestMainEntryPoint:
         ) as mock_exit:
 
             mock_get_config.side_effect = test_exception
-
-            # Import src.main to trigger the if __name__ == "__main__" logic
-            from src import main as main_module
 
             # Manually call the health check logic since __name__ != "__main__" in tests
             if len(sys.argv) > 1 and sys.argv[1] == "--health-check":

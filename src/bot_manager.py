@@ -279,15 +279,14 @@ class BotManager:
                 # Verify the connection is actually healthy now
                 if bot.irc.is_healthy():
                     return True
-                else:
-                    print_log(
-                        f"⚠️ {bot.username}: Reconnection succeeded but health check still fails",
-                        BColors.WARNING,
-                    )
-                    return False
-            else:
-                print_log(f"❌ {bot.username}: IRC reconnection failed", BColors.FAIL)
+                print_log(
+                    f"⚠️ {bot.username}: Reconnection succeeded but "
+                    "health check still fails",
+                    BColors.WARNING,
+                )
                 return False
+            print_log(f"❌ {bot.username}: IRC reconnection failed", BColors.FAIL)
+            return False
 
         except Exception as e:
             print_log(f"❌ Error reconnecting {bot.username}: {e}", BColors.FAIL)
@@ -395,7 +394,8 @@ async def _setup_config_watcher(manager: BotManager, config_file: str = None):
 
     except ImportError:
         print_log(
-            "⚠️ Config file watching not available (install 'watchdog' package for this feature)",
+            "⚠️ Config file watching not available "
+            "(install 'watchdog' package for this feature)",
             BColors.WARNING,
         )
         return None

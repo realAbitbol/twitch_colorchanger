@@ -40,12 +40,11 @@ class DeviceCodeFlow:
                             "✅ Device code generated successfully", BColors.OKGREEN
                         )
                         return result
-                    else:
-                        error_data = await response.json()
-                        print_log(
-                            f"❌ Failed to get device code: {error_data}", BColors.FAIL
-                        )
-                        return None
+                    error_data = await response.json()
+                    print_log(
+                        f"❌ Failed to get device code: {error_data}", BColors.FAIL
+                    )
+                    return None
 
             except Exception as e:
                 print_log(f"❌ Error requesting device code: {e}", BColors.FAIL)
@@ -81,7 +80,7 @@ class DeviceCodeFlow:
                             )
                             return result
 
-                        elif response.status == 400:
+                        if response.status == 400:
                             error_result = self._handle_polling_error(
                                 result, elapsed, poll_count
                             )
@@ -130,7 +129,7 @@ class DeviceCodeFlow:
                 )
             return None  # Continue polling
 
-        elif error == "slow_down":
+        if error == "slow_down":
             # Increase polling interval
             self.poll_interval = min(self.poll_interval + 1, 10)
             print_log(
@@ -140,22 +139,22 @@ class DeviceCodeFlow:
             )
             return None  # Continue polling
 
-        elif error == "expired_token":
+        if error == "expired_token":
             print_log(f"❌ Device code expired after {elapsed}s", BColors.FAIL)
             return {}  # Stop polling
 
-        elif error == "access_denied":
+        if error == "access_denied":
             print_log("❌ User denied authorization", BColors.FAIL)
             return {}  # Stop polling
 
+        # Unknown error
+        if error_description:
+            print_log(
+                f"❌ Device flow error: {error} - {error_description}", BColors.FAIL
+            )
         else:
-            if error_description:
-                print_log(
-                    f"❌ Device flow error: {error} - {error_description}", BColors.FAIL
-                )
-            else:
-                print_log(f"❌ Unknown device flow error: {error}", BColors.FAIL)
-            return {}  # Stop polling
+            print_log(f"❌ Unknown device flow error: {error}", BColors.FAIL)
+        return {}  # Stop polling
 
     async def get_user_tokens(self, username: str) -> Optional[Tuple[str, str]]:
         """

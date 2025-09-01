@@ -1127,7 +1127,7 @@ class TestBotIRCHealthIntegration:
 
         # Create a mock that tracks calls and stops the loop
         irc_called = False
-        
+
         async def mock_token_check():
             await asyncio.sleep(0.001)
 
@@ -1146,12 +1146,13 @@ class TestBotIRCHealthIntegration:
                 with patch.object(bot, "_get_token_check_interval", return_value=600):
                     # Override the sleep to make IRC check immediate
                     original_sleep = asyncio.sleep
+
                     async def fast_sleep(delay):
                         if delay == 120:  # IRC check interval
                             await original_sleep(0.001)  # Make it immediate
                         else:
                             await original_sleep(delay)
-                    
+
                     with patch("asyncio.sleep", side_effect=fast_sleep):
                         try:
                             await asyncio.wait_for(bot._periodic_token_check(), timeout=1.0)
@@ -1316,7 +1317,7 @@ class TestIRCMiscCoverage:
         # Mock recv to simulate timeout, then failure
         calls = 0
 
-        def recv_side_effect(size):
+        def recv_side_effect(_size):
             nonlocal calls
             calls += 1
             if calls == 1:
