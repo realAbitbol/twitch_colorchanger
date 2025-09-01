@@ -234,11 +234,6 @@ services:
     volumes:
       - ./twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf
     restart: unless-stopped
-    environment:
-      # Optional: Override configuration constants
-      - NETWORK_PARTITION_THRESHOLD=1800
-      - CONFIG_SAVE_TIMEOUT=5.0
-      - HEALTH_MONITOR_INTERVAL=120
 ```
 
 **Environment Variables in Docker:**
