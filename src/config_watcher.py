@@ -5,6 +5,7 @@ Configuration file watcher for runtime config changes
 import asyncio
 import os
 import threading
+import time
 from typing import Callable
 
 from watchdog.events import FileSystemEventHandler
@@ -38,8 +39,6 @@ class ConfigFileHandler(FileSystemEventHandler):
                     return
 
             # Debounce rapid fire events (some editors trigger multiple events)
-            import time
-
             current_time = time.time()
             if current_time - self.last_modified < 1.0:  # 1 second debounce
                 return

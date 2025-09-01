@@ -5,6 +5,7 @@ Configuration management for the Twitch Color Changer bot
 import json
 import os
 import sys
+import time
 
 from .colors import BColors
 from .config_validator import get_valid_users
@@ -12,6 +13,16 @@ from .config_validator import validate_user_config as validate_user
 from .device_flow import DeviceCodeFlow
 from .logger import logger
 from .utils import print_log
+
+try:
+    from . import watcher_globals  # type: ignore
+except ImportError:
+    watcher_globals = None  # type: ignore
+
+try:
+    from . import token_validator  # type: ignore
+except ImportError:
+    token_validator = None  # type: ignore
 
 # Constants for repeated messages
 
@@ -135,10 +146,9 @@ def save_users_to_config(users, config_file):
     try:
         # Pause watcher during bot-initiated changes
         try:
-            from .watcher_globals import pause_config_watcher, resume_config_watcher
-
-            pause_config_watcher()
-        except ImportError:
+            if watcher_globals:
+                watcher_globals.pause_config_watcher()
+        except (ImportError, AttributeError):
             pass  # Watcher not available
 
         # Ensure all users have is_prime_or_turbo field before saving
@@ -176,8 +186,6 @@ def save_users_to_config(users, config_file):
         _verify_saved_data(config_file)
 
         # Add small delay before resuming watcher to avoid detecting our own change
-        import time
-
         time.sleep(0.5)
 
     except Exception as e:
@@ -186,10 +194,9 @@ def save_users_to_config(users, config_file):
     finally:
         # Always resume watcher
         try:
-            from .watcher_globals import resume_config_watcher
-
-            resume_config_watcher()
-        except ImportError:
+            if watcher_globals:
+                watcher_globals.resume_config_watcher()
+        except (ImportError, AttributeError):
             pass
 
 
@@ -387,10 +394,9 @@ async def _validate_or_refresh_tokens(user):
     Validate existing tokens or refresh them using the standalone token validator.
     This avoids circular imports between config.py and bot.py.
     """
-    from .token_validator import validate_user_tokens
-
     try:
-        return await validate_user_tokens(user)
+        if token_validator:
+            return await token_validator.validate_user_tokens(user)
     except Exception:
         # In case of any exception, return failure
         return {"valid": False, "user": user, "updated": False}
@@ -432,10 +438,9 @@ async def _get_new_tokens_via_device_flow(user, client_id, client_secret):
 
 async def _validate_new_tokens(user):
     """Validate newly obtained tokens."""
-    from .token_validator import validate_new_tokens
-
     try:
-        return await validate_new_tokens(user)
+        if token_validator:
+            return await token_validator.validate_new_tokens(user)
     except Exception:
         # In case of any exception, return failure
         return {"valid": False, "user": user}
