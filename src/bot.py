@@ -125,6 +125,11 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         self.last_successful_connection = time.time()
         self.connection_failure_start: float | None = None
 
+        # Token failure tracking
+        self.token_failure_count = 0
+        self.last_token_failure: float | None = None
+        self.consecutive_refresh_failures = 0
+
         # Color tracking to avoid repeating the same color
         self.last_color = None
 
@@ -224,6 +229,14 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             priority=1,  # High priority
         )
 
+        # Add scheduler health monitoring
+        await self.scheduler.schedule_recurring(
+            callback=self._check_scheduler_health,
+            name="scheduler_health_check",
+            interval=300,  # Every 5 minutes
+            priority=3,  # Lower priority
+        )
+
         # Calculate initial token check interval based on expiry
         initial_token_interval = 300  # Default 5 minutes
         if self.token_service and self.token_expiry:
@@ -319,13 +332,22 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             await self._change_color()
 
     async def _adaptive_token_check(self):
-        """Adaptive token check using scheduler-based timing"""
+        """Adaptive token check using scheduler-based timing with comprehensive error handling"""
         try:
             if not self.running:
                 return
 
             # Always perform the token check when called
-            await self._check_and_refresh_token()
+            success = await self._check_and_refresh_token()
+
+            if not success:
+                print_log(
+                    f"⚠️ {self.username}: Token check failed, will retry more frequently",
+                    BColors.WARNING,
+                )
+                # Use shorter interval on failure for quicker recovery
+                await self.scheduler.reschedule_task("token_check", 60)  # 1 minute
+                return
 
             # Calculate next check delay based on token expiry and reschedule
             if self.token_service and self.token_expiry:
@@ -348,11 +370,85 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                     debug_only=True,
                 )
 
+        except asyncio.CancelledError:
+            # Don't log cancelled tasks as errors
+            print_log(
+                f"🚫 {self.username}: Token check cancelled",
+                BColors.WARNING,
+                debug_only=True,
+            )
+            raise  # Re-raise to maintain proper cancellation behavior
+
         except Exception as e:
             print_log(
-                f"⚠️ Error in adaptive token check for {self.username}: {e}",
+                f"❌ Error in adaptive token check for {self.username}: {e}",
+                BColors.FAIL,
+            )
+            # Schedule retry with exponential backoff on error
+            error_retry_delay = min(
+                300, 60 * (2 ** getattr(self, "_token_check_failures", 0))
+            )
+            self._token_check_failures = getattr(self, "_token_check_failures", 0) + 1
+
+            # Cap at 5 failures before using max delay
+            if self._token_check_failures > 5:
+                self._token_check_failures = 5
+
+            await self.scheduler.reschedule_task("token_check", error_retry_delay)
+            print_log(
+                f"⏳ {self.username}: Token check will retry in {error_retry_delay}s due to error",
                 BColors.WARNING,
             )
+
+    async def _check_scheduler_health(self):
+        """Monitor scheduler health and restart if necessary"""
+        try:
+            health = self.scheduler.get_health_status()
+
+            if not health["running"]:
+                print_log(
+                    f"❌ {self.username}: Scheduler not running, attempting restart",
+                    BColors.FAIL,
+                )
+                await self.scheduler.start()
+                return
+
+            if not health["has_scheduler_task"]:
+                print_log(
+                    f"❌ {self.username}: Scheduler task stopped, attempting restart",
+                    BColors.FAIL,
+                )
+                await self.scheduler.stop()
+                await self.scheduler.start()
+                return
+
+            # Check if scheduler is stalled (next task delay is unreasonably high)
+            next_delay = health["next_task_delay"]
+            if next_delay > 3600:  # More than 1 hour
+                print_log(
+                    f"⚠️ {self.username}: Scheduler appears stalled (next task in {next_delay / 60:.1f}m)",
+                    BColors.WARNING,
+                )
+
+        except Exception as e:
+            print_log(
+                f"❌ Error checking scheduler health for {self.username}: {e}",
+                BColors.FAIL,
+            )
+
+    def get_failure_statistics(self) -> dict:
+        """Get token failure statistics for monitoring"""
+        return {
+            "total_token_failures": self.token_failure_count,
+            "consecutive_refresh_failures": self.consecutive_refresh_failures,
+            "last_token_failure": self.last_token_failure,
+            "time_since_last_failure": (
+                time.time() - self.last_token_failure
+                if self.last_token_failure
+                else None
+            ),
+            "is_in_failure_state": self.consecutive_refresh_failures >= 3,
+        }
 
     def _update_network_status(self, stats: dict[str, Any]) -> None:
         """Update network partition detection status"""
@@ -501,12 +597,14 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         new_refresh_token: str | None,
         new_expiry: Optional["datetime"],
     ) -> bool:
-        """Handle the result of token validation/refresh"""
+        """Handle the result of token validation/refresh with failure tracking"""
         if status == TokenStatus.VALID:
             # Update expiry even for valid tokens
             if new_expiry:
                 self.token_expiry = new_expiry
                 self._display_token_expiry()
+            # Reset failure counters on success
+            self.consecutive_refresh_failures = 0
             return True
 
         if status == TokenStatus.REFRESHED:
@@ -521,9 +619,22 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
 
             # Persist changes to config file
             self._persist_token_changes()
+            # Reset failure counters on success
+            self.consecutive_refresh_failures = 0
             return True
 
-        # TokenStatus.FAILED
+        # TokenStatus.FAILED - track failure
+        self.consecutive_refresh_failures += 1
+        self.token_failure_count += 1
+        self.last_token_failure = time.time()
+
+        # Log critical failures
+        if self.consecutive_refresh_failures >= 3:
+            print_log(
+                f"🚨 {self.username}: CRITICAL - {self.consecutive_refresh_failures} consecutive token refresh failures!",
+                BColors.FAIL,
+            )
+
         return False
 
     def _display_token_expiry(self):
@@ -656,29 +767,104 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             return None
 
     def _persist_token_changes(self):
-        """Persist token changes to configuration file"""
-        if hasattr(self, "config_file") and self.config_file:
-            user_config = {
-                "username": self.username,
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-                "access_token": self.access_token,
-                "refresh_token": self.refresh_token,
-                "channels": getattr(self, "channels", [self.username.lower()]),
-                # Preserve the current setting
-                "is_prime_or_turbo": self.use_random_colors,
-            }
-            try:
-                update_user_in_config(user_config, self.config_file)
-                print_log(
-                    f"💾 {self.username}: Token changes saved to configuration",
-                    BColors.OKGREEN,
-                )
-            except Exception as e:
-                print_log(
-                    f"⚠️ {self.username}: Failed to save token changes: {e}",
-                    BColors.WARNING,
-                )
+        """Persist token changes to configuration file with atomic updates"""
+        if not self._validate_config_prerequisites():
+            return
+
+        user_config = self._build_user_config()
+
+        # Attempt to save with retries
+        max_retries = 3
+        for attempt in range(max_retries):
+            if self._attempt_config_save(user_config, attempt, max_retries):
+                return  # Success
+
+    def _validate_config_prerequisites(self) -> bool:
+        """Validate prerequisites for config persistence"""
+        if not hasattr(self, "config_file") or not self.config_file:
+            print_log(
+                f"⚠️ {self.username}: No config file specified, cannot persist tokens",
+                BColors.WARNING,
+            )
+            return False
+
+        if not self.access_token:
+            print_log(
+                f"⚠️ {self.username}: Cannot save empty access token",
+                BColors.WARNING,
+            )
+            return False
+
+        if not self.refresh_token:
+            print_log(
+                f"⚠️ {self.username}: Cannot save empty refresh token",
+                BColors.WARNING,
+            )
+            return False
+
+        return True
+
+    def _build_user_config(self) -> dict:
+        """Build user configuration dictionary"""
+        return {
+            "username": self.username,
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+            "access_token": self.access_token,
+            "refresh_token": self.refresh_token,
+            "channels": getattr(self, "channels", [self.username.lower()]),
+            "is_prime_or_turbo": self.use_random_colors,
+        }
+
+    def _attempt_config_save(
+        self, user_config: dict, attempt: int, max_retries: int
+    ) -> bool:
+        """Attempt to save config with error handling"""
+        try:
+            update_user_in_config(user_config, self.config_file)
+            print_log(
+                f"💾 {self.username}: Token changes saved to configuration",
+                BColors.OKGREEN,
+            )
+            return True
+
+        except FileNotFoundError:
+            print_log(
+                f"❌ {self.username}: Config file not found: {self.config_file}",
+                BColors.FAIL,
+            )
+            return True  # Don't retry for missing file
+
+        except PermissionError:
+            print_log(
+                f"❌ {self.username}: Permission denied writing to config file",
+                BColors.FAIL,
+            )
+            return True  # Don't retry for permission errors
+
+        except Exception as e:
+            return self._handle_config_save_error(e, attempt, max_retries)
+
+    def _handle_config_save_error(
+        self, error: Exception, attempt: int, max_retries: int
+    ) -> bool:
+        """Handle config save errors with retry logic"""
+        if attempt < max_retries - 1:
+            print_log(
+                f"⚠️ {self.username}: Failed to save tokens (attempt {attempt + 1}): {error}, retrying...",
+                BColors.WARNING,
+            )
+            # Brief delay before retry
+            import time
+
+            time.sleep(0.1 * (attempt + 1))
+            return False  # Continue retrying
+        else:
+            print_log(
+                f"❌ {self.username}: Failed to save token changes after {max_retries} attempts: {error}",
+                BColors.FAIL,
+            )
+            return True  # Stop retrying
 
     def _persist_normalized_channels(self):
         """Persist normalized channels to configuration file"""
