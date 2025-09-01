@@ -234,6 +234,30 @@ services:
     volumes:
       - ./twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf
     restart: unless-stopped
+    environment:
+      # Optional: Override configuration constants
+      - NETWORK_PARTITION_THRESHOLD=1800
+      - CONFIG_SAVE_TIMEOUT=5.0
+      - HEALTH_MONITOR_INTERVAL=120
+```
+
+**Environment Variables in Docker:**
+
+You can override any configuration constant using environment variables:
+
+```bash
+# Single environment override
+docker run -e NETWORK_PARTITION_THRESHOLD=1800 \
+  -v $(pwd)/twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf \
+  damastah/twitch-colorchanger:latest
+
+# Multiple environment overrides
+docker run \
+  -e NETWORK_PARTITION_THRESHOLD=1800 \
+  -e CONFIG_SAVE_TIMEOUT=5.0 \
+  -e DEFAULT_BUCKET_LIMIT=1000 \
+  -v $(pwd)/twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf \
+  damastah/twitch-colorchanger:latest
 ```
 
 ---
@@ -318,12 +342,96 @@ Configuration file format:
 
 ### Advanced Configuration
 
-Environment variables:
+The bot supports extensive configuration through environment variables, allowing you to customize behavior without modifying the source code.
+
+#### General Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `DEBUG` | Enable debug logging | `false` |
 | `TWITCH_CONF_FILE` | Path to configuration file | `twitch_colorchanger.conf` |
+
+#### Internal Configuration Constants
+
+All internal timing and behavior constants can be overridden via environment variables:
+
+**Network Configuration:**
+
+- `PING_EXPECTED_INTERVAL` (default: 600) - IRC server ping expected every 10 minutes
+- `SERVER_ACTIVITY_TIMEOUT` (default: 300) - 5 minutes without any server activity
+- `CONNECTION_RETRY_TIMEOUT` (default: 600) - Give up on connection after 10 minutes
+- `NETWORK_PARTITION_THRESHOLD` (default: 900) - 15 minutes of no connectivity before declaring partition
+- `PARTIAL_CONNECTIVITY_THRESHOLD` (default: 180) - 3 minutes for partial connectivity detection
+
+**IRC Configuration:**
+
+- `CHANNEL_JOIN_TIMEOUT` (default: 30) - Max wait for JOIN confirmation
+- `MAX_JOIN_ATTEMPTS` (default: 2) - Maximum join attempts before giving up
+- `RECONNECT_DELAY` (default: 2) - Base delay before reconnection
+- `ASYNC_IRC_READ_TIMEOUT` (default: 1.0) - Read timeout for async IRC operations
+- `ASYNC_IRC_CONNECT_TIMEOUT` (default: 15.0) - Connection timeout for async IRC
+- `ASYNC_IRC_JOIN_TIMEOUT` (default: 30.0) - Channel join timeout for async IRC
+- `ASYNC_IRC_RECONNECT_TIMEOUT` (default: 30.0) - Reconnection timeout for async IRC
+
+**Health Monitoring:**
+
+- `HEALTH_MONITOR_INTERVAL` (default: 300) - Check bot health every 5 minutes
+- `TASK_WATCHDOG_INTERVAL` (default: 120) - Check specific task health every 2 minutes
+
+**Configuration Management:**
+
+- `CONFIG_SAVE_TIMEOUT` (default: 10.0) - Max time to wait for config save completion
+- `CONFIG_WRITE_DEBOUNCE` (default: 0.5) - Delay after save for watcher resume
+- `RELOAD_WATCH_DELAY` (default: 2.0) - Delay after config reload before resuming watch
+
+**Rate Limiting:**
+
+- `DEFAULT_BUCKET_LIMIT` (default: 800) - Default API request bucket size
+- `RATE_LIMIT_SAFETY_BUFFER` (default: 5) - Safety buffer for rate limiting
+- `STALE_BUCKET_AGE` (default: 60) - Age after which buckets are considered stale
+
+**Exponential Backoff:**
+
+- `BACKOFF_BASE_DELAY` (default: 1.0) - Base delay for exponential backoff
+- `BACKOFF_MAX_DELAY` (default: 300.0) - Maximum delay for exponential backoff
+- `BACKOFF_MULTIPLIER` (default: 2.0) - Multiplier for exponential backoff
+- `BACKOFF_JITTER_FACTOR` (default: 0.1) - Jitter factor to avoid thundering herd
+
+#### Environment Variable Usage Examples
+
+**Increase network resilience for unstable connections:**
+
+```bash
+export NETWORK_PARTITION_THRESHOLD=1800  # 30 minutes instead of 15
+export PARTIAL_CONNECTIVITY_THRESHOLD=300  # 5 minutes instead of 3
+export CONNECTION_RETRY_TIMEOUT=1200     # 20 minutes instead of 10
+python -m src.main
+```
+
+**Faster response times for stable networks:**
+
+```bash
+export CONFIG_SAVE_TIMEOUT=5.0           # 5 seconds instead of 10
+export RELOAD_WATCH_DELAY=1.0            # 1 second instead of 2
+export HEALTH_MONITOR_INTERVAL=120       # 2 minutes instead of 5
+python -m src.main
+```
+
+**Docker usage with environment overrides:**
+
+```bash
+docker run -e NETWORK_PARTITION_THRESHOLD=1800 \
+           -e CONFIG_SAVE_TIMEOUT=5.0 \
+           damastah/twitch-colorchanger:latest
+```
+
+**Error handling:** Invalid values show warnings and fall back to defaults:
+
+```bash
+export NETWORK_PARTITION_THRESHOLD=invalid
+python -m src.main
+# Output: Warning: Invalid integer value for NETWORK_PARTITION_THRESHOLD='invalid', using default 900
+```
 
 ### Runtime Configuration Changes
 

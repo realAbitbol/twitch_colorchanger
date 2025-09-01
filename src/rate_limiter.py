@@ -7,6 +7,11 @@ import time
 from dataclasses import dataclass
 
 from .colors import BColors
+from .constants import (
+    DEFAULT_BUCKET_LIMIT,
+    RATE_LIMIT_SAFETY_BUFFER,
+    STALE_BUCKET_AGE,
+)
 from .utils import print_log
 
 
@@ -37,7 +42,7 @@ class TwitchRateLimiter:
         self._lock = asyncio.Lock()
 
         # Safety margins
-        self.safety_buffer = 5  # Keep 5 points as safety buffer
+        self.safety_buffer = RATE_LIMIT_SAFETY_BUFFER  # Keep points as safety buffer
         self.min_delay = 0.1  # Minimum delay between requests (100ms)
 
         # Hysteresis parameters to avoid oscillation
@@ -229,7 +234,7 @@ class TwitchRateLimiter:
         else:
             elapsed_monotonic = time.time() - bucket.last_updated
 
-        if elapsed_monotonic > 60:
+        if elapsed_monotonic > STALE_BUCKET_AGE:
             print_log(
                 "⚠️ Rate limit info is stale, using conservative delay",
                 BColors.WARNING,
@@ -392,7 +397,7 @@ class TwitchRateLimiter:
             # Update bucket to reflect we're out of points
             if is_user_request:
                 self.user_bucket = RateLimitInfo(
-                    limit=800,  # Default user limit
+                    limit=DEFAULT_BUCKET_LIMIT,  # Default user limit
                     remaining=0,
                     reset_timestamp=reset_time,
                     last_updated=time.time(),
@@ -400,7 +405,7 @@ class TwitchRateLimiter:
                 )
             else:
                 self.app_bucket = RateLimitInfo(
-                    limit=800,  # Default app limit
+                    limit=DEFAULT_BUCKET_LIMIT,  # Default app limit
                     remaining=0,
                     reset_timestamp=reset_time,
                     last_updated=time.time(),

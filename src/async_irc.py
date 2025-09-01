@@ -15,11 +15,13 @@ from .constants import (
     ASYNC_IRC_CONNECT_TIMEOUT,
     ASYNC_IRC_JOIN_TIMEOUT,
     ASYNC_IRC_READ_TIMEOUT,
+    ASYNC_IRC_RECONNECT_TIMEOUT,
     BACKOFF_BASE_DELAY,
     BACKOFF_JITTER_FACTOR,
     BACKOFF_MAX_DELAY,
     BACKOFF_MULTIPLIER,
     CHANNEL_JOIN_TIMEOUT,
+    CONNECTION_RETRY_TIMEOUT,
     MAX_JOIN_ATTEMPTS,
     PING_EXPECTED_INTERVAL,
     RECONNECT_DELAY,
@@ -61,6 +63,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         # Exponential backoff for reconnection attempts
         self.consecutive_failures = 0  # Track consecutive reconnection failures
         self.last_reconnect_attempt = 0  # Timestamp of last reconnection attempt
+        self.connection_start_time = 0  # Track when connection attempts started
 
         # Message callbacks (can be sync or async)
         self.message_handler: Callable[[str, str, str], Any] | None = None
@@ -125,6 +128,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             success = await self._join_with_message_processing(channel)
             if success:
                 self.connected = True
+                self._reset_connection_timer()  # Reset timer after successful connection
                 print_log(
                     f"✅ {self.username}: Connected and joined #{channel}",
                     BColors.OKGREEN,
@@ -675,9 +679,19 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         self.last_reconnect_attempt = time.time()
         self.consecutive_failures += 1
 
-        # Reconnect
+        # Reconnect with timeout
         channel = original_channels[0] if original_channels else ""
-        success = await self.connect(self.token, self.username, channel)
+        try:
+            success = await asyncio.wait_for(
+                self.connect(self.token, self.username, channel),
+                timeout=ASYNC_IRC_RECONNECT_TIMEOUT,
+            )
+        except TimeoutError:
+            print_log(
+                f"⏰ {self.username}: Reconnection timed out after {ASYNC_IRC_RECONNECT_TIMEOUT}s",
+                BColors.FAIL,
+            )
+            success = False
 
         if success:
             # Reset exponential backoff on successful reconnection
@@ -784,3 +798,23 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             return False
 
         return True
+
+    def _should_retry_connection(self) -> bool:
+        """Check if we should continue retrying connection attempts"""
+        if self.connection_start_time == 0:
+            self.connection_start_time = time.time()
+            return True
+
+        elapsed = time.time() - self.connection_start_time
+        if elapsed > CONNECTION_RETRY_TIMEOUT:
+            print_log(
+                f"⏰ {self.username}: Connection retry timeout ({CONNECTION_RETRY_TIMEOUT}s) exceeded",
+                BColors.WARNING,
+            )
+            return False
+        return True
+
+    def _reset_connection_timer(self):
+        """Reset the connection retry timer after successful connection"""
+        self.connection_start_time = 0
+        self.consecutive_failures = 0

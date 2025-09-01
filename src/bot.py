@@ -19,6 +19,7 @@ from .config import (
     normalize_channels,
     update_user_in_config,
 )
+from .constants import NETWORK_PARTITION_THRESHOLD, PARTIAL_CONNECTIVITY_THRESHOLD
 from .error_handling import APIError, simple_retry
 from .logger import logger
 from .rate_limiter import get_rate_limiter
@@ -119,6 +120,10 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         # Statistics
         self.messages_sent = 0
         self.colors_changed = 0
+
+        # Network partition detection
+        self.last_successful_connection = time.time()
+        self.connection_failure_start: float | None = None
 
         # Color tracking to avoid repeating the same color
         self.last_color = None
@@ -301,10 +306,6 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             # Direct async color change - no more threading complexity!
             await self._change_color()
 
-    async def _handle_message(self, sender: str, message: str, channel: str):
-        """Handle message (for testing compatibility)"""
-        await self.handle_irc_message(sender, channel, message)
-
     async def _adaptive_token_check(self):
         """Adaptive token check using scheduler-based timing"""
         try:
@@ -330,6 +331,47 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 BColors.WARNING,
             )
 
+    def _update_network_status(self, stats: dict[str, Any]) -> None:
+        """Update network partition detection status"""
+        current_time = time.time()
+
+        if stats["connected"] and stats["is_healthy"]:
+            self.last_successful_connection = current_time
+            if self.connection_failure_start:
+                # Connection recovered
+                failure_duration = current_time - self.connection_failure_start
+                if failure_duration > PARTIAL_CONNECTIVITY_THRESHOLD:
+                    print_log(
+                        f"✅ {self.username}: Connection recovered after {failure_duration:.1f}s",
+                        BColors.OKGREEN,
+                    )
+                self.connection_failure_start = None
+        else:
+            # Connection is unhealthy
+            if not self.connection_failure_start:
+                self.connection_failure_start = current_time
+                print_log(
+                    f"⚠️ {self.username}: Connection failure detected",
+                    BColors.WARNING,
+                )
+
+            failure_duration = current_time - self.connection_failure_start
+
+            # Check for partial connectivity (quick failures)
+            if failure_duration > PARTIAL_CONNECTIVITY_THRESHOLD:
+                print_log(
+                    f"🔄 {self.username}: Partial connectivity detected ({failure_duration:.1f}s)",
+                    BColors.WARNING,
+                )
+
+            # Check for network partition (extended failures)
+            if failure_duration > NETWORK_PARTITION_THRESHOLD:
+                print_log(
+                    f"🚨 {self.username}: Network partition detected ({failure_duration:.1f}s) - "
+                    "extended connection failure",
+                    BColors.FAIL,
+                )
+
     async def _check_irc_health(self):
         """Check IRC connection health and reconnect if needed"""
         if not self.irc:
@@ -338,6 +380,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         try:
             # Get connection health stats
             stats = self.irc.get_connection_stats()
+
+            # Update network partition detection status
+            self._update_network_status(stats)
 
             # Log health status in debug mode
             print_log(

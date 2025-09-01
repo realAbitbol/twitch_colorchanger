@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 
+from .constants import CONFIG_SAVE_TIMEOUT
 from .logger import BColors, print_log
 
 # Constants
@@ -64,7 +65,7 @@ class TokenValidator:
             response = await client.get(
                 TWITCH_VALIDATION_ENDPOINT,
                 headers={"Authorization": f"OAuth {self.access_token}"},
-                timeout=10.0,
+                timeout=CONFIG_SAVE_TIMEOUT,
             )
             if response.status_code == 200:
                 return response.json()
@@ -111,7 +112,7 @@ class TokenValidator:
                         "client_secret": self.client_secret,
                     },
                     headers={"Content-Type": "application/x-www-form-urlencoded"},
-                    timeout=10.0,
+                    timeout=CONFIG_SAVE_TIMEOUT,
                 )
 
                 if response.status_code == 200:
