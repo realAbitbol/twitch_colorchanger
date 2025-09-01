@@ -372,73 +372,57 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                     BColors.FAIL,
                 )
 
-    async def _check_irc_health(self):
-        """Check IRC connection health and reconnect if needed"""
+    def _check_irc_health(self):
+        """Check IRC connection health - reconnection is handled by IRC level"""
         if not self.irc:
             return
 
         try:
-            # Get connection health stats
-            stats = self.irc.get_connection_stats()
+            # Get structured health snapshot (contains all needed data)
+            health_data = self.irc.get_health_snapshot()
+
+            # Create minimal stats object for network status compatibility
+            stats_compat = {
+                "time_since_activity": health_data.get("time_since_activity", 0.0)
+                or 0.0,
+                "is_healthy": health_data.get("healthy", False),
+                "connected": health_data.get("connected", False),
+                "running": health_data.get("running", False),
+            }
 
             # Update network partition detection status
-            self._update_network_status(stats)
+            self._update_network_status(stats_compat)
 
-            # Log health status in debug mode
-            print_log(
-                f"🏥 {self.username} IRC health: {stats['is_healthy']}, "
-                f"activity: {stats['time_since_activity']:.1f}s ago, "
-                f"connected: {stats['connected']}, running: {stats['running']}",
-                BColors.OKBLUE,
-                debug_only=True,
-            )
-
-            # Check if connection is unhealthy
-            if not stats["is_healthy"]:
+            # Log health status with detailed reasons
+            if health_data["healthy"]:
+                activity_time = health_data.get("time_since_activity") or 0.0
                 print_log(
-                    f"⚠️ {self.username}: IRC connection appears unhealthy - "
-                    f"last activity {stats['time_since_activity']:.1f}s ago",
+                    f"🏥 {self.username} IRC health: OK, "
+                    f"state: {health_data['state']}, "
+                    f"activity: {activity_time:.1f}s ago",
+                    BColors.OKBLUE,
+                    debug_only=True,
+                )
+            else:
+                # Show unhealthy reasons
+                reasons_str = ", ".join(health_data["reasons"])
+                print_log(
+                    f"⚠️ {self.username}: IRC unhealthy - {reasons_str}, "
+                    f"state: {health_data['state']}",
                     BColors.WARNING,
                 )
 
-                # Attempt to force reconnection
-                await self._reconnect_irc()
+                # Log that IRC handles its own reconnection
+                print_log(
+                    f"🔄 {self.username}: IRC will handle reconnection automatically",
+                    BColors.WARNING,
+                    debug_only=True,
+                )
 
         except Exception as e:
             print_log(
                 f"⚠️ Error checking IRC health for {self.username}: {e}",
                 BColors.WARNING,
-            )
-
-    async def _reconnect_irc(self):
-        """Attempt to reconnect IRC connection"""
-        try:
-            print_log(
-                f"🔄 {self.username}: Attempting IRC reconnection...", BColors.WARNING
-            )
-
-            # Cancel current IRC task if running
-            if self.irc_task and not self.irc_task.done():
-                self.irc_task.cancel()
-                try:
-                    await asyncio.wait_for(self.irc_task, timeout=2.0)
-                except (TimeoutError, asyncio.CancelledError):
-                    pass
-
-            # Force reconnection (await the coroutine!)
-            success = await self.irc.force_reconnect()
-            if success:
-                # Restart IRC listening task (pure async)
-                self.irc_task = asyncio.create_task(self.irc.listen())
-                print_log(
-                    f"✅ {self.username}: IRC reconnection successful", BColors.OKGREEN
-                )
-            else:
-                print_log(f"❌ {self.username}: IRC reconnection failed", BColors.FAIL)
-
-        except Exception as e:
-            print_log(
-                f"❌ Error reconnecting IRC for {self.username}: {e}", BColors.FAIL
             )
 
     async def _check_and_refresh_token(self, force: bool = False):
