@@ -19,6 +19,7 @@ class RateLimitInfo:
     remaining: int  # Number of points remaining in bucket
     reset_timestamp: float  # Unix timestamp when bucket resets to full
     last_updated: float  # When this info was last updated
+    monotonic_last_updated: float  # Monotonic time when last updated
 
 
 class TwitchRateLimiter:
@@ -39,6 +40,10 @@ class TwitchRateLimiter:
         # Safety margins
         self.safety_buffer = 5  # Keep 5 points as safety buffer
         self.min_delay = 0.1  # Minimum delay between requests (100ms)
+        
+        # Hysteresis parameters to avoid oscillation
+        self.hysteresis_threshold = 10  # Extra buffer when switching to conservative mode
+        self.is_conservative_mode = False
 
     def get_delay(self, is_user_request: bool = True, points_needed: int = 1) -> float:
         """Return the optimal delay before the next request."""
@@ -140,6 +145,7 @@ class TwitchRateLimiter:
                 remaining=int(remaining),
                 reset_timestamp=float(reset),
                 last_updated=time.time(),
+                monotonic_last_updated=time.monotonic(),
             )
         return None
 
@@ -168,7 +174,7 @@ class TwitchRateLimiter:
 
     def _calculate_delay(self, bucket: RateLimitInfo, points_needed: int = 1) -> float:
         """
-        Calculate optimal delay before next request
+        Calculate optimal delay before next request using monotonic timing
 
         Args:
             bucket: Current rate limit info
@@ -178,9 +184,20 @@ class TwitchRateLimiter:
             Delay in seconds (0 if no delay needed)
         """
         current_time = time.time()
+        current_monotonic = time.monotonic()
+
+        # Use monotonic time for elapsed calculations to avoid clock drift
+        if hasattr(bucket, 'monotonic_last_updated'):
+            elapsed_monotonic = current_monotonic - bucket.monotonic_last_updated
+            # Update reset timestamp based on monotonic elapsed time
+            adjusted_reset = bucket.reset_timestamp - (current_time - bucket.last_updated) + elapsed_monotonic
+        else:
+            # Fallback for old bucket format
+            adjusted_reset = bucket.reset_timestamp
+            elapsed_monotonic = current_time - bucket.last_updated
 
         # If bucket info is stale (older than 60 seconds), be conservative
-        if current_time - bucket.last_updated > 60:
+        if elapsed_monotonic > 60:
             print_log(
                 "⚠️ Rate limit info is stale, using conservative delay",
                 BColors.WARNING,
@@ -188,23 +205,47 @@ class TwitchRateLimiter:
             )
             return 1.0
 
+        # Apply hysteresis to avoid oscillation between modes
+        effective_safety_buffer = self.safety_buffer
+        if self.is_conservative_mode:
+            effective_safety_buffer += self.hysteresis_threshold
+
+        # Check if we can exit conservative mode
+        if self.is_conservative_mode and bucket.remaining > effective_safety_buffer + points_needed + 5:
+            self.is_conservative_mode = False
+            effective_safety_buffer = self.safety_buffer
+
+        # Check if we need to enter conservative mode
+        if not self.is_conservative_mode and bucket.remaining < self.safety_buffer + points_needed:
+            self.is_conservative_mode = True
+            effective_safety_buffer = self.safety_buffer + self.hysteresis_threshold
+
         # If we have enough points (including safety buffer), no delay needed
-        if bucket.remaining >= points_needed + self.safety_buffer:
+        if bucket.remaining >= points_needed + effective_safety_buffer:
             return 0
 
         # If we're completely out of points, wait until reset
         if bucket.remaining < points_needed:
-            reset_delay = max(0, bucket.reset_timestamp - current_time)
+            reset_delay = max(0, adjusted_reset - current_time)
             print_log(
                 f"⏰ Rate limit exceeded, waiting {reset_delay:.1f}s until reset",
                 BColors.WARNING,
             )
             return reset_delay + 0.1  # Add small buffer
 
-        # If we're running low but not empty, calculate proportional delay
-        # This spreads remaining requests over remaining time
-        time_until_reset = max(1, bucket.reset_timestamp - current_time)
-        points_available = bucket.remaining - self.safety_buffer
+        # Speculative tracking: estimate points that will be available
+        time_until_reset = max(1, adjusted_reset - current_time)
+        points_available = bucket.remaining - effective_safety_buffer
+        
+        # Calculate regeneration rate (points per second)
+        if time_until_reset > 0:
+            regeneration_rate = bucket.limit / time_until_reset
+            
+            # Estimate when we'll have enough points
+            points_deficit = points_needed - points_available
+            if points_deficit > 0:
+                estimated_wait = points_deficit / regeneration_rate
+                return max(self.min_delay, estimated_wait)
 
         if points_available > 0:
             # Calculate delay to spread remaining points over remaining time
@@ -212,7 +253,7 @@ class TwitchRateLimiter:
             return max(self.min_delay, optimal_delay)
 
         # Fallback: wait until reset
-        return max(0, bucket.reset_timestamp - current_time)
+        return max(0, adjusted_reset - current_time)
 
     async def wait_if_needed(
         self,
@@ -307,6 +348,7 @@ class TwitchRateLimiter:
                     remaining=0,
                     reset_timestamp=reset_time,
                     last_updated=time.time(),
+                    monotonic_last_updated=time.monotonic(),
                 )
             else:
                 self.app_bucket = RateLimitInfo(
@@ -314,6 +356,7 @@ class TwitchRateLimiter:
                     remaining=0,
                     reset_timestamp=reset_time,
                     last_updated=time.time(),
+                    monotonic_last_updated=time.monotonic(),
                 )
         else:
             print_log(

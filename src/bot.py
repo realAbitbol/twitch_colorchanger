@@ -17,6 +17,7 @@ from .logger import logger
 from .rate_limiter import get_rate_limiter
 from .async_irc import AsyncTwitchIRC
 from .utils import print_log
+from .token_service import TokenService, TokenStatus
 
 # Constants
 CHAT_COLOR_ENDPOINT = "chat/color"
@@ -29,8 +30,12 @@ async def _make_api_request(  # pylint: disable=too-many-arguments,too-many-posi
     client_id: str,
     data: Dict[str, Any] = None,
     params: Dict[str, Any] = None,
+    session: "aiohttp.ClientSession" = None,
 ) -> Tuple[Dict[str, Any], int, Dict[str, str]]:
-    """Make a simple HTTP request to Twitch API"""
+    """Make a simple HTTP request to Twitch API using shared session"""
+    if not session:
+        raise ValueError("HTTP session is required - no fallback to new session creation")
+
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Client-Id": client_id,
@@ -39,16 +44,15 @@ async def _make_api_request(  # pylint: disable=too-many-arguments,too-many-posi
 
     url = f"https://api.twitch.tv/helix/{endpoint}"
 
-    async with aiohttp.ClientSession() as session:
-        async with session.request(
-            method, url, headers=headers, json=data, params=params
-        ) as response:
-            try:
-                response_data = await response.json()
-            except (aiohttp.ContentTypeError, json.JSONDecodeError):
-                response_data = {}
+    async with session.request(
+        method, url, headers=headers, json=data, params=params
+    ) as response:
+        try:
+            response_data = await response.json()
+        except (aiohttp.ContentTypeError, json.JSONDecodeError):
+            response_data = {}
 
-            return response_data, response.status, dict(response.headers)
+        return response_data, response.status, dict(response.headers)
 
 
 class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
@@ -64,6 +68,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         client_secret: str,
         nick: str,
         channels: List[str],
+        http_session: "aiohttp.ClientSession",
         is_prime_or_turbo: bool = True,
         config_file: str = None,
         user_id: str = None,
@@ -80,6 +85,14 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         self.client_secret = client_secret
         self.user_id = user_id
         self.token_expiry = None
+
+        # HTTP session for API requests (required)
+        if not http_session:
+            raise ValueError("http_session is required - bots must use shared HTTP session")
+        self.http_session = http_session
+        
+        # Token service for unified token management (required)
+        self.token_service = TokenService(client_id, client_secret, http_session)
 
         # Bot settings
         self.channels = channels
@@ -209,15 +222,18 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             try:
                 await self.token_task
             except asyncio.CancelledError:
-                # Expected when cancelling task - log and re-raise for proper cleanup
+                # Expected when cancelling task
                 print_log(
                     "Token task cancelled during stop", BColors.OKBLUE, debug_only=True
                 )
-                raise
+                # Don't re-raise, just continue with cleanup
 
         # Disconnect IRC (now async)
         if self.irc:
-            await self.irc.disconnect()
+            try:
+                await self.irc.disconnect()
+            except Exception as e:
+                print_log(f"⚠️ Error disconnecting IRC: {e}", BColors.WARNING)
 
         # Wait for IRC task to finish (disconnect should cause it to exit)
         if self.irc_task and not self.irc_task.done():
@@ -229,8 +245,16 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                         self.username}",
                     BColors.WARNING,
                 )
+                # Cancel the task if it's still running
+                self.irc_task.cancel()
+            except asyncio.CancelledError:
+                # Expected if the task was cancelled
+                pass
             except Exception as e:
                 print_log(f"⚠️ Error waiting for IRC task: {e}", BColors.WARNING)
+
+        # Ensure running flag is set to False (in case early return happened)
+        self.running = False
 
         # Add a small delay to ensure cleanup
         await asyncio.sleep(0.1)
@@ -251,17 +275,21 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         await self.handle_irc_message(sender, channel, message)
 
     async def _periodic_token_check(self):
-        """Periodically check and refresh token if needed"""
+        """Periodically check and refresh token using adaptive scheduling"""
         last_irc_check = 0
-        last_token_check = 0
         irc_check_interval = 120  # Check IRC health every 2 minutes
 
         while self.running:
             try:
-                # Sleep for the IRC check interval (shorter of the two)
-                await asyncio.sleep(irc_check_interval)
-                # Capture current time first so the line is always executed
-                # (improves testability)
+                # Use adaptive scheduling when TokenService is available
+                if self.token_service and self.token_expiry:
+                    token_check_delay = self.token_service.next_check_delay(self.token_expiry)
+                    sleep_interval = min(irc_check_interval, token_check_delay)
+                else:
+                    # Fallback to IRC interval if no token service or expiry
+                    sleep_interval = irc_check_interval
+
+                await asyncio.sleep(sleep_interval)
                 current_time = time.time()
 
                 if not self.running:  # Check if still running after sleep
@@ -272,11 +300,18 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                     await self._check_irc_health()
                     last_irc_check = current_time
 
-                # Check if it's time for token check based on dynamic interval
-                token_check_interval = self._get_token_check_interval()
-                if current_time - last_token_check >= token_check_interval:
-                    await self._check_and_refresh_token()
-                    last_token_check = current_time
+                # Adaptive token checking
+                if self.token_service and self.token_expiry:
+                    next_delay = self.token_service.next_check_delay(self.token_expiry)
+                    if next_delay <= 0:  # Time to check
+                        await self._check_and_refresh_token()
+                else:
+                    # If no token service, check tokens every 10 minutes as fallback
+                    if current_time - last_irc_check >= 600:  # 10 minutes
+                        print_log(
+                            f"⚠️ {self.username}: No TokenService available, cannot perform adaptive token checks",
+                            BColors.WARNING
+                        )
 
             except asyncio.CancelledError:
                 print_log(
@@ -358,149 +393,55 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 f"❌ Error reconnecting IRC for {self.username}: {e}", BColors.FAIL
             )
 
-    def _get_token_check_interval(self) -> int:
-        """Get dynamic check interval based on token expiry time"""
-        try:
-            if self._has_token_expiry():
-                hours_remaining = self._hours_until_expiry()
-                if hours_remaining < 0.5:  # Less than 30 minutes
-                    return 180  # Check every 3 minutes if <30 minutes remaining
-                if hours_remaining < 1:  # Less than 1 hour
-                    return 300  # Check every 5 minutes if <1 hour remaining
-                if hours_remaining < 2:  # Less than 2 hours
-                    return 600  # Check every 10 minutes if <2 hours remaining
-                return 1800  # Check every 30 minutes if >2 hours remaining
-            return 600  # Default 10 minutes if no expiry known
-        except Exception:
-            return 600  # Default 10 minutes on error
-
     async def _check_and_refresh_token(self, force: bool = False):
-        """Public coordinator for token validation / refresh.
-
-        Args:
-            force: Always attempt a refresh (when a refresh token exists) regardless of
-                   current expiry / validation state. Used at startup.
-        """
+        """Check and refresh token using TokenService"""
         if not self.refresh_token:
             print_log(
-                f"⚠️ {
-                    self.username}: No refresh token available",
+                f"⚠️ {self.username}: No refresh token available",
                 BColors.WARNING,
             )
             return False
 
-        if force:
-            return await self._force_token_refresh(initial=True)
-
-        # 1. If we have an expiry timestamp, handle via expiry logic.
-        if self._has_token_expiry():
-            return await self._check_expiring_token()
-
-        # 2. Otherwise, validate via API (no known expiry stored).
-        if await self._validate_token_via_api():
-            return True
-
-        # 3. Fallback refresh attempt when validation failed or not conclusive.
-        return await self._attempt_standard_refresh()
-
-    # ------------------ Helper methods (complexity reduction) ------------------ #
-    def _has_token_expiry(self) -> bool:
-        return bool(getattr(self, "token_expiry", None))
-
-    def _hours_until_expiry(self) -> float:
-        if not self._has_token_expiry() or self.token_expiry is None:
-            return float("inf")
-        return (self.token_expiry - datetime.now()).total_seconds() / 3600
-
-    async def _force_token_refresh(self, initial: bool = False) -> bool:
-        label = "initial" if initial else "forced"
-        print_log(f"🔄 {self.username}: Forcing {label} token refresh", BColors.OKBLUE)
-        success = await self._refresh_access_token()
-        if success:
+        if not self.token_service:
             print_log(
-                f"✅ {
-                    self.username}: Forced token refresh succeeded",
-                BColors.OKGREEN,
+                f"❌ {self.username}: TokenService not available (http_session required)",
+                BColors.FAIL,
             )
-            self._persist_token_changes()
-        else:
-            print_log(f"❌ {self.username}: Forced token refresh failed", BColors.FAIL)
-        return success
+            return False
 
-    async def _check_expiring_token(self) -> bool:
-        hours_remaining = self._hours_until_expiry()
-        print_log(
-            f"🔑 {
-                self.username}: Token expires in {
-                hours_remaining:.1f} hours",
-            debug_only=True,
-        )
-
-        # Refresh when less than 1 hour remaining (for ~4 hour tokens)
-        # This gives us plenty of buffer while not refreshing too early
-        if hours_remaining < 1:
-            if hours_remaining < 0.25:  # Less than 15 minutes
-                print_log(
-                    f"⏰ {
-                        self.username}: Token expires in {
-                        hours_remaining *
-                        60:.0f} minutes, refreshing urgently...",
-                    BColors.FAIL,
-                )
-            else:
-                print_log(
-                    f"⏰ {
-                        self.username}: Token expires in {
-                        hours_remaining:.1f} hours, refreshing proactively...",
-                    BColors.WARNING,
-                )
-            return await self._attempt_standard_refresh()
-
-        print_log(
-            f"✅ {
-                self.username}: Token is valid and has sufficient time remaining ({
-                hours_remaining:.1f}h)",
-            BColors.OKGREEN,
-        )
-        return True
-
-    async def _validate_token_via_api(self) -> bool:
         try:
-            user_info = await self._get_user_info()
-            if user_info:
-                print_log(
-                    f"✅ {self.username}: Token is valid",
-                    BColors.OKGREEN,
-                )
+            status, new_access_token, new_refresh_token, new_expiry = await self.token_service.validate_and_refresh(
+                self.access_token, 
+                self.refresh_token, 
+                self.username,
+                self.token_expiry,
+                force
+            )
+            
+            if status == TokenStatus.VALID:
+                # Update expiry even for valid tokens
+                if new_expiry:
+                    self.token_expiry = new_expiry
                 return True
-            print_log(
-                f"🔍 {self.username}: Token validation failed (API check), "
-                "attempting refresh...",
-                BColors.WARNING,
-                debug_only=True,
-            )
+                
+            elif status == TokenStatus.REFRESHED:
+                # Update all token information
+                self.access_token = new_access_token
+                if new_refresh_token:
+                    self.refresh_token = new_refresh_token
+                if new_expiry:
+                    self.token_expiry = new_expiry
+                    
+                # Persist changes to config file
+                self._persist_token_changes()
+                return True
+                
+            else:  # TokenStatus.FAILED
+                return False
+                
+        except Exception as e:
+            print_log(f"❌ {self.username}: Error in token service: {e}", BColors.FAIL)
             return False
-        except Exception as e:  # Broad by design; upstream already categorized.
-            print_log(
-                f"🔍 {self.username}: Token validation failed ({e}), "
-                "attempting refresh...",
-                BColors.WARNING,
-                debug_only=True,
-            )
-            return False
-
-    async def _attempt_standard_refresh(self) -> bool:
-        success = await self._refresh_access_token()
-        if success:
-            print_log(
-                f"✅ {
-                    self.username}: Token refreshed and saved successfully",
-                BColors.OKGREEN,
-            )
-            self._persist_token_changes()
-        else:
-            print_log(f"❌ {self.username}: Token refresh failed", BColors.FAIL)
-        return success
 
     async def _get_user_info(self):
         """Retrieve user information from Twitch API"""
@@ -513,7 +454,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
 
         try:
             data, status_code, headers = await _make_api_request(
-                "GET", "users", self.access_token, self.client_id
+                "GET", "users", self.access_token, self.client_id, session=self.http_session
             )
 
             # Update rate limiting info from response headers
@@ -568,6 +509,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 self.access_token,
                 self.client_id,
                 params=params,
+                session=self.http_session,
             )
 
             # Update rate limiting info from response headers
@@ -694,6 +636,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                         self.access_token,
                         self.client_id,
                         params=params,
+                        session=self.http_session,
                     ),
                     timeout=10,
                 )
@@ -777,6 +720,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                     self.access_token,
                     self.client_id,
                     params=params,
+                    session=self.http_session,
                 ),
                 timeout=10,
             )
@@ -842,59 +786,6 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             return f" [{remaining}/{limit} reqs, reset in {reset_in:.0f}s]"
         # Very low - highlight the critical status
         return f" [⚠️ {remaining}/{limit} reqs, reset in {reset_in:.0f}s]"
-
-    async def _refresh_access_token(self):
-        """Refresh the access token using the refresh token"""
-        return await simple_retry(self._refresh_access_token_impl, user=self.username)
-
-    async def _refresh_access_token_impl(self):
-        """Implementation of token refresh"""
-        token_data = {
-            "grant_type": "refresh_token",
-            "refresh_token": self.refresh_token,
-            "client_id": self.client_id,
-            "client_secret": self.client_secret,
-        }
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://id.twitch.tv/oauth2/token", data=token_data
-                ) as response:
-                    if response.status == 200:
-                        token_response = await response.json()
-                        self.access_token = token_response["access_token"]
-
-                        # Update refresh token if provided
-                        if "refresh_token" in token_response:
-                            self.refresh_token = token_response["refresh_token"]
-
-                        # Set token expiry if provided
-                        if "expires_in" in token_response:
-                            self.token_expiry = datetime.now() + timedelta(
-                                seconds=token_response["expires_in"]
-                            )
-                            logger.info(
-                                f"Token will expire at {
-                                    self.token_expiry.strftime('%Y-%m-%d %H:%M:%S')}",
-                                user=self.username,
-                            )
-
-                        return True
-                    error_text = await response.text()
-                    logger.error(
-                        f"Token refresh failed. Status: {
-                            response.status}, Response: {error_text}",
-                        user=self.username,
-                        status_code=response.status,
-                    )
-                return False
-
-        except Exception as e:
-            logger.error(
-                f"Error refreshing token: {e}", exc_info=True, user=self.username
-            )
-            return False
 
     def close(self):
         """Close the bot and clean up resources"""
