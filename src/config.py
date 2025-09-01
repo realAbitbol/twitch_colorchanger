@@ -2,16 +2,20 @@
 Configuration management for the Twitch Color Changer bot
 """
 
+import fcntl
 import json
 import os
 import sys
+import tempfile
 import time
+from pathlib import Path
 
 from . import token_validator  # Standalone validator module (no circular import)
 from . import watcher_globals  # Always available within package
 from .colors import BColors
 from .config_validator import get_valid_users
 from .config_validator import validate_user_config as validate_user
+from .constants import CONFIG_WRITE_DEBOUNCE
 from .device_flow import DeviceCodeFlow
 from .logger import logger
 from .utils import print_log
@@ -169,15 +173,62 @@ def save_users_to_config(users, config_file):
         save_data = {"users": users}
         _log_debug_data(save_data)
 
-        with open(config_file, "w", encoding="utf-8") as f:
-            json.dump(save_data, f, indent=2)
-        print_log("💾 Configuration saved successfully", BColors.OKGREEN)
+        # ATOMIC SAVE WITH FILE LOCKING
+        config_path = Path(config_file)
+        lock_file = None
+        temp_path = None
+        
+        try:
+            # 1. Create lock file for cross-process coordination
+            lock_file_path = config_path.with_suffix('.lock')
+            lock_file = open(lock_file_path, 'w', encoding='utf-8')
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)  # Exclusive lock
+            
+            # 2. Write to temporary file in same directory (ensures atomic rename)
+            with tempfile.NamedTemporaryFile(
+                mode='w',
+                dir=config_path.parent,
+                prefix=f'.{config_path.name}.',
+                suffix='.tmp',
+                delete=False,
+                encoding='utf-8'
+            ) as temp_file:
+                json.dump(save_data, temp_file, indent=2)
+                temp_file.flush()
+                os.fsync(temp_file.fileno())  # Force write to disk
+                temp_path = temp_file.name
+            
+            # 3. Set secure permissions
+            os.chmod(temp_path, 0o600)
+            
+            # 4. Atomic rename (the critical moment)
+            os.rename(temp_path, config_file)
+            
+            print_log("💾 Configuration saved atomically", BColors.OKGREEN)
+            
+        except Exception as save_error:
+            # Cleanup temp file on error
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
+            print_log(f"❌ Atomic save failed: {save_error}", BColors.FAIL)
+            raise
+            
+        finally:
+            # Always cleanup lock
+            if lock_file:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                lock_file.close()
+                try:
+                    os.unlink(lock_file_path)
+                except OSError:
+                    pass
 
         # Verify the save
         _verify_saved_data(config_file)
 
-        # Add small delay before resuming watcher to avoid detecting our own change
-        time.sleep(0.5)
+        # Add delay before resuming watcher to avoid detecting our own change
+        from .constants import CONFIG_WRITE_DEBOUNCE
+        time.sleep(CONFIG_WRITE_DEBOUNCE)
 
     except Exception as e:
         print_log(f"⚠️ Failed to save configuration: {e}", BColors.FAIL)
