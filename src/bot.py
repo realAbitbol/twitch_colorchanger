@@ -5,25 +5,25 @@ Main bot class for Twitch color changing functionality
 import asyncio
 import json
 import time
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Tuple
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
 
+from .async_irc import AsyncTwitchIRC
 from .colors import BColors, generate_random_hex_color, get_different_twitch_color
 from .config import disable_random_colors_for_user, update_user_in_config
 from .error_handling import APIError, simple_retry
 from .logger import logger
 from .rate_limiter import get_rate_limiter
-from .async_irc import AsyncTwitchIRC
-from .utils import print_log
 from .token_service import TokenService, TokenStatus
+from .utils import print_log
 
 # Constants
 CHAT_COLOR_ENDPOINT = "chat/color"
 
 
-async def _make_api_request(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+async def _make_api_request(  # pylint: disable=too-many-arguments
     method: str,
     endpoint: str,
     access_token: str,
@@ -34,7 +34,9 @@ async def _make_api_request(  # pylint: disable=too-many-arguments,too-many-posi
 ) -> Tuple[Dict[str, Any], int, Dict[str, str]]:
     """Make a simple HTTP request to Twitch API using shared session"""
     if not session:
-        raise ValueError("HTTP session is required - no fallback to new session creation")
+        raise ValueError(
+            "HTTP session is required - no fallback to new session creation"
+        )
 
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -84,13 +86,15 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         self.client_id = client_id
         self.client_secret = client_secret
         self.user_id = user_id
-        self.token_expiry = None
+        self.token_expiry: Optional[datetime] = None
 
         # HTTP session for API requests (required)
         if not http_session:
-            raise ValueError("http_session is required - bots must use shared HTTP session")
+            raise ValueError(
+                "http_session is required - bots must use shared HTTP session"
+            )
         self.http_session = http_session
-        
+
         # Token service for unified token management (required)
         self.token_service = TokenService(client_id, client_secret, http_session)
 
@@ -188,16 +192,22 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         self.irc.set_message_handler(self.handle_irc_message)
 
         # Connect to IRC with the first channel (now async)
-        if not await self.irc.connect(self.access_token, self.username, unique_channels[0]):
+        if not await self.irc.connect(
+            self.access_token, self.username, unique_channels[0]
+        ):
             print_log(f"❌ {self.username}: Failed to connect to IRC", BColors.FAIL)
             return
 
         # Start IRC listening task immediately after connection
-        print_log(f"👂 {self.username}: Starting async message listener...", BColors.OKCYAN)
+        print_log(
+            f"👂 {self.username}: Starting async message listener...", BColors.OKCYAN
+        )
         self.irc_task = asyncio.create_task(self.irc.listen())
 
         # Join all additional configured channels (now async)
-        for channel in unique_channels[1:]:  # Skip first channel, already joined in connect
+        for channel in unique_channels[
+            1:
+        ]:  # Skip first channel, already joined in connect
             await self.irc.join_channel(channel)
 
         # Start token monitoring task
@@ -226,7 +236,8 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 print_log(
                     "Token task cancelled during stop", BColors.OKBLUE, debug_only=True
                 )
-                # Don't re-raise, just continue with cleanup
+                # Re-raise CancelledError as per asyncio best practices
+                raise
 
         # Disconnect IRC (now async)
         if self.irc:
@@ -249,7 +260,8 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 self.irc_task.cancel()
             except asyncio.CancelledError:
                 # Expected if the task was cancelled
-                pass
+                # Re-raise CancelledError as per asyncio best practices
+                raise
             except Exception as e:
                 print_log(f"⚠️ Error waiting for IRC task: {e}", BColors.WARNING)
 
@@ -283,7 +295,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             try:
                 # Use adaptive scheduling when TokenService is available
                 if self.token_service and self.token_expiry:
-                    token_check_delay = self.token_service.next_check_delay(self.token_expiry)
+                    token_check_delay = self.token_service.next_check_delay(
+                        self.token_expiry
+                    )
                     sleep_interval = min(irc_check_interval, token_check_delay)
                 else:
                     # Fallback to IRC interval if no token service or expiry
@@ -309,8 +323,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                     # If no token service, check tokens every 10 minutes as fallback
                     if current_time - last_irc_check >= 600:  # 10 minutes
                         print_log(
-                            f"⚠️ {self.username}: No TokenService available, cannot perform adaptive token checks",
-                            BColors.WARNING
+                            f"⚠️ {self.username}: No TokenService available, "
+                            "cannot perform adaptive token checks",
+                            BColors.WARNING,
                         )
 
             except asyncio.CancelledError:
@@ -404,41 +419,45 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
 
         if not self.token_service:
             print_log(
-                f"❌ {self.username}: TokenService not available (http_session required)",
+                f"❌ {self.username}: TokenService not available "
+                "(http_session required)",
                 BColors.FAIL,
             )
             return False
 
         try:
-            status, new_access_token, new_refresh_token, new_expiry = await self.token_service.validate_and_refresh(
-                self.access_token, 
-                self.refresh_token, 
-                self.username,
-                self.token_expiry,
-                force
+            status, new_access_token, new_refresh_token, new_expiry = (
+                await self.token_service.validate_and_refresh(
+                    self.access_token,
+                    self.refresh_token,
+                    self.username,
+                    self.token_expiry,
+                    force,
+                )
             )
-            
+
             if status == TokenStatus.VALID:
                 # Update expiry even for valid tokens
                 if new_expiry:
                     self.token_expiry = new_expiry
                 return True
-                
+
             elif status == TokenStatus.REFRESHED:
                 # Update all token information
-                self.access_token = new_access_token
+                if new_access_token:
+                    self.access_token = new_access_token
                 if new_refresh_token:
                     self.refresh_token = new_refresh_token
                 if new_expiry:
                     self.token_expiry = new_expiry
-                    
+
                 # Persist changes to config file
                 self._persist_token_changes()
                 return True
-                
+
             else:  # TokenStatus.FAILED
                 return False
-                
+
         except Exception as e:
             print_log(f"❌ {self.username}: Error in token service: {e}", BColors.FAIL)
             return False
@@ -454,7 +473,11 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
 
         try:
             data, status_code, headers = await _make_api_request(
-                "GET", "users", self.access_token, self.client_id, session=self.http_session
+                "GET",
+                "users",
+                self.access_token,
+                self.client_id,
+                session=self.http_session,
             )
 
             # Update rate limiting info from response headers
@@ -755,14 +778,14 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     def _get_rate_limit_display(self, debug_only=False):
         """Get rate limit information for display in messages"""
         import os
-        
+
         # Check if debug mode is enabled
         debug_enabled = os.environ.get("DEBUG", "false").lower() in ("true", "1", "yes")
-        
+
         # If debug_only is True and debug is not enabled, return empty string
         if debug_only and not debug_enabled:
             return ""
-            
+
         if not self.rate_limiter.user_bucket:
             return " [rate limit info pending]"
 

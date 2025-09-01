@@ -30,7 +30,9 @@ class TokenValidator:
         self.client_secret = client_secret
         self.access_token = access_token
         self.refresh_token = refresh_token
-        self._token_expiry_threshold_hours = 1  # Only refresh if less than 1 hour remaining
+        self._token_expiry_threshold_hours = (
+            1  # Only refresh if less than 1 hour remaining
+        )
 
     async def validate_token(self) -> tuple[bool, int]:
         """Validate token via Twitch API. Returns (is_valid, expires_in_seconds)."""
@@ -38,11 +40,11 @@ class TokenValidator:
             validation_data = await self._call_validate_api()
             if validation_data is None:
                 return await self._handle_invalid_token()
-            
+
             expires_in = validation_data.get("expires_in", 0)
             if expires_in < (self._token_expiry_threshold_hours * 3600):
                 return await self._handle_expiring_token()
-            
+
             return True, expires_in
 
         except Exception as e:
@@ -54,7 +56,10 @@ class TokenValidator:
             return False, 0
 
     async def _call_validate_api(self) -> Optional[Dict[str, Any]]:
-        """Call the Twitch validation API and return the response data or None if invalid."""
+        """
+        Call the Twitch validation API and return the response data
+        or None if invalid.
+        """
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 VALIDATE_TOKEN_URL,
@@ -135,7 +140,10 @@ class TokenValidator:
             return False
 
     async def check_and_refresh_token(self, force: bool = False) -> tuple[bool, int]:
-        """Check token validity and refresh if needed. Returns (is_valid, expires_in_seconds)."""
+        """
+        Check token validity and refresh if needed.
+        Returns (is_valid, expires_in_seconds).
+        """
         if force:
             if self.refresh_token:
                 refreshed = await self._refresh_token()

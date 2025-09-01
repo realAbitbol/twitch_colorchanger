@@ -15,7 +15,6 @@ from . import watcher_globals  # Always available within package
 from .colors import BColors
 from .config_validator import get_valid_users
 from .config_validator import validate_user_config as validate_user
-from .constants import CONFIG_WRITE_DEBOUNCE
 from .device_flow import DeviceCodeFlow
 from .logger import logger
 from .utils import print_log
@@ -177,42 +176,42 @@ def save_users_to_config(users, config_file):
         config_path = Path(config_file)
         lock_file = None
         temp_path = None
-        
+
         try:
             # 1. Create lock file for cross-process coordination
-            lock_file_path = config_path.with_suffix('.lock')
-            lock_file = open(lock_file_path, 'w', encoding='utf-8')
+            lock_file_path = config_path.with_suffix(".lock")
+            lock_file = open(lock_file_path, "w", encoding="utf-8")
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)  # Exclusive lock
-            
+
             # 2. Write to temporary file in same directory (ensures atomic rename)
             with tempfile.NamedTemporaryFile(
-                mode='w',
+                mode="w",
                 dir=config_path.parent,
-                prefix=f'.{config_path.name}.',
-                suffix='.tmp',
+                prefix=f".{config_path.name}.",
+                suffix=".tmp",
                 delete=False,
-                encoding='utf-8'
+                encoding="utf-8",
             ) as temp_file:
                 json.dump(save_data, temp_file, indent=2)
                 temp_file.flush()
                 os.fsync(temp_file.fileno())  # Force write to disk
                 temp_path = temp_file.name
-            
+
             # 3. Set secure permissions
             os.chmod(temp_path, 0o600)
-            
+
             # 4. Atomic rename (the critical moment)
             os.rename(temp_path, config_file)
-            
+
             print_log("💾 Configuration saved atomically", BColors.OKGREEN)
-            
+
         except Exception as save_error:
             # Cleanup temp file on error
             if temp_path and os.path.exists(temp_path):
                 os.unlink(temp_path)
             print_log(f"❌ Atomic save failed: {save_error}", BColors.FAIL)
             raise
-            
+
         finally:
             # Always cleanup lock
             if lock_file:
@@ -228,6 +227,7 @@ def save_users_to_config(users, config_file):
 
         # Add delay before resuming watcher to avoid detecting our own change
         from .constants import CONFIG_WRITE_DEBOUNCE
+
         time.sleep(CONFIG_WRITE_DEBOUNCE)
 
     except Exception as e:
@@ -458,12 +458,14 @@ async def _get_new_tokens_via_device_flow(user, client_id, client_secret):
             # and get expiry information for proactive refresh
             validation_result = await _validate_new_tokens(user)
             if validation_result["valid"]:
-                print_log(
-                    f"✅ Successfully obtained and validated new tokens for {username}",
-                    BColors.OKGREEN,
+                success_msg = (
+                    f"✅ Successfully obtained and validated new tokens "
+                    f"for {username}"
                 )
+                print_log(success_msg, BColors.OKGREEN)
                 return {"user": validation_result["user"], "tokens_updated": True}
-            print_log(f"⚠️ New tokens for {username} failed validation", BColors.WARNING)
+            warning_msg = f"⚠️ New tokens for {username} failed validation"
+            print_log(warning_msg, BColors.WARNING)
             # Still save them, might work later
             return {"user": user, "tokens_updated": True}
         print_log(f"❌ Failed to obtain tokens for {username}", BColors.FAIL)
