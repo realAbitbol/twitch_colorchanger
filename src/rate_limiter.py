@@ -5,7 +5,6 @@ Advanced rate limiter that uses Twitch Helix API rate limiting headers
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import Dict, Optional
 
 from .colors import BColors
 from .utils import print_log
@@ -31,8 +30,8 @@ class TwitchRateLimiter:
         self.username = username
 
         # Separate buckets for app access and user access requests
-        self.app_bucket: Optional[RateLimitInfo] = None
-        self.user_bucket: Optional[RateLimitInfo] = None
+        self.app_bucket: RateLimitInfo | None = None
+        self.user_bucket: RateLimitInfo | None = None
 
         # Lock to prevent race conditions
         self._lock = asyncio.Lock()
@@ -81,7 +80,7 @@ class TwitchRateLimiter:
         return f"app:{self.client_id}"
 
     def update_from_headers(
-        self, headers: Dict[str, str], is_user_request: bool = True
+        self, headers: dict[str, str], is_user_request: bool = True
     ):
         """
         Update rate limit info from API response headers
@@ -112,7 +111,7 @@ class TwitchRateLimiter:
             )
 
     def _log_rate_limit_headers(
-        self, headers: Dict[str, str], is_user_request: bool
+        self, headers: dict[str, str], is_user_request: bool
     ) -> None:
         """Log rate limit headers for debugging"""
         bucket_key = self._get_bucket_key(is_user_request)
@@ -131,8 +130,8 @@ class TwitchRateLimiter:
             )
 
     def _parse_rate_limit_headers(
-        self, headers: Dict[str, str]
-    ) -> Optional[RateLimitInfo]:
+        self, headers: dict[str, str]
+    ) -> RateLimitInfo | None:
         """Parse rate limit headers into RateLimitInfo object"""
         # Extract rate limit headers (case-insensitive)
         limit = headers.get("ratelimit-limit") or headers.get("Ratelimit-Limit")
@@ -204,7 +203,9 @@ class TwitchRateLimiter:
             bucket, points_needed, effective_safety_buffer, adjusted_reset, current_time
         )
 
-    def _get_adjusted_reset_time(self, bucket: RateLimitInfo, current_time: float) -> float:
+    def _get_adjusted_reset_time(
+        self, bucket: RateLimitInfo, current_time: float
+    ) -> float:
         """Get adjusted reset time accounting for monotonic time drift"""
         current_monotonic = time.monotonic()
 
@@ -237,7 +238,9 @@ class TwitchRateLimiter:
             return True
         return False
 
-    def _update_conservative_mode(self, bucket: RateLimitInfo, points_needed: int) -> float:
+    def _update_conservative_mode(
+        self, bucket: RateLimitInfo, points_needed: int
+    ) -> float:
         """Update conservative mode and return effective safety buffer"""
         # Apply hysteresis to avoid oscillation between modes
         effective_safety_buffer = self.safety_buffer
@@ -353,7 +356,7 @@ class TwitchRateLimiter:
                 bucket.remaining = max(0, bucket.remaining - points_cost)
                 bucket.last_updated = time.time()
 
-    def handle_429_error(self, headers: Dict[str, str], is_user_request: bool = True):
+    def handle_429_error(self, headers: dict[str, str], is_user_request: bool = True):
         """
         Handle a 429 Too Many Requests error by updating rate limit info
 
@@ -411,7 +414,7 @@ class TwitchRateLimiter:
 
 
 # Global rate limiter instances (one per client_id/username combination)
-_rate_limiters: Dict[str, TwitchRateLimiter] = {}
+_rate_limiters: dict[str, TwitchRateLimiter] = {}
 
 
 def get_rate_limiter(client_id: str, username: str = None) -> TwitchRateLimiter:

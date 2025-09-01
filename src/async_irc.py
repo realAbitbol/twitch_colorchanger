@@ -7,7 +7,8 @@ import inspect
 import secrets
 import time
 import traceback
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 from .colors import BColors
 from .constants import (
@@ -39,8 +40,8 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         # IRC connection
         self.server = "irc.chat.twitch.tv"
         self.port = 6667
-        self.reader: Optional[asyncio.StreamReader] = None
-        self.writer: Optional[asyncio.StreamWriter] = None
+        self.reader: asyncio.StreamReader | None = None
+        self.writer: asyncio.StreamWriter | None = None
         self.running = False
         self.connected = False
 
@@ -62,8 +63,8 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         self.last_reconnect_attempt = 0  # Timestamp of last reconnection attempt
 
         # Message callbacks (can be sync or async)
-        self.message_handler: Optional[Callable[[str, str, str], Any]] = None
-        self.color_change_handler: Optional[Callable[[str, str, str], Any]] = None
+        self.message_handler: Callable[[str, str, str], Any] | None = None
+        self.color_change_handler: Callable[[str, str, str], Any] | None = None
 
         # Buffer for partial messages
         self.message_buffer = ""
@@ -130,13 +131,11 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                 )
                 return True
 
-            print_log(
-                f"❌ {self.username}: Failed to join #{channel}", BColors.FAIL
-            )
+            print_log(f"❌ {self.username}: Failed to join #{channel}", BColors.FAIL)
             await self.disconnect()
             return False
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             timeout_msg = (
                 f"❌ {self.username}: Connection timeout after "
                 f"{ASYNC_IRC_CONNECT_TIMEOUT}s"
@@ -211,7 +210,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                 if channel in self.confirmed_channels:
                     return self._finalize_channel_join(channel)
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Timeout is expected - just continue checking
                 continue
             except ConnectionResetError:
@@ -384,7 +383,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                     if self._perform_periodic_checks():
                         break
 
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Timeout is normal - allows for periodic checks
                     if self._is_connection_stale():
                         print_log(
@@ -441,9 +440,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
 
     async def _handle_ping(self, raw_message: str):
         """Handle PING messages"""
-        server = (
-            raw_message.split(":", 1)[1] if ":" in raw_message else "tmi.twitch.tv"
-        )
+        server = raw_message.split(":", 1)[1] if ":" in raw_message else "tmi.twitch.tv"
         pong = f"PONG :{server}"
         await self._send_line(pong)
         self.last_ping_from_server = time.time()
@@ -456,7 +453,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         if raw_msg.startswith("@"):
             tag_end = raw_msg.find(" ")
             if tag_end != -1:
-                raw_msg = raw_msg[tag_end + 1:]  # Remove tags and the space
+                raw_msg = raw_msg[tag_end + 1 :]  # Remove tags and the space
 
         parts = raw_msg.split(" ", 2)
         if len(parts) < 2:
@@ -587,9 +584,9 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         activity_timeout = self.server_activity_timeout
         if current_time - self.last_server_activity > activity_timeout:
             print_log(
-                f"💀 {
-                    self.username}: No server activity for {
-                    self.server_activity_timeout}s",
+                f"💀 {self.username}: No server activity for {
+                    self.server_activity_timeout
+                }s",
                 BColors.WARNING,
             )
             return True
@@ -658,12 +655,9 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         if time_since_last_attempt < backoff_delay:
             remaining_wait = backoff_delay - time_since_last_attempt
             print_log(
-                f"⏳ {
-                    self.username}: Waiting {
+                f"⏳ {self.username}: Waiting {
                     remaining_wait:.1f}s due to exponential backoff "
-                f"(attempt {
-                    self.consecutive_failures +
-                    1})",
+                f"(attempt {self.consecutive_failures + 1})",
                 BColors.WARNING,
             )
             await asyncio.sleep(remaining_wait)

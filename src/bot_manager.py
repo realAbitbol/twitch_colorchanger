@@ -5,7 +5,7 @@ Bot manager for handling multiple Twitch bots
 import asyncio
 import os
 import signal
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import aiohttp
 
@@ -20,18 +20,18 @@ from .watcher_globals import set_global_watcher
 class BotManager:  # pylint: disable=too-many-instance-attributes
     """Manages multiple Twitch bots"""
 
-    def __init__(self, users_config: List[Dict[str, Any]], config_file: str = None):
+    def __init__(self, users_config: list[dict[str, Any]], config_file: str = None):
         self.users_config = users_config
         self.config_file = config_file
-        self.bots: List[Any] = []
-        self.tasks: List[Any] = []
+        self.bots: list[Any] = []
+        self.tasks: list[Any] = []
         self.running = False
         self.shutdown_initiated = False
         self.restart_requested = False
-        self.new_config: Optional[List[Dict[str, Any]]] = None
+        self.new_config: list[dict[str, Any]] | None = None
 
         # Shared HTTP session for all bots
-        self.http_session: Optional[aiohttp.ClientSession] = None
+        self.http_session: aiohttp.ClientSession | None = None
 
     async def _start_all_bots(self):
         """Start all bots and return success status"""
@@ -49,8 +49,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
 
             except Exception as e:
                 print_log(
-                    f"❌ Failed to create bot for user {
-                        user_config['username']}: {e}",
+                    f"❌ Failed to create bot for user {user_config['username']}: {e}",
                     BColors.FAIL,
                 )
                 continue
@@ -79,7 +78,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         print_log("✅ All bots started successfully!", BColors.OKGREEN)
         return True
 
-    def _create_bot(self, user_config: Dict[str, Any]) -> TwitchColorBot:
+    def _create_bot(self, user_config: dict[str, Any]) -> TwitchColorBot:
         """Create a bot instance from user configuration"""
         username = user_config["username"]
         token = user_config["access_token"]
@@ -173,7 +172,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                 # No running loop, this is fine for testing
                 pass
 
-    def request_restart(self, new_users_config: List[Dict[str, Any]]):
+    def request_restart(self, new_users_config: list[dict[str, Any]]):
         """Request a restart with new configuration"""
         print_log("🔄 Config change detected, restarting bots...", BColors.OKCYAN)
         self.new_config = new_users_config
@@ -376,7 +375,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             return watchdog_task
         return None
 
-    def _save_statistics(self) -> Dict[str, Dict[str, int]]:
+    def _save_statistics(self) -> dict[str, dict[str, int]]:
         """Save current bot statistics"""
         stats = {}
         for bot in self.bots:
@@ -385,14 +384,13 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                 "colors_changed": bot.colors_changed,
             }
         print_log(
-            f"💾 Saved statistics for {
-                len(stats)} bot(s)",
+            f"💾 Saved statistics for {len(stats)} bot(s)",
             BColors.OKCYAN,
             debug_only=True,
         )
         return stats
 
-    def _restore_statistics(self, saved_stats: Dict[str, Dict[str, int]]):
+    def _restore_statistics(self, saved_stats: dict[str, dict[str, int]]):
         """Restore bot statistics after restart"""
         restored_count = 0
         for bot in self.bots:
@@ -523,7 +521,7 @@ def _cleanup_watcher(watcher):
         pass
 
 
-async def run_bots(users_config: List[Dict[str, Any]], config_file: str = None):
+async def run_bots(users_config: list[dict[str, Any]], config_file: str = None):
     """Main function to run all bots with config file watching"""
     manager = BotManager(users_config, config_file)
 

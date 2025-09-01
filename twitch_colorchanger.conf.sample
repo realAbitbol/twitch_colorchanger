@@ -22,7 +22,7 @@
 // ====================================================================
 // Just provide your client_id and client_secret above.
 // The bot will automatically guide you through token authorization!
-// 
+//
 // When you run the bot, it will:
 // 1. Check if you have valid tokens
 // 2. If not, display an authorization URL and code

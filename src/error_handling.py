@@ -28,8 +28,7 @@ async def simple_retry(func, max_retries=3, delay=1, user=None):
             wait_time = delay * (2**attempt)
             user_context = f" [user={user}]" if user else ""
             logger.warning(
-                f"Retry {
-                    attempt + 1}/{max_retries} in {wait_time}s{user_context}: {e}"
+                f"Retry {attempt + 1}/{max_retries} in {wait_time}s{user_context}: {e}"
             )
             await asyncio.sleep(wait_time)
 

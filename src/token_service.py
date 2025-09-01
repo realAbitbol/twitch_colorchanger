@@ -4,7 +4,6 @@ Token service for unified token validation and refresh logic
 
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Optional, Tuple
 
 import aiohttp
 
@@ -35,9 +34,9 @@ class TokenService:
         access_token: str,
         refresh_token: str,
         username: str,
-        token_expiry: Optional[datetime] = None,
+        token_expiry: datetime | None = None,
         force_refresh: bool = False,
-    ) -> Tuple[TokenStatus, Optional[str], Optional[str], Optional[datetime]]:
+    ) -> tuple[TokenStatus, str | None, str | None, datetime | None]:
         """
         Validate and refresh token if needed
 
@@ -52,7 +51,7 @@ class TokenService:
             is_valid = await self._validate_token(access_token, username)
             if is_valid:
                 # Token is valid, calculate next expiry check
-                new_expiry: Optional[datetime] = datetime.now() + timedelta(minutes=30)
+                new_expiry: datetime | None = datetime.now() + timedelta(minutes=30)
                 return TokenStatus.VALID, access_token, refresh_token, new_expiry
 
         # Token is invalid or refresh is forced, try to refresh
@@ -80,7 +79,7 @@ class TokenService:
         print_log(f"❌ {username}: Token refresh failed", BColors.FAIL)
         return TokenStatus.FAILED, None, None, None
 
-    def _is_token_still_valid(self, token_expiry: Optional[datetime]) -> bool:
+    def _is_token_still_valid(self, token_expiry: datetime | None) -> bool:
         """Check if token is still valid based on expiry time"""
         if not token_expiry:
             return False
@@ -113,7 +112,7 @@ class TokenService:
 
     async def _refresh_token(
         self, refresh_token: str, username: str
-    ) -> Tuple[Optional[str], Optional[str], Optional[int]]:
+    ) -> tuple[str | None, str | None, int | None]:
         """Refresh the access token using refresh token"""
         try:
             data = {
@@ -148,7 +147,7 @@ class TokenService:
             print_log(f"❌ {username}: Token refresh error: {e}", BColors.FAIL)
             return None, None, None
 
-    def next_check_delay(self, token_expiry: Optional[datetime]) -> float:
+    def next_check_delay(self, token_expiry: datetime | None) -> float:
         """Calculate the next token check delay in seconds"""
         if not token_expiry:
             return 300  # Default 5 minutes if no expiry info

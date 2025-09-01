@@ -8,7 +8,12 @@ import os
 import sys
 
 from .bot_manager import run_bots
-from .config import get_configuration, print_config_summary, setup_missing_tokens, normalize_user_channels
+from .config import (
+    get_configuration,
+    normalize_user_channels,
+    print_config_summary,
+    setup_missing_tokens,
+)
 from .error_handling import log_error
 from .logger import logger
 from .utils import print_instructions

@@ -103,7 +103,7 @@ The bot can automatically generate tokens for you! Just provide your `client_id`
   "users": [
     {
       "username": "your_username",
-      "client_id": "your_client_id", 
+      "client_id": "your_client_id",
       "client_secret": "your_client_secret",
       "channels": ["channel1", "channel2"],
       "is_prime_or_turbo": true
@@ -330,7 +330,7 @@ Environment variables:
 The bot automatically watches for changes to the configuration file and restarts with the new settings **without requiring manual intervention**. This feature enables:
 
 - **Adding new users**: Simply add a new user to the `users` array in the config file
-- **Removing users**: Delete or comment out users from the config file  
+- **Removing users**: Delete or comment out users from the config file
 - **Updating settings**: Modify any user settings (channels, colors, etc.) and they'll take effect immediately
 - **Zero downtime**: Bots restart automatically when valid config changes are detected
 

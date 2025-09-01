@@ -35,7 +35,7 @@ if not exist "twitch_colorchanger.conf" (
 REM Install dependencies if requirements.txt exists
 if exist "requirements.txt" (
     echo Installing/updating dependencies...
-    
+
     REM If we're already using a venv, just install directly
     if exist ".venv\Scripts\python.exe" (
         %PIP_CMD% install -r requirements.txt

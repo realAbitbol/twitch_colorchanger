@@ -5,7 +5,7 @@ This module provides token validation functionality without depending on the bot
 helping to avoid circular imports between config.py and bot.py.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 import httpx
 
@@ -23,7 +23,7 @@ class TokenValidator:
         client_id: str,
         client_secret: str,
         access_token: str,
-        refresh_token: Optional[str] = None,
+        refresh_token: str | None = None,
     ):
         """Initialize token validator."""
         self.client_id = client_id
@@ -55,7 +55,7 @@ class TokenValidator:
             )
             return False, 0
 
-    async def _call_validate_api(self) -> Optional[Dict[str, Any]]:
+    async def _call_validate_api(self) -> dict[str, Any] | None:
         """
         Call the Twitch validation API and return the response data
         or None if invalid.
@@ -154,7 +154,7 @@ class TokenValidator:
         return await self.validate_token()
 
 
-async def validate_user_tokens(user: Dict[str, Any]) -> Dict[str, Any]:
+async def validate_user_tokens(user: dict[str, Any]) -> dict[str, Any]:
     """
     Validate and refresh user tokens.
 
@@ -238,7 +238,7 @@ async def validate_user_tokens(user: Dict[str, Any]) -> Dict[str, Any]:
         return {"valid": False, "user": user, "updated": False}
 
 
-async def validate_new_tokens(user: Dict[str, Any]) -> Dict[str, Any]:
+async def validate_new_tokens(user: dict[str, Any]) -> dict[str, Any]:
     """
     Validate newly obtained tokens.
 

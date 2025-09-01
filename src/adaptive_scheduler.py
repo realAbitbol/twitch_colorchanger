@@ -5,8 +5,8 @@ Adaptive scheduler for managing periodic tasks with priority-based timing
 import asyncio
 import heapq
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, List, Optional
 
 from .colors import BColors
 from .logger import logger
@@ -31,14 +31,14 @@ class ScheduledTask:
     next_run: float  # Monotonic timestamp when task should run
     callback: Callable
     name: str
-    interval: Optional[float]  # None for one-time tasks
+    interval: float | None  # None for one-time tasks
     args: tuple
     kwargs: dict
     priority: int  # Lower number = higher priority
 
     def __post_init__(self):
         """Set default priority if not provided"""
-        if not hasattr(self, 'priority') or self.priority is None:
+        if not hasattr(self, "priority") or self.priority is None:
             self.priority = 0
 
     def __lt__(self, other):
@@ -60,9 +60,9 @@ class AdaptiveScheduler:
     """
 
     def __init__(self):
-        self.tasks: List[ScheduledTask] = []
+        self.tasks: list[ScheduledTask] = []
         self.running = False
-        self.scheduler_task: Optional[asyncio.Task] = None
+        self.scheduler_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
 
     async def start(self):
