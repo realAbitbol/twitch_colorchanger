@@ -424,9 +424,7 @@ async def _get_new_tokens_via_device_flow(user, client_id, client_secret):
                     BColors.OKGREEN,
                 )
                 return {"user": validation_result["user"], "tokens_updated": True}
-            print_log(
-                f"⚠️ New tokens for {username} failed validation", BColors.WARNING
-            )
+            print_log(f"⚠️ New tokens for {username} failed validation", BColors.WARNING)
             # Still save them, might work later
             return {"user": user, "tokens_updated": True}
         print_log(f"❌ Failed to obtain tokens for {username}", BColors.FAIL)

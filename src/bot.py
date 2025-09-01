@@ -770,9 +770,7 @@ class TwitchColorBot:
                     )
 
             return False  # Indicate that fallback is needed
-        logger.error(
-            f"Error changing color: {e}", exc_info=True, user=self.username
-        )
+        logger.error(f"Error changing color: {e}", exc_info=True, user=self.username)
         return False
 
     async def _try_preset_color_fallback(self):

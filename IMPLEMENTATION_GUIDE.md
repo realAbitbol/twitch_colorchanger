@@ -8,10 +8,13 @@ This guide provides the essential architectural patterns and implementation deta
 
 ```text
 twitch_colorchanger/
-├── requirements.txt            # Dependencies (aiohttp, watchdog)
+├── requirements.txt            # Runtime dependencies (aiohttp, watchdog)
+├── requirements-dev.txt        # Development dependencies (linting, type checking)
 ├── Dockerfile                  # Multi-platform container
 ├── docker-compose.yml-sample   # Deployment template
 ├── twitch_colorchanger.conf    # Runtime configuration (JSON)
+├── .github/workflows/          # CI/CD workflows
+│   └── code-quality.yml       # Linting, type checking, security scanning
 └── src/
     ├── __init__.py
     ├── main.py                 # Application entry point
@@ -33,8 +36,17 @@ twitch_colorchanger/
 ### Core Dependencies
 
 ```text
-aiohttp>=3.9.0,<4.0.0    # HTTP client for Twitch API
-watchdog>=3.0.0,<4.0.0   # File system monitoring
+# Runtime dependencies (requirements.txt)
+aiohttp>=3.12.0,<4.0.0   # Async HTTP client for Twitch API
+httpx>=0.28.0,<1.0.0     # Alternative HTTP client for specific operations
+watchdog>=3.0.0,<4.0.0   # File system monitoring for live config reload
+
+# Development dependencies (requirements-dev.txt)
+black>=23.7.0,<26.0.0    # Code formatting
+isort>=5.12.0,<6.0.0     # Import sorting
+flake8>=6.0.0,<7.0.0     # Linting
+mypy>=1.5.0,<2.0.0       # Type checking
+bandit>=1.7.0,<2.0.0     # Security scanning
 ```
 
 ## Implementation Components
@@ -222,7 +234,39 @@ watchdog>=3.0.0,<4.0.0   # File system monitoring
 - Persistent fallback to preset colors
 - Configuration updates for fallback mode
 
-### 10. Logging System (`src/logger.py`)
+### 10. IRC Client Implementation (`src/simple_irc.py`)
+
+**Architecture Pattern**: Raw socket IRC client with health monitoring
+
+**Key Class**: `SimpleTwitchIRC`
+
+**Connection Management**:
+
+- Direct socket connection to `irc.chat.twitch.tv:6667`
+- OAuth authentication with Twitch capabilities
+- Automatic reconnection with health monitoring
+
+**Health Monitoring**:
+
+- **Server Activity Tracking**: 5-minute timeout for any server communication
+- **Ping Interval Monitoring**: Expects Twitch server pings every 600 seconds
+- **Connection Health Checks**: Automatic reconnection on stale connections
+- **Ping/Pong Visibility**: Real-time ping/pong messages for transparency
+
+**Message Processing**:
+
+- **PRIVMSG Handling**: Chat message parsing and callback invocation
+- **JOIN Management**: Channel join confirmation with timeout/retry logic
+- **PING Response**: Automatic PONG responses to server pings
+
+**Key Methods**:
+
+- `connect()`: Establishes connection and authentication
+- `listen()`: Main message processing loop
+- `_handle_ping()`: Server ping handling with activity tracking
+- `force_reconnect()`: Manual reconnection with state preservation
+
+### 11. Logging System (`src/logger.py`)
 
 **Architecture Pattern**: Structured logging with context
 
@@ -233,7 +277,7 @@ watchdog>=3.0.0,<4.0.0   # File system monitoring
 - Debug mode support via environment variables
 - API request logging with performance metrics
 
-### 11. Error Handling (`src/error_handling.py`)
+### 12. Error Handling (`src/error_handling.py`)
 
 **Architecture Pattern**: Centralized exception handling
 
@@ -249,7 +293,7 @@ watchdog>=3.0.0,<4.0.0   # File system monitoring
 - No sensitive data (tokens) in error messages
 - Graceful degradation on failures
 
-### 12. Configuration Validation (`src/config_validator.py`)
+### 13. Configuration Validation (`src/config_validator.py`)
 
 **Architecture Pattern**: Comprehensive validation with detailed reporting
 
@@ -307,39 +351,35 @@ watchdog>=3.0.0,<4.0.0   # File system monitoring
 - **File Configuration**: JSON config file with volume mount
 - **Signal Handling**: Proper container shutdown behavior
 
-## Testing Strategy
+## Code Quality and Development
 
-### Comprehensive Test Coverage
+### Development Workflow
 
-The project achieves **100% test coverage** across all modules:
+The project uses a streamlined development approach focused on rapid iteration:
 
-- **551 tests total** covering all functionality
-- **Unit tests**: Individual component testing
-- **Integration tests**: Multi-component interaction testing  
-- **Branch coverage**: All code paths tested
-- **Error simulation**: Exception handling validation
+- **Linting**: flake8 for code style and quality checks
+- **Type Checking**: mypy for static type analysis
+- **Security**: bandit for security vulnerability scanning
+- **Formatting**: black and isort for consistent code style
+- **CI/CD**: GitHub Actions for automated quality checks
 
-### Test Structure
+### Quality Tools
 
 ```text
-tests/
-├── conftest.py                 # Shared fixtures and configuration
-├── fixtures/                   # Test data and mock responses
-├── test_*.py                   # Module-specific tests
-└── integration/                # Integration tests
+Development Dependencies:
+├── black              # Code formatting
+├── isort              # Import sorting  
+├── flake8             # Linting and style checking
+├── mypy               # Static type checking
+├── bandit             # Security vulnerability scanning
+└── pre-commit         # Git hook automation
 ```
 
-### Integration Testing
+### GitHub Actions Workflow
 
-- **Config Watching**: User changes trigger restart, bot changes don't
-- **Token Refresh**: Validates token lifecycle management
-- **Multi-user**: Ensures independent bot operation
-
-### Error Simulation
-
-- **API Failures**: Tests fallback and retry mechanisms
-- **Network Issues**: Validates connection recovery
-- **Invalid Config**: Tests validation and error handling
+- **Lint Job**: Code style and quality verification
+- **Type Check Job**: Static type analysis with mypy
+- **Security Job**: Security vulnerability scanning with bandit
 
 ## Security Considerations
 

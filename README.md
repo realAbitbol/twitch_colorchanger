@@ -52,6 +52,8 @@ Automatically change your Twitch username color after each message you send in c
 - **⚡ Unattended Operation**: No user interaction required after initial authorization
 - **✅ Configuration Validation**: Comprehensive validation with detailed error reporting
 - **📊 Rate Limiting**: Smart rate limiting with quota tracking and logging
+- **🔗 IRC Health Monitoring**: Robust connection health tracking with automatic reconnection (600s ping intervals)
+- **📡 Connection Visibility**: Real-time ping/pong monitoring for connection status transparency
 
 ---
 
