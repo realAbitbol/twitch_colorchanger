@@ -901,10 +901,8 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         )
         self.running = False
 
-        if self.irc:
-            # For sync cleanup, we can't await, so just set the connection to None
-            # The real cleanup happens in the async stop() method
-            self.irc = None
+        # Note: Don't set self.irc = None here to avoid race conditions
+        # with health checks. The real cleanup happens in the async stop() method
 
     def print_statistics(self):
         """Print bot statistics"""

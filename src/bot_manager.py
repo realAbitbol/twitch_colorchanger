@@ -30,6 +30,9 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         self.restart_requested = False
         self.new_config: list[dict[str, Any]] | None = None
 
+        # Protection against concurrent health operations
+        self._health_check_in_progress = False
+
         # Shared HTTP session for all bots
         self.http_session: aiohttp.ClientSession | None = None
 
@@ -156,9 +159,22 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         """Wait for all tasks to complete"""
         if self.tasks:
             try:
-                await asyncio.gather(*self.tasks, return_exceptions=True)
+                # Wait for all tasks with proper exception handling
+                results = await asyncio.gather(*self.tasks, return_exceptions=True)
+
+                # Log any exceptions from tasks
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        print_log(
+                            f"⚠️ Task {i} finished with exception: {result}",
+                            BColors.WARNING,
+                        )
+
             except Exception as e:
                 print_log(f"⚠️ Error waiting for task completion: {e}", BColors.WARNING)
+            finally:
+                # Clear the task list to prevent memory leaks
+                self.tasks.clear()
 
     def stop(self):
         """Public method to stop the bot manager"""
@@ -236,12 +252,21 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
 
     async def _perform_health_check(self):
         """Perform the actual health check logic"""
-        unhealthy_bots = self._identify_unhealthy_bots()
+        # Prevent concurrent health checks
+        if self._health_check_in_progress:
+            print_log("⚠️ Health check already in progress, skipping", BColors.WARNING)
+            return
 
-        if unhealthy_bots:
-            await self._reconnect_unhealthy_bots(unhealthy_bots)
-        else:
-            print_log("✅ All bots are healthy", BColors.OKGREEN)
+        self._health_check_in_progress = True
+        try:
+            unhealthy_bots = self._identify_unhealthy_bots()
+
+            if unhealthy_bots:
+                await self._reconnect_unhealthy_bots(unhealthy_bots)
+            else:
+                print_log("✅ All bots are healthy", BColors.OKGREEN)
+        finally:
+            self._health_check_in_progress = False
 
     async def _monitor_task_health(self):
         """Monitor individual task health and detect hanging tasks"""
@@ -265,6 +290,8 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
     def _check_task_health(self):
         """Check health of individual tasks"""
         dead_tasks = []
+        alive_tasks = []
+
         for i, task in enumerate(self.tasks):
             if task.done():
                 if task.exception():
@@ -275,14 +302,15 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                 else:
                     print_log(f"ℹ️ Task {i} completed normally", BColors.OKCYAN)
                 dead_tasks.append(i)
+            else:
+                alive_tasks.append(task)
 
-        # Remove dead tasks from the list (in reverse order to maintain indices)
-        for i in reversed(dead_tasks):
-            self.tasks.pop(i)
-            print_log(f"🗑️ Removed dead task {i}", BColors.WARNING)
-
+        # Replace task list with only alive tasks
         if dead_tasks:
-            print_log(f"⚠️ Found {len(dead_tasks)} dead tasks", BColors.WARNING)
+            self.tasks = alive_tasks
+            print_log(
+                f"⚠️ Found {len(dead_tasks)} dead tasks, removed them", BColors.WARNING
+            )
         else:
             print_log("✅ All tasks are alive", BColors.OKGREEN)
 
@@ -290,24 +318,46 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         """Identify bots that appear unhealthy"""
         unhealthy_bots = []
         for bot in self.bots:
-            if bot.irc and not bot.irc.is_healthy():
-                unhealthy_bots.append(bot)
-                self._log_bot_health_issues(bot)
+            try:
+                # Check if bot and IRC connection exist and are unhealthy
+                if bot and bot.irc and not bot.irc.is_healthy():
+                    unhealthy_bots.append(bot)
+                    self._log_bot_health_issues(bot)
+            except Exception as e:
+                print_log(
+                    f"⚠️ Error checking health for bot {getattr(bot, 'username', 'unknown')}: {e}",
+                    BColors.WARNING,
+                )
+                # Consider this bot unhealthy if we can't check its health
+                if bot:
+                    unhealthy_bots.append(bot)
         return unhealthy_bots
 
     def _log_bot_health_issues(self, bot):
         """Log health issues for a specific bot"""
         print_log(f"⚠️ Bot {bot.username} appears unhealthy", BColors.WARNING)
 
-        # Get detailed stats for logging
-        stats = bot.irc.get_connection_stats()
-        print_log(
-            f"📊 {bot.username} health stats: "
-            f"time_since_activity={stats['time_since_activity']:.1f}s, "
-            f"connected={stats['connected']}, "
-            f"running={stats['running']}",
-            BColors.WARNING,
-        )
+        # Safely get connection stats
+        if bot.irc:
+            try:
+                stats = bot.irc.get_connection_stats()
+                print_log(
+                    f"📊 {bot.username} health stats: "
+                    f"time_since_activity={stats['time_since_activity']:.1f}s, "
+                    f"connected={stats['connected']}, "
+                    f"running={stats['running']}",
+                    BColors.WARNING,
+                )
+            except Exception as e:
+                print_log(
+                    f"⚠️ {bot.username}: Error getting connection stats: {e}",
+                    BColors.WARNING,
+                )
+        else:
+            print_log(
+                f"📊 {bot.username} health stats: IRC connection is None",
+                BColors.WARNING,
+            )
 
     async def _reconnect_unhealthy_bots(self, unhealthy_bots):
         """Attempt to reconnect all unhealthy bots"""
@@ -342,8 +392,15 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                 await asyncio.sleep(2)
 
                 # Verify the connection is actually healthy now
-                if bot.irc.is_healthy():
-                    return True
+                try:
+                    if bot.irc and bot.irc.is_healthy():
+                        return True
+                except Exception as e:
+                    print_log(
+                        f"⚠️ {bot.username}: Error checking health after reconnect: {e}",
+                        BColors.WARNING,
+                    )
+
                 print_log(
                     f"⚠️ {bot.username}: Reconnection succeeded but "
                     "health check still fails",
