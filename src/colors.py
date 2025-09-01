@@ -5,7 +5,7 @@ Color definitions and utilities for console output
 import random  # nosec B311 - non-cryptographic randomness acceptable
 
 
-class BColors:
+class BColors:  # pylint: disable=too-few-public-methods
     """ANSI color codes for console output"""
 
     HEADER = "\033[95m"
