@@ -745,3 +745,46 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
     def set_color_change_handler(self, handler: Callable[[str, str, str], Any]):
         """Set the color change handler callback (can be sync or async)"""
         self.color_change_handler = handler
+
+    def get_connection_stats(self) -> dict:
+        """Get connection statistics for health monitoring"""
+        current_time = time.time()
+        return {
+            "connected": self.connected,
+            "running": self.running,
+            "channels": list(self.channels),
+            "confirmed_channels": list(self.confirmed_channels),
+            "last_server_activity": self.last_server_activity,
+            "last_ping_from_server": self.last_ping_from_server,
+            "time_since_last_activity": current_time - self.last_server_activity,
+            "time_since_last_ping": (
+                current_time - self.last_ping_from_server
+                if self.last_ping_from_server > 0
+                else 0
+            ),
+            "consecutive_failures": self.consecutive_failures,
+            "pending_joins": len(self.pending_joins),
+        }
+
+    def is_healthy(self) -> bool:
+        """Check if the IRC connection is healthy"""
+        if not self.connected or not self.running:
+            return False
+
+        current_time = time.time()
+
+        # Check if we've had recent server activity
+        if current_time - self.last_server_activity > self.server_activity_timeout:
+            return False
+
+        # Check ping timeout (if we've received pings before)
+        if self.last_ping_from_server > 0:
+            ping_timeout = self.expected_ping_interval * 1.5
+            if current_time - self.last_ping_from_server > ping_timeout:
+                return False
+
+        # Check if we have reader/writer
+        if not self.reader or not self.writer:
+            return False
+
+        return True
