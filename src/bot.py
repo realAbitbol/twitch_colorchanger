@@ -13,7 +13,7 @@ import aiohttp
 
 from .async_irc import AsyncTwitchIRC
 from .colors import BColors, generate_random_hex_color, get_different_twitch_color
-from .config import disable_random_colors_for_user, update_user_in_config
+from .config import disable_random_colors_for_user, update_user_in_config, normalize_channels
 from .error_handling import APIError, simple_retry
 from .logger import logger
 from .rate_limiter import get_rate_limiter
@@ -163,38 +163,32 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         print_log(f"🚀 {self.username}: Using async IRC client", BColors.OKCYAN)
         self.irc = AsyncTwitchIRC()
 
-        # Deduplicate and normalize channels
-        unique_channels = list(
-            dict.fromkeys([ch.lower().replace("#", "") for ch in self.channels])
-        )
+        # Normalize channels using centralized function
+        normalized_channels, was_changed = normalize_channels(self.channels)
 
-        # Check if deduplication changed the channels list
-        if unique_channels != self.channels:
+        # Check if normalization changed the channels list
+        if was_changed:
             print_log(
-                f"📝 {self.username}: Deduplicated channels: "
-                f"{len(self.channels)} → {len(unique_channels)}",
+                f"📝 {self.username}: Normalized channels: "
+                f"{len(self.channels)} → {len(normalized_channels)}",
                 BColors.OKBLUE,
             )
-            self.channels = (
-                unique_channels  # Update bot's channel list with deduplicated channels
-            )
+            self.channels = normalized_channels
 
-            # Persist the deduplicated channels to configuration
-            self._persist_channel_deduplication()
+            # Persist the normalized channels to configuration
+            self._persist_normalized_channels()
         else:
-            self.channels = (
-                unique_channels  # Update bot's channel list even if no change
-            )
+            self.channels = normalized_channels
 
         # Set up all channels in IRC object before connecting
-        self.irc.channels = unique_channels.copy()
+        self.irc.channels = normalized_channels.copy()
 
         # Set up message handler BEFORE connecting to avoid race condition
         self.irc.set_message_handler(self.handle_irc_message)
 
         # Connect to IRC with the first channel (now async)
         if not await self.irc.connect(
-            self.access_token, self.username, unique_channels[0]
+            self.access_token, self.username, normalized_channels[0]
         ):
             print_log(f"❌ {self.username}: Failed to connect to IRC", BColors.FAIL)
             return
@@ -206,7 +200,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         self.irc_task = asyncio.create_task(self.irc.listen())
 
         # Join all additional configured channels (now async)
-        for channel in unique_channels[
+        for channel in normalized_channels[
             1:
         ]:  # Skip first channel, already joined in connect
             await self.irc.join_channel(channel)
@@ -477,9 +471,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     def _handle_token_status(
         self,
         status: "TokenStatus",
-        new_access_token: str,
-        new_refresh_token: str,
-        new_expiry: "datetime",
+        new_access_token: Optional[str],
+        new_refresh_token: Optional[str],
+        new_expiry: Optional["datetime"],
     ) -> bool:
         """Handle the result of token validation/refresh"""
         if status == TokenStatus.VALID:
@@ -631,8 +625,8 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                     BColors.WARNING,
                 )
 
-    def _persist_channel_deduplication(self):
-        """Persist deduplicated channels to configuration file"""
+    def _persist_normalized_channels(self):
+        """Persist normalized channels to configuration file"""
         if hasattr(self, "config_file") and self.config_file:
             user_config = {
                 "username": self.username,
@@ -640,18 +634,18 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 "client_secret": self.client_secret,
                 "access_token": self.access_token,
                 "refresh_token": self.refresh_token,
-                "channels": self.channels,  # Use the deduplicated channels
+                "channels": self.channels,  # Use the normalized channels
                 "is_prime_or_turbo": self.use_random_colors,
             }
             try:
                 update_user_in_config(user_config, self.config_file)
                 print_log(
-                    f"💾 {self.username}: Deduplicated channels saved to configuration",
+                    f"💾 {self.username}: Normalized channels saved to configuration",
                     BColors.OKGREEN,
                 )
             except Exception as e:
                 print_log(
-                    f"⚠️ {self.username}: Failed to save deduplicated channels: {e}",
+                    f"⚠️ {self.username}: Failed to save normalized channels: {e}",
                     BColors.WARNING,
                 )
 

@@ -378,6 +378,88 @@ def print_config_summary(users):
         )
 
 
+def normalize_channels(channels):
+    """
+    Normalize channel list: lowercase, remove #, sort, and deduplicate
+
+    Args:
+        channels: List of channel names
+
+    Returns:
+        Tuple of (normalized_channels, was_changed)
+    """
+    if not isinstance(channels, list):
+        return [], True
+
+    # Normalize: lowercase, remove #, deduplicate, and sort
+    normalized = sorted(dict.fromkeys(
+        ch.lower().strip().lstrip('#') for ch in channels if ch and ch.strip()
+    ))
+
+    # Check if normalization made any changes
+    was_changed = normalized != channels
+
+    return normalized, was_changed
+
+
+def normalize_user_channels(users, config_file):
+    """
+    Normalize channels for all users and save if any changes were made
+
+    Args:
+        users: List of user configurations
+        config_file: Path to config file
+
+    Returns:
+        Tuple of (updated_users, any_changes_made)
+    """
+    updated_users = []
+    any_changes = False
+
+    for user in users:
+        user_copy = user.copy()
+        original_channels = user_copy.get('channels', [])
+
+        normalized_channels, was_changed = normalize_channels(original_channels)
+        user_copy['channels'] = normalized_channels
+
+        if was_changed:
+            any_changes = True
+            print_log(
+                f"📝 {user_copy['username']}: Normalized channels "
+                f"({len(original_channels)} → {len(normalized_channels)})",
+                BColors.OKBLUE
+            )
+            print_log(
+                f"   From: {original_channels}",
+                BColors.OKBLUE,
+                debug_only=True
+            )
+            print_log(
+                f"   To: {normalized_channels}",
+                BColors.OKBLUE,
+                debug_only=True
+            )
+
+        updated_users.append(user_copy)
+
+    # Save if any changes were made
+    if any_changes:
+        try:
+            save_users_to_config(updated_users, config_file)
+            print_log(
+                "💾 Channel normalization changes saved to configuration",
+                BColors.OKGREEN
+            )
+        except Exception as e:
+            print_log(
+                f"⚠️ Failed to save channel normalization changes: {e}",
+                BColors.WARNING
+            )
+
+    return updated_users, any_changes
+
+
 async def setup_missing_tokens(users, config_file):
     """
     Automatically setup tokens for users that don't have them or can't renew them.

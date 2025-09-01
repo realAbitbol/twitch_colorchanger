@@ -8,7 +8,7 @@ import os
 import sys
 
 from .bot_manager import run_bots
-from .config import get_configuration, print_config_summary, setup_missing_tokens
+from .config import get_configuration, print_config_summary, setup_missing_tokens, normalize_user_channels
 from .error_handling import log_error
 from .logger import logger
 from .utils import print_instructions
@@ -27,6 +27,9 @@ async def main():
 
         # Get configuration from config file
         loaded_config = get_configuration()
+
+        # Normalize channels for all users (lowercase, no #, sorted, deduplicated)
+        loaded_config, _ = normalize_user_channels(loaded_config, config_file)
 
         # Setup missing tokens automatically (device flow fallback)
         users_config = await setup_missing_tokens(loaded_config, config_file)
