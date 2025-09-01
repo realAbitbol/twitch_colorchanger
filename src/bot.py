@@ -11,6 +11,7 @@ from typing import Any, Optional
 
 import aiohttp
 
+from .adaptive_scheduler import AdaptiveScheduler
 from .async_irc import AsyncTwitchIRC
 from .colors import BColors, generate_random_hex_color, get_different_twitch_color
 from .config import (
@@ -113,7 +114,6 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         self.running = False
 
         # Background tasks
-        self.token_task = None
         self.irc_task = None
 
         # Statistics
@@ -125,6 +125,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
 
         # Rate limiter for API requests
         self.rate_limiter = get_rate_limiter(self.client_id, self.username)
+
+        # Adaptive scheduler for task management
+        self.scheduler = AdaptiveScheduler()
 
     async def start(self):
         """Start the bot"""
@@ -205,12 +208,27 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         ]:  # Skip first channel, already joined in connect
             await self.irc.join_channel(channel)
 
-        # Start token monitoring task
-        self.token_task = asyncio.create_task(self._periodic_token_check())
+        # Start adaptive scheduler
+        await self.scheduler.start()
+
+        # Schedule token monitoring tasks
+        await self.scheduler.schedule_recurring(
+            callback=self._check_irc_health,
+            name="irc_health_check",
+            interval=120,  # Every 2 minutes
+            priority=1,  # High priority
+        )
+
+        await self.scheduler.schedule_recurring(
+            callback=self._adaptive_token_check,
+            name="token_check",
+            interval=60,  # Check every minute, but adaptive logic will determine actual timing
+            priority=2,  # Lower priority than IRC health
+        )
 
         try:
-            # Wait for either task to complete
-            await asyncio.gather(self.token_task, self.irc_task, return_exceptions=True)
+            # Wait for IRC task to complete (scheduler runs independently)
+            await self.irc_task
         except KeyboardInterrupt:
             print_log("🛑 Shutting down bot...", BColors.WARNING)
         finally:
@@ -220,6 +238,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         """Stop the bot"""
         print_log(f"⏹️ Stopping bot for {self.username}", BColors.WARNING)
         self.running = False
+
+        # Stop scheduler
+        await self.scheduler.stop()
 
         # Cancel background tasks
         await self._cancel_token_task()
@@ -237,18 +258,10 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         await asyncio.sleep(0.1)
 
     async def _cancel_token_task(self):
-        """Cancel the token refresh background task"""
-        if self.token_task and not self.token_task.done():
-            self.token_task.cancel()
-            try:
-                await self.token_task
-            except asyncio.CancelledError:
-                # Expected when cancelling task
-                print_log(
-                    "Token task cancelled during stop", BColors.OKBLUE, debug_only=True
-                )
-                # Re-raise CancelledError as per asyncio best practices
-                raise
+        """Cancel the token refresh background task (now handled by scheduler)"""
+        # Token management is now handled by the adaptive scheduler
+        # This method is kept for compatibility but does nothing
+        pass
 
     async def _disconnect_irc(self):
         """Disconnect IRC connection"""
@@ -292,72 +305,30 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         """Handle message (for testing compatibility)"""
         await self.handle_irc_message(sender, channel, message)
 
-    async def _periodic_token_check(self):
-        """Periodically check and refresh token using adaptive scheduling"""
-        last_irc_check = 0
-        irc_check_interval = 120  # Check IRC health every 2 minutes
+    async def _adaptive_token_check(self):
+        """Adaptive token check using scheduler-based timing"""
+        try:
+            if not self.running:
+                return
 
-        while self.running:
-            try:
-                # Calculate sleep interval based on token service availability
-                sleep_interval = self._calculate_check_interval(irc_check_interval)
-                await asyncio.sleep(sleep_interval)
-
-                current_time = time.time()
-                if not self.running:  # Check if still running after sleep
-                    break
-
-                # Perform scheduled checks
-                last_irc_check = await self._perform_scheduled_checks(
-                    current_time, last_irc_check, irc_check_interval
-                )
-
-            except asyncio.CancelledError:
+            # Use token service to determine if we need to check now
+            if self.token_service and self.token_expiry:
+                next_delay = self.token_service.next_check_delay(self.token_expiry)
+                if next_delay <= 0:  # Time to check
+                    await self._check_and_refresh_token()
+            else:
+                # Fallback: check if we haven't checked in a while
                 print_log(
-                    "⏹️ Token check task cancelled", BColors.WARNING, debug_only=True
-                )
-                raise
-            except Exception as e:
-                print_log(
-                    f"⚠️ Error in periodic token check for {self.username}: {e}",
+                    f"⚠️ {self.username}: No TokenService available for adaptive timing",
                     BColors.WARNING,
                 )
-                # Wait 5 minutes before retrying
-                await asyncio.sleep(300)
-
-    def _calculate_check_interval(self, irc_check_interval: int) -> float:
-        """Calculate the sleep interval for the next check"""
-        if self.token_service and self.token_expiry:
-            token_check_delay = self.token_service.next_check_delay(self.token_expiry)
-            return min(irc_check_interval, token_check_delay)
-
-        # Fallback to IRC interval if no token service or expiry
-        return irc_check_interval
-
-    async def _perform_scheduled_checks(
-        self, current_time: float, last_irc_check: float, irc_check_interval: int
-    ) -> float:
-        """Perform IRC health and token checks as needed"""
-        # Always check IRC health every 2 minutes
-        if current_time - last_irc_check >= irc_check_interval:
-            await self._check_irc_health()
-            last_irc_check = current_time
-
-        # Adaptive token checking
-        if self.token_service and self.token_expiry:
-            next_delay = self.token_service.next_check_delay(self.token_expiry)
-            if next_delay <= 0:  # Time to check
                 await self._check_and_refresh_token()
-        else:
-            # If no token service, check tokens every 10 minutes as fallback
-            if current_time - last_irc_check >= 600:  # 10 minutes
-                print_log(
-                    f"⚠️ {self.username}: No TokenService available, "
-                    "cannot perform adaptive token checks",
-                    BColors.WARNING,
-                )
 
-        return last_irc_check
+        except Exception as e:
+            print_log(
+                f"⚠️ Error in adaptive token check for {self.username}: {e}",
+                BColors.WARNING,
+            )
 
     async def _check_irc_health(self):
         """Check IRC connection health and reconnect if needed"""
@@ -483,6 +454,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             # Update expiry even for valid tokens
             if new_expiry:
                 self.token_expiry = new_expiry
+                self._display_token_expiry()
             return True
 
         if status == TokenStatus.REFRESHED:
@@ -493,6 +465,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 self.refresh_token = new_refresh_token
             if new_expiry:
                 self.token_expiry = new_expiry
+                self._display_token_expiry()
 
             # Persist changes to config file
             self._persist_token_changes()
@@ -500,6 +473,34 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
 
         # TokenStatus.FAILED
         return False
+
+    def _display_token_expiry(self):
+        """Display token expiry information"""
+        if not self.token_expiry:
+            return
+
+        time_remaining = self.token_expiry - datetime.now()
+
+        if time_remaining.total_seconds() <= 0:
+            print_log(
+                f"⚠️ {self.username}: Token has expired",
+                BColors.WARNING,
+            )
+        else:
+            # Convert to hours and minutes for display
+            total_seconds = int(time_remaining.total_seconds())
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+
+            if hours > 0:
+                time_str = f"{hours}h {minutes}m"
+            else:
+                time_str = f"{minutes}m"
+
+            print_log(
+                f"⏰ {self.username}: Token expires in {time_str}",
+                BColors.OKCYAN,
+            )
 
     async def _get_user_info(self):
         """Retrieve user information from Twitch API"""
