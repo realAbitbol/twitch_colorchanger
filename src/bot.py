@@ -293,40 +293,18 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
 
         while self.running:
             try:
-                # Use adaptive scheduling when TokenService is available
-                if self.token_service and self.token_expiry:
-                    token_check_delay = self.token_service.next_check_delay(
-                        self.token_expiry
-                    )
-                    sleep_interval = min(irc_check_interval, token_check_delay)
-                else:
-                    # Fallback to IRC interval if no token service or expiry
-                    sleep_interval = irc_check_interval
-
+                # Calculate sleep interval based on token service availability
+                sleep_interval = self._calculate_check_interval(irc_check_interval)
                 await asyncio.sleep(sleep_interval)
-                current_time = time.time()
 
+                current_time = time.time()
                 if not self.running:  # Check if still running after sleep
                     break
 
-                # Always check IRC health every 2 minutes
-                if current_time - last_irc_check >= irc_check_interval:
-                    await self._check_irc_health()
-                    last_irc_check = current_time
-
-                # Adaptive token checking
-                if self.token_service and self.token_expiry:
-                    next_delay = self.token_service.next_check_delay(self.token_expiry)
-                    if next_delay <= 0:  # Time to check
-                        await self._check_and_refresh_token()
-                else:
-                    # If no token service, check tokens every 10 minutes as fallback
-                    if current_time - last_irc_check >= 600:  # 10 minutes
-                        print_log(
-                            f"⚠️ {self.username}: No TokenService available, "
-                            "cannot perform adaptive token checks",
-                            BColors.WARNING,
-                        )
+                # Perform scheduled checks
+                last_irc_check = await self._perform_scheduled_checks(
+                    current_time, last_irc_check, irc_check_interval
+                )
 
             except asyncio.CancelledError:
                 print_log(
@@ -335,12 +313,45 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 raise
             except Exception as e:
                 print_log(
-                    f"⚠️ Error in periodic token check for {
-                        self.username}: {e}",
+                    f"⚠️ Error in periodic token check for {self.username}: {e}",
                     BColors.WARNING,
                 )
                 # Wait 5 minutes before retrying
                 await asyncio.sleep(300)
+
+    def _calculate_check_interval(self, irc_check_interval: int) -> float:
+        """Calculate the sleep interval for the next check"""
+        if self.token_service and self.token_expiry:
+            token_check_delay = self.token_service.next_check_delay(self.token_expiry)
+            return min(irc_check_interval, token_check_delay)
+        else:
+            # Fallback to IRC interval if no token service or expiry
+            return irc_check_interval
+
+    async def _perform_scheduled_checks(
+        self, current_time: float, last_irc_check: float, irc_check_interval: int
+    ) -> float:
+        """Perform IRC health and token checks as needed"""
+        # Always check IRC health every 2 minutes
+        if current_time - last_irc_check >= irc_check_interval:
+            await self._check_irc_health()
+            last_irc_check = current_time
+
+        # Adaptive token checking
+        if self.token_service and self.token_expiry:
+            next_delay = self.token_service.next_check_delay(self.token_expiry)
+            if next_delay <= 0:  # Time to check
+                await self._check_and_refresh_token()
+        else:
+            # If no token service, check tokens every 10 minutes as fallback
+            if current_time - last_irc_check >= 600:  # 10 minutes
+                print_log(
+                    f"⚠️ {self.username}: No TokenService available, "
+                    "cannot perform adaptive token checks",
+                    BColors.WARNING,
+                )
+
+        return last_irc_check
 
     async def _check_irc_health(self):
         """Check IRC connection health and reconnect if needed"""

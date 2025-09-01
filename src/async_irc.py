@@ -178,73 +178,98 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             # Send JOIN command
             await self._send_line(f"JOIN #{channel}")
 
-            # Process messages until we get join confirmation or timeout
-            start_time = time.time()
-            message_buffer = ""
-
-            while time.time() - start_time < ASYNC_IRC_JOIN_TIMEOUT:
-                try:
-                    # Check if reader is available
-                    if not self.reader:
-                        print_log(
-                            f"❌ {self.username}: No reader available during join",
-                            BColors.FAIL,
-                        )
-                        return False
-
-                    # Read with short timeout to allow checking for join confirmation
-                    data = await asyncio.wait_for(self.reader.read(4096), timeout=0.5)
-
-                    if not data:
-                        print_log(
-                            f"❌ {self.username}: Connection lost during join",
-                            BColors.FAIL,
-                        )
-                        return False
-
-                    # Process the data
-                    decoded_data = data.decode("utf-8", errors="ignore")
-                    message_buffer = await self._process_incoming_data(
-                        message_buffer, decoded_data
-                    )
-
-                    # Check if we got join confirmation
-                    if channel in self.confirmed_channels:
-                        if channel not in self.channels:
-                            self.channels.append(channel)
-                        print_log(
-                            f"✅ {self.username}: Successfully joined #{channel}",
-                            BColors.OKGREEN,
-                        )
-                        return True
-
-                except asyncio.TimeoutError:
-                    # Timeout is expected - just continue checking
-                    continue
-                except ConnectionResetError:
-                    reset_msg = (
-                        f"❌ {self.username}: Connection reset by server - "
-                        "likely authentication failure"
-                    )
-                    print_log(reset_msg, BColors.FAIL)
-                    return False
-                except Exception as e:
-                    error_msg = f"❌ {self.username}: Error during join processing: {e}"
-                    print_log(error_msg, BColors.FAIL)
-                    return False
-
-            # Join timeout
-            timeout_msg = (
-                f"⏰ {self.username}: Join timeout for #{channel} after "
-                f"{ASYNC_IRC_JOIN_TIMEOUT}s"
-            )
-            print_log(timeout_msg, BColors.FAIL)
-            return False
+            # Wait for join confirmation
+            return await self._wait_for_join_confirmation(channel)
 
         except Exception as e:
             error_msg = f"❌ {self.username}: Error joining #{channel}: {e}"
             print_log(error_msg, BColors.FAIL)
             return False
+
+    async def _wait_for_join_confirmation(self, channel: str) -> bool:
+        """Wait for join confirmation by processing incoming messages"""
+        start_time = time.time()
+        message_buffer = ""
+
+        while time.time() - start_time < ASYNC_IRC_JOIN_TIMEOUT:
+            try:
+                # Read data with timeout
+                data = await self._read_join_data()
+                if data is None:  # Connection lost
+                    return False
+
+                # Process the data
+                decoded_data = data.decode("utf-8", errors="ignore")
+                message_buffer = await self._process_incoming_data(
+                    message_buffer, decoded_data
+                )
+
+                # Check if we got join confirmation
+                if channel in self.confirmed_channels:
+                    return self._finalize_channel_join(channel)
+
+            except asyncio.TimeoutError:
+                # Timeout is expected - just continue checking
+                continue
+            except ConnectionResetError:
+                self._log_connection_reset_error()
+                return False
+            except Exception as e:
+                error_msg = f"❌ {self.username}: Error during join processing: {e}"
+                print_log(error_msg, BColors.FAIL)
+                return False
+
+        # Join timeout
+        self._log_join_timeout(channel)
+        return False
+
+    async def _read_join_data(self) -> bytes | None:
+        """Read data during join process, return None if connection lost"""
+        # Check if reader is available
+        if not self.reader:
+            print_log(
+                f"❌ {self.username}: No reader available during join",
+                BColors.FAIL,
+            )
+            return None
+
+        # Read with short timeout to allow checking for join confirmation
+        data = await asyncio.wait_for(self.reader.read(4096), timeout=0.5)
+
+        if not data:
+            print_log(
+                f"❌ {self.username}: Connection lost during join",
+                BColors.FAIL,
+            )
+            return None
+
+        return data
+
+    def _finalize_channel_join(self, channel: str) -> bool:
+        """Finalize channel join after confirmation"""
+        if channel not in self.channels:
+            self.channels.append(channel)
+        print_log(
+            f"✅ {self.username}: Successfully joined #{channel}",
+            BColors.OKGREEN,
+        )
+        return True
+
+    def _log_connection_reset_error(self):
+        """Log connection reset error"""
+        reset_msg = (
+            f"❌ {self.username}: Connection reset by server - "
+            "likely authentication failure"
+        )
+        print_log(reset_msg, BColors.FAIL)
+
+    def _log_join_timeout(self, channel: str):
+        """Log join timeout error"""
+        timeout_msg = (
+            f"⏰ {self.username}: Join timeout for #{channel} after "
+            f"{ASYNC_IRC_JOIN_TIMEOUT}s"
+        )
+        print_log(timeout_msg, BColors.FAIL)
 
     async def _send_line(self, message: str):
         """Send a line to the IRC server"""
@@ -397,58 +422,88 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
 
         # Handle PINGs immediately
         if raw_message.startswith("PING"):
-            server = (
-                raw_message.split(":", 1)[1] if ":" in raw_message else "tmi.twitch.tv"
-            )
-            pong = f"PONG :{server}"
-            await self._send_line(pong)
-            self.last_ping_from_server = time.time()
+            await self._handle_ping(raw_message)
             return
 
-        # Parse IRC message format with IRCv3 tags: [@tags] [:prefix] <command>
-        # [params] [:trailing]
+        # Parse and handle other IRC messages
+        prefix, command, params = self._parse_irc_message(raw_message)
+        if not command:
+            return
+
+        # Handle different message types
+        if command in ["366", "RPL_ENDOFNAMES"]:  # End of NAMES list
+            self._handle_channel_confirmation(params)
+        elif command == "PRIVMSG" and prefix:  # Only handle if prefix is not None
+            await self._handle_privmsg(prefix, params)
+
+    async def _handle_ping(self, raw_message: str):
+        """Handle PING messages"""
+        server = (
+            raw_message.split(":", 1)[1] if ":" in raw_message else "tmi.twitch.tv"
+        )
+        pong = f"PONG :{server}"
+        await self._send_line(pong)
+        self.last_ping_from_server = time.time()
+
+    def _parse_irc_message(self, raw_message: str) -> tuple[str | None, str, str]:
+        """Parse IRC message format with IRCv3 tags"""
         raw_msg = raw_message
 
         # Remove IRCv3 tags if present (start with @)
         if raw_msg.startswith("@"):
-            # Find the end of tags (space after tags section)
             tag_end = raw_msg.find(" ")
             if tag_end != -1:
                 raw_msg = raw_msg[tag_end + 1:]  # Remove tags and the space
 
         parts = raw_msg.split(" ", 2)
         if len(parts) < 2:
-            return
+            return None, "", ""
 
         prefix = parts[0] if parts[0].startswith(":") else None
         command = parts[1] if prefix else parts[0]
         params = parts[2] if len(parts) > 2 else ""
 
-        # Handle channel confirmations
-        if command in ["366", "RPL_ENDOFNAMES"]:  # End of NAMES list
-            if " #" in params:
-                channel = params.split(" #")[1].split()[0].lower()
-                self.confirmed_channels.add(channel)
-                self.joined_channels.add(channel)
+        return prefix, command, params
 
-        # Handle chat messages
-        elif command == "PRIVMSG" and prefix:  # Only handle if prefix is not None
-            await self._handle_privmsg(prefix, params)
+    def _handle_channel_confirmation(self, params: str):
+        """Handle channel join confirmation messages"""
+        if " #" in params:
+            channel = params.split(" #")[1].split()[0].lower()
+            self.confirmed_channels.add(channel)
+            self.joined_channels.add(channel)
 
     async def _handle_privmsg(self, prefix: str, params: str):
         """Handle PRIVMSG (chat messages)"""
+        # Parse and validate message components
+        channel, message, username = self._parse_privmsg_components(prefix, params)
+        if not channel or not message or not username:
+            return
+
+        # Log the message
+        self._log_chat_message(username, channel, message)
+
+        # Handle message with registered handlers
+        await self._process_message_handlers(username, channel, message)
+
+        # Handle color change commands
+        await self._handle_color_change_command(username, channel, message)
+
+    def _parse_privmsg_components(
+        self, prefix: str, params: str
+    ) -> tuple[str | None, str | None, str | None]:
+        """Parse PRIVMSG components and return channel, message, username"""
         if not prefix or " :" not in params:
             print_log(
                 f"🐛 Invalid PRIVMSG format: prefix='{prefix}', params='{params}'",
                 BColors.WARNING,
             )
-            return
+            return None, None, None
 
         # Parse channel and message
         channel_msg = params.split(" :", 1)
         if len(channel_msg) < 2:
             print_log(f"🐛 Failed to parse PRIVMSG: '{params}'", BColors.WARNING)
-            return
+            return None, None, None
 
         channel = channel_msg[0].strip().lstrip("#").lower()
         message = channel_msg[1]
@@ -456,7 +511,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         # Extract username from prefix (:username!username@username.tmi.twitch.tv)
         username = prefix.split("!")[0].lstrip(":") if "!" in prefix else "unknown"
 
-        # Show bot's own messages in normal mode, others only in debug mode
+        return channel, message, username
+
+    def _log_chat_message(self, username: str, channel: str, message: str):
+        """Log chat message with appropriate visibility"""
         is_bot_message = (
             username.lower() == self.username.lower() if self.username else False
         )
@@ -466,51 +524,57 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             debug_only=not is_bot_message,
         )
 
-        # Call message handler if set
-        if self.message_handler:
-            print_log(
-                f"🔄 Calling message handler for {username} in #{channel}",
-                BColors.OKCYAN,
-                debug_only=True,
-            )
-            try:
-                # Check if handler is async and call appropriately
-                import inspect
-
-                if inspect.iscoroutinefunction(self.message_handler):
-                    await self.message_handler(username, channel, message)
-                else:
-                    # For sync handlers, run in thread to avoid blocking
-                    task = asyncio.create_task(
-                        asyncio.to_thread(
-                            self.message_handler, username, channel, message
-                        )
-                    )
-                    await task
-                print_log(
-                    f"✅ Message handler completed for {username} in #{channel}",
-                    BColors.OKGREEN,
-                    debug_only=True,
-                )
-            except Exception as e:
-                print_log(f"❌ Message handler error: {e}", BColors.FAIL)
-                import traceback
-
-                print_log(f"❌ Full traceback: {traceback.format_exc()}", BColors.FAIL)
-        else:
+    async def _process_message_handlers(
+        self, username: str, channel: str, message: str
+    ):
+        """Process message through registered handlers"""
+        if not self.message_handler:
             print_log("⚠️ No message handler set!", BColors.WARNING)
+            return
 
-        # Check for color change commands
-        if message.startswith("/color ") and self.color_change_handler:
-            try:
+        print_log(
+            f"🔄 Calling message handler for {username} in #{channel}",
+            BColors.OKCYAN,
+            debug_only=True,
+        )
+
+        try:
+            # Check if handler is async and call appropriately
+            import inspect
+
+            if inspect.iscoroutinefunction(self.message_handler):
+                await self.message_handler(username, channel, message)
+            else:
+                # For sync handlers, run in thread to avoid blocking
                 task = asyncio.create_task(
-                    asyncio.to_thread(
-                        self.color_change_handler, username, channel, message
-                    )
+                    asyncio.to_thread(self.message_handler, username, channel, message)
                 )
                 await task
-            except Exception as e:
-                print_log(f"❌ Color change handler error: {e}", BColors.FAIL)
+
+            print_log(
+                f"✅ Message handler completed for {username} in #{channel}",
+                BColors.OKGREEN,
+                debug_only=True,
+            )
+        except Exception as e:
+            print_log(f"❌ Message handler error: {e}", BColors.FAIL)
+            import traceback
+            print_log(f"❌ Full traceback: {traceback.format_exc()}", BColors.FAIL)
+
+    async def _handle_color_change_command(
+        self, username: str, channel: str, message: str
+    ):
+        """Handle color change commands"""
+        if not message.startswith("/color ") or not self.color_change_handler:
+            return
+
+        try:
+            task = asyncio.create_task(
+                asyncio.to_thread(self.color_change_handler, username, channel, message)
+            )
+            await task
+        except Exception as e:
+            print_log(f"❌ Color change handler error: {e}", BColors.FAIL)
 
     def _perform_periodic_checks(self) -> bool:
         """
