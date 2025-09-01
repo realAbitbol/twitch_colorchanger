@@ -8,6 +8,7 @@ import secrets
 import time
 import traceback
 from collections.abc import Callable
+from enum import Enum, auto
 from typing import Any
 
 from .colors import BColors
@@ -30,6 +31,18 @@ from .constants import (
 from .utils import print_log
 
 
+class ConnectionState(Enum):
+    """IRC connection state for better state management"""
+
+    DISCONNECTED = auto()
+    CONNECTING = auto()
+    AUTHENTICATING = auto()
+    JOINING = auto()
+    READY = auto()
+    RECONNECTING = auto()
+    DEGRADED = auto()
+
+
 class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
     """Async IRC client for Twitch using asyncio - non-blocking operations"""
 
@@ -46,6 +59,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         self.writer: asyncio.StreamWriter | None = None
         self.running = False
         self.connected = False
+        self.state = ConnectionState.DISCONNECTED
+
+        # Serialization lock to prevent overlapping reconnection attempts
+        self._reconnect_lock = asyncio.Lock()
 
         # Message tracking
         self.joined_channels = set()
@@ -72,6 +89,19 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         # Buffer for partial messages
         self.message_buffer = ""
 
+    def _set_state(self, new_state: ConnectionState):
+        """Set connection state with logging"""
+        if self.state != new_state:
+            old_state = (
+                self.state.name if hasattr(self.state, "name") else str(self.state)
+            )
+            print_log(
+                f"🔄 {self.username}: State {old_state} → {new_state.name}",
+                BColors.OKCYAN,
+                debug_only=True,
+            )
+            self.state = new_state
+
     async def connect(self, token: str, username: str, channel: str) -> bool:
         """Connect to Twitch IRC with the given credentials"""
         # Set connection details
@@ -80,6 +110,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         self.channels = [channel.lower()]
 
         try:
+            self._set_state(ConnectionState.CONNECTING)
             print_log(
                 f"🔗 {self.username}: Connecting to {self.server}:{self.port}...",
                 BColors.OKCYAN,
@@ -103,6 +134,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             )
 
             # Send authentication
+            self._set_state(ConnectionState.AUTHENTICATING)
             await self._send_line(f"PASS {self.token}")
             await self._send_line(f"NICK {self.username}")
 
@@ -125,10 +157,12 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                 debug_only=True,
             )
             # Start temporary message processing for join confirmation
+            self._set_state(ConnectionState.JOINING)
             success = await self._join_with_message_processing(channel)
             if success:
                 self.connected = True
                 self._reset_connection_timer()  # Reset timer after successful connection
+                self._set_state(ConnectionState.READY)
                 print_log(
                     f"✅ {self.username}: Connected and joined #{channel}",
                     BColors.OKGREEN,
@@ -612,11 +646,24 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         return False
 
     def _is_connection_stale(self) -> bool:
-        """Check if connection appears stale"""
+        """Check if connection appears stale (enhanced for early detection)"""
         current_time = time.time()
-        return (current_time - self.last_server_activity) > (
-            self.server_activity_timeout / 2
-        )
+        time_since_activity = current_time - self.last_server_activity
+
+        # More aggressive stale detection - warn at 25% of timeout for proactive recovery
+        early_stale_threshold = self.server_activity_timeout * 0.25
+
+        if time_since_activity > early_stale_threshold:
+            # Log early warning for observability
+            print_log(
+                f"⚠️ {self.username}: Connection showing early staleness "
+                f"({time_since_activity:.1f}s since activity)",
+                BColors.WARNING,
+                debug_only=True,
+            )
+
+        # Return true if we're beyond 50% of timeout (original behavior preserved)
+        return time_since_activity > (self.server_activity_timeout / 2)
 
     async def disconnect(self):
         """Disconnect from IRC server"""
@@ -641,87 +688,103 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         self.pending_joins.clear()
         self.message_buffer = ""
 
+        self._set_state(ConnectionState.DISCONNECTED)
         print_log(f"📡 {self.username}: Disconnected", BColors.WARNING)
 
     async def force_reconnect(self) -> bool:
-        """Force a reconnection (for external health checks)"""
-        if not self.username or not self.token or not self.channels:
-            print_log("❌ Cannot reconnect: missing connection details", BColors.FAIL)
-            return False
+        """Force a reconnection (for external health checks) with race protection"""
+        async with self._reconnect_lock:
+            if not self.username or not self.token or not self.channels:
+                print_log(
+                    "❌ Cannot reconnect: missing connection details", BColors.FAIL
+                )
+                return False
 
-        print_log(f"🔄 {self.username}: Forcing async reconnection...", BColors.WARNING)
-
-        # Check if we need to wait due to exponential backoff
-        now = time.time()
-        time_since_last_attempt = now - self.last_reconnect_attempt
-        backoff_delay = self._calculate_backoff_delay()
-
-        if time_since_last_attempt < backoff_delay:
-            remaining_wait = backoff_delay - time_since_last_attempt
+            self._set_state(ConnectionState.RECONNECTING)
             print_log(
-                f"⏳ {self.username}: Waiting {
-                    remaining_wait:.1f}s due to exponential backoff "
-                f"(attempt {self.consecutive_failures + 1})",
-                BColors.WARNING,
+                f"🔄 {self.username}: Forcing async reconnection...", BColors.WARNING
             )
-            await asyncio.sleep(remaining_wait)
 
-        # Store original channels before reconnecting
-        original_channels = self.channels.copy()
-
-        # Disconnect first
-        await self.disconnect()
-
-        # Short delay before reconnecting
-        await asyncio.sleep(RECONNECT_DELAY)
-
-        # Update reconnection attempt tracking
-        self.last_reconnect_attempt = time.time()
-        self.consecutive_failures += 1
-
-        # Reconnect with timeout
-        channel = original_channels[0] if original_channels else ""
-        try:
-            success = await asyncio.wait_for(
-                self.connect(self.token, self.username, channel),
-                timeout=ASYNC_IRC_RECONNECT_TIMEOUT,
-            )
-        except TimeoutError:
-            print_log(
-                f"⏰ {self.username}: Reconnection timed out after {ASYNC_IRC_RECONNECT_TIMEOUT}s",
-                BColors.FAIL,
-            )
-            success = False
-
-        if success:
-            # Reset exponential backoff on successful reconnection
-            self.consecutive_failures = 0
-
-            # Reset ping timer after successful reconnection
+            # Check if we need to wait due to exponential backoff
             now = time.time()
-            self.last_ping_from_server = now
-            self.last_server_activity = now
+            time_since_last_attempt = now - self.last_reconnect_attempt
+            backoff_delay = self._calculate_backoff_delay()
 
-            # Restore the original channels list and re-join all channels
-            self.channels = original_channels
-            # Skip first channel (already joined in connect)
-            for channel in self.channels[1:]:
-                await self.join_channel(channel)
+            if time_since_last_attempt < backoff_delay:
+                remaining_wait = backoff_delay - time_since_last_attempt
+                print_log(
+                    f"⏳ {self.username}: Waiting {remaining_wait:.1f}s due to exponential backoff "
+                    f"(attempt {self.consecutive_failures + 1})",
+                    BColors.WARNING,
+                )
+                await asyncio.sleep(remaining_wait)
 
-            num_channels = len(self.channels)
-            success_msg = (
-                f"✅ {self.username}: Async reconnected and rejoined "
-                f"{num_channels} channels"
-            )
-            print_log(success_msg, BColors.OKGREEN)
-        else:
-            failure_msg = (
-                f"❌ {self.username}: Async reconnection failed "
-                f"(attempt {self.consecutive_failures})"
-            )
-            print_log(failure_msg, BColors.FAIL)
+            # Store original channels before reconnecting (snapshot under lock)
+            original_channels = self.channels.copy()
 
-        return success
+            # Disconnect first
+            await self.disconnect()
+
+            # Short delay before reconnecting
+            await asyncio.sleep(RECONNECT_DELAY)
+
+            # Update reconnection attempt tracking
+            self.last_reconnect_attempt = time.time()
+            self.consecutive_failures += 1
+
+            # Reconnect with timeout
+            channel = original_channels[0] if original_channels else ""
+            try:
+                success = await asyncio.wait_for(
+                    self.connect(self.token, self.username, channel),
+                    timeout=ASYNC_IRC_RECONNECT_TIMEOUT,
+                )
+            except TimeoutError:
+                print_log(
+                    f"⏰ {self.username}: Reconnection timed out after {ASYNC_IRC_RECONNECT_TIMEOUT}s",
+                    BColors.FAIL,
+                )
+                success = False
+
+            if success:
+                # Reset exponential backoff on successful reconnection
+                self.consecutive_failures = 0
+
+                # Reset ping timer after successful reconnection
+                now = time.time()
+                self.last_ping_from_server = now
+                self.last_server_activity = now
+
+                # Restore the original channels list and re-join all channels
+                self.channels = original_channels
+                # Skip first channel (already joined in connect)
+                for channel in self.channels[1:]:
+                    await self.join_channel(channel)
+
+                num_channels = len(self.channels)
+                success_msg = (
+                    f"✅ {self.username}: Async reconnected and rejoined "
+                    f"{num_channels} channels"
+                )
+                print_log(success_msg, BColors.OKGREEN)
+            else:
+                failure_msg = (
+                    f"❌ {self.username}: Async reconnection failed "
+                    f"(attempt {self.consecutive_failures})"
+                )
+                print_log(failure_msg, BColors.FAIL)
+
+            # Set final state based on success and health
+            if success:
+                # Check if reconnection was truly successful
+                if self.is_healthy():
+                    self._set_state(ConnectionState.READY)
+                else:
+                    self._set_state(ConnectionState.DEGRADED)
+            else:
+                self._set_state(ConnectionState.DISCONNECTED)
+
+            return success
 
     def _calculate_backoff_delay(self) -> float:
         """Calculate exponential backoff delay with jitter"""
@@ -778,26 +841,71 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
 
     def is_healthy(self) -> bool:
         """Check if the IRC connection is healthy"""
-        if not self.connected or not self.running:
-            return False
+        health_data = self.get_health_snapshot()
+        return health_data["healthy"]
 
+    def get_health_snapshot(self) -> dict[str, Any]:
+        """Return structured health info with detailed reasons"""
+        reasons = []
         current_time = time.time()
 
-        # Check if we've had recent server activity
-        if current_time - self.last_server_activity > self.server_activity_timeout:
-            return False
+        # Check basic connection state
+        if not self.connected:
+            reasons.append("not_connected")
+        if not self.running:
+            reasons.append("not_running")
+
+        # Check stream availability
+        if not self.reader or not self.writer:
+            reasons.append("missing_streams")
+
+        # Check activity timeouts with early warning
+        time_since_activity = (
+            current_time - self.last_server_activity
+            if self.last_server_activity > 0
+            else None
+        )
+
+        if time_since_activity is not None:
+            # Early warning for idle connection (50% of timeout)
+            if time_since_activity > (self.server_activity_timeout * 0.5):
+                reasons.append("idle_warning")
+            # Full stale detection
+            if time_since_activity > self.server_activity_timeout:
+                reasons.append("stale_activity")
 
         # Check ping timeout (if we've received pings before)
         if self.last_ping_from_server > 0:
             ping_timeout = self.expected_ping_interval * 1.5
             if current_time - self.last_ping_from_server > ping_timeout:
-                return False
+                reasons.append("ping_timeout")
 
-        # Check if we have reader/writer
-        if not self.reader or not self.writer:
-            return False
+        # Check for pending joins that might indicate issues
+        if self.pending_joins:
+            reasons.append("pending_joins")
 
-        return True
+        # Check for recent connection failures
+        if self.consecutive_failures > 0:
+            reasons.append("recent_failures")
+
+        return {
+            "username": self.username,
+            "state": self.state.name,
+            "connection_state": self.state.name,  # Backward compatibility alias
+            "healthy": len(reasons) == 0,
+            "reasons": reasons,
+            "connected": self.connected,
+            "running": self.running,
+            "time_since_activity": time_since_activity,
+            "time_since_ping": (
+                current_time - self.last_ping_from_server
+                if self.last_ping_from_server > 0
+                else None
+            ),
+            "pending_joins": len(self.pending_joins),
+            "consecutive_failures": self.consecutive_failures,
+            "has_streams": self.reader is not None and self.writer is not None,
+        }
 
     def _should_retry_connection(self) -> bool:
         """Check if we should continue retrying connection attempts"""

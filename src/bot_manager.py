@@ -5,6 +5,7 @@ Bot manager for handling multiple Twitch bots
 import asyncio
 import os
 import signal
+from secrets import SystemRandom
 from typing import Any
 
 import aiohttp
@@ -15,6 +16,9 @@ from .config_watcher import create_config_watcher
 from .constants import HEALTH_MONITOR_INTERVAL, TASK_WATCHDOG_INTERVAL
 from .utils import print_log
 from .watcher_globals import set_global_watcher
+
+# SystemRandom for non-cryptographic jitter to satisfy Bandit B311
+_jitter_rng = SystemRandom()
 
 
 class BotManager:  # pylint: disable=too-many-instance-attributes
@@ -235,7 +239,10 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         """Monitor bot health and attempt reconnections if needed"""
         while self.running and not self.shutdown_initiated:
             try:
-                await asyncio.sleep(HEALTH_MONITOR_INTERVAL)  # Check every 5 minutes
+                # Add jitter to prevent synchronized health checks across multiple instances
+                jitter = _jitter_rng.uniform(0.8, 1.2)  # ±20% jitter (non-crypto)
+                sleep_time = HEALTH_MONITOR_INTERVAL * jitter
+                await asyncio.sleep(sleep_time)
 
                 if not self.running or self.shutdown_initiated:
                     break
@@ -248,7 +255,11 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                 raise  # Re-raise CancelledError
             except Exception as e:
                 print_log(f"❌ Error during health check: {e}", BColors.FAIL)
-                await asyncio.sleep(60)  # Wait a minute before trying again
+                # Also add jitter to error recovery sleep
+                error_sleep = 60 * _jitter_rng.uniform(
+                    0.5, 1.5
+                )  # 30-90 seconds (jitter)
+                await asyncio.sleep(error_sleep)
 
     async def _perform_health_check(self):
         """Perform the actual health check logic"""
@@ -272,7 +283,12 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         """Monitor individual task health and detect hanging tasks"""
         while self.running and not self.shutdown_initiated:
             try:
-                await asyncio.sleep(TASK_WATCHDOG_INTERVAL)  # Check every 2 minutes
+                # Add jitter to task watchdog timing
+                jitter = _jitter_rng.uniform(
+                    0.7, 1.3
+                )  # ±30% jitter for task monitoring (non-crypto)
+                sleep_time = TASK_WATCHDOG_INTERVAL * jitter
+                await asyncio.sleep(sleep_time)
 
                 if not self.running or self.shutdown_initiated:
                     break
