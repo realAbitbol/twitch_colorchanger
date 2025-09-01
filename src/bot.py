@@ -224,10 +224,22 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             priority=1,  # High priority
         )
 
+        # Calculate initial token check interval based on expiry
+        initial_token_interval = 300  # Default 5 minutes
+        if self.token_service and self.token_expiry:
+            initial_token_interval = self.token_service.next_check_delay(
+                self.token_expiry
+            )
+            print_log(
+                f"📅 {self.username}: Initial token check in {initial_token_interval / 60:.1f}m",
+                BColors.OKCYAN,
+                debug_only=True,
+            )
+
         await self.scheduler.schedule_recurring(
             callback=self._adaptive_token_check,
             name="token_check",
-            interval=60,  # Check every minute, but adaptive logic will determine actual timing
+            interval=initial_token_interval,  # Adaptive interval based on token expiry
             priority=2,  # Lower priority than IRC health
         )
 
@@ -312,18 +324,29 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             if not self.running:
                 return
 
-            # Use token service to determine if we need to check now
+            # Always perform the token check when called
+            await self._check_and_refresh_token()
+
+            # Calculate next check delay based on token expiry and reschedule
             if self.token_service and self.token_expiry:
                 next_delay = self.token_service.next_check_delay(self.token_expiry)
-                if next_delay <= 0:  # Time to check
-                    await self._check_and_refresh_token()
-            else:
-                # Fallback: check if we haven't checked in a while
+
+                # Update scheduler interval for more efficient timing
+                await self.scheduler.reschedule_task("token_check", next_delay)
+
                 print_log(
-                    f"⚠️ {self.username}: No TokenService available for adaptive timing",
-                    BColors.WARNING,
+                    f"📅 {self.username}: Next token check in {next_delay / 60:.1f}m",
+                    BColors.OKCYAN,
+                    debug_only=True,
                 )
-                await self._check_and_refresh_token()
+            else:
+                # Fallback to default interval if no expiry info
+                await self.scheduler.reschedule_task("token_check", 300)  # 5 minutes
+                print_log(
+                    f"⚠️ {self.username}: No token expiry info, using default 5m interval",
+                    BColors.WARNING,
+                    debug_only=True,
+                )
 
         except Exception as e:
             print_log(
@@ -738,7 +761,66 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             # Update rate limiting info from response headers
             self.rate_limiter.update_from_headers(headers, is_user_request=True)
 
-            return self._handle_color_change_response(status_code, color)
+            response = self._handle_color_change_response(status_code, color)
+
+            # Handle token refresh case
+            if response == "token_refresh_needed":
+                logger.info(
+                    "Attempting to refresh token after 401 error",
+                    user=self.username,
+                )
+
+                # Try to refresh token
+                refresh_success = await self._check_and_refresh_token(force=True)
+                if refresh_success:
+                    logger.info(
+                        "Token refreshed successfully, retrying color change",
+                        user=self.username,
+                    )
+
+                    # Retry the color change with new token
+                    try:
+                        _, retry_status_code, retry_headers = await asyncio.wait_for(
+                            _make_api_request(
+                                "PUT",
+                                CHAT_COLOR_ENDPOINT,
+                                self.access_token,  # Now using refreshed token
+                                self.client_id,
+                                params=params,
+                                session=self.http_session,
+                            ),
+                            timeout=10,
+                        )
+
+                        # Update rate limiting info from retry headers
+                        self.rate_limiter.update_from_headers(
+                            retry_headers, is_user_request=True
+                        )
+
+                        # Handle the retry response (but don't trigger another refresh)
+                        retry_response = self._handle_color_change_response(
+                            retry_status_code, color
+                        )
+                        return (
+                            retry_response
+                            if retry_response != "token_refresh_needed"
+                            else False
+                        )
+
+                    except Exception as retry_e:
+                        logger.error(
+                            f"Error during color change retry after token refresh: {retry_e}",
+                            user=self.username,
+                        )
+                        return False
+                else:
+                    logger.error(
+                        "Token refresh failed, cannot retry color change",
+                        user=self.username,
+                    )
+                    return False
+
+            return response
 
         except APIError as e:
             return self._handle_api_error(e)
@@ -757,6 +839,13 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             )  # headers were already processed
             logger.warning("Rate limited, will retry automatically", user=self.username)
             return False
+        if status_code == 401:
+            # Token expired/invalid - trigger immediate refresh
+            logger.warning(
+                "401 Unauthorized - token may be expired, will trigger refresh",
+                user=self.username,
+            )
+            return "token_refresh_needed"  # Special return value to trigger refresh
         logger.error(
             f"Failed to change color. Status: {status_code}",
             user=self.username,
@@ -828,12 +917,74 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                     user=self.username,
                 )
                 return True
-            logger.error(
-                f"Failed to change color with preset color. Status: {status_code}",
-                user=self.username,
-                status_code=status_code,
-            )
-            return False
+            elif status_code == 401:
+                # Token expired/invalid - try to refresh and retry
+                logger.warning(
+                    "401 Unauthorized during preset color fallback - attempting token refresh",
+                    user=self.username,
+                )
+
+                refresh_success = await self._check_and_refresh_token(force=True)
+                if refresh_success:
+                    logger.info(
+                        "Token refreshed, retrying preset color change",
+                        user=self.username,
+                    )
+
+                    # Retry with refreshed token
+                    try:
+                        _, retry_status_code, retry_headers = await asyncio.wait_for(
+                            _make_api_request(
+                                "PUT",
+                                CHAT_COLOR_ENDPOINT,
+                                self.access_token,  # Now using refreshed token
+                                self.client_id,
+                                params=params,
+                                session=self.http_session,
+                            ),
+                            timeout=10,
+                        )
+
+                        self.rate_limiter.update_from_headers(
+                            retry_headers, is_user_request=True
+                        )
+
+                        if retry_status_code == 204:
+                            self.colors_changed += 1
+                            self.last_color = color
+                            rate_status = self._get_rate_limit_display(debug_only=True)
+                            logger.info(
+                                f"Color changed to {color} (using preset colors, after token refresh){rate_status}",
+                                user=self.username,
+                            )
+                            return True
+                        else:
+                            logger.error(
+                                f"Failed to change color with preset color after token refresh. Status: {retry_status_code}",
+                                user=self.username,
+                                status_code=retry_status_code,
+                            )
+                            return False
+
+                    except Exception as retry_e:
+                        logger.error(
+                            f"Error during preset color retry after token refresh: {retry_e}",
+                            user=self.username,
+                        )
+                        return False
+                else:
+                    logger.error(
+                        "Token refresh failed during preset color fallback",
+                        user=self.username,
+                    )
+                    return False
+            else:
+                logger.error(
+                    f"Failed to change color with preset color. Status: {status_code}",
+                    user=self.username,
+                    status_code=status_code,
+                )
+                return False
 
         except Exception as fallback_e:
             logger.error(
