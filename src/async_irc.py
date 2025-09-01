@@ -59,9 +59,9 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         self.consecutive_failures = 0  # Track consecutive reconnection failures
         self.last_reconnect_attempt = 0  # Timestamp of last reconnection attempt
 
-        # Message callbacks
-        self.message_handler: Optional[Callable[[str, str, str], None]] = None
-        self.color_change_handler: Optional[Callable[[str, str, str], None]] = None
+        # Message callbacks (can be sync or async)
+        self.message_handler: Optional[Callable[[str, str, str], Any]] = None
+        self.color_change_handler: Optional[Callable[[str, str, str], Any]] = None
 
         # Buffer for partial messages
         self.message_buffer = ""
@@ -367,10 +367,16 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         if self.message_handler:
             print_log(f"🔄 Calling message handler for {username} in #{channel}", BColors.OKCYAN, debug_only=True)
             try:
-                task = asyncio.create_task(
-                    asyncio.to_thread(self.message_handler, username, channel, message)
-                )
-                await task
+                # Check if handler is async and call appropriately
+                import inspect
+                if inspect.iscoroutinefunction(self.message_handler):
+                    await self.message_handler(username, channel, message)
+                else:
+                    # For sync handlers, run in thread to avoid blocking
+                    task = asyncio.create_task(
+                        asyncio.to_thread(self.message_handler, username, channel, message)
+                    )
+                    await task
                 print_log(f"✅ Message handler completed for {username} in #{channel}", BColors.OKGREEN, debug_only=True)
             except Exception as e:
                 print_log(f"❌ Message handler error: {e}", BColors.FAIL)
@@ -524,10 +530,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         
         return max(0.0, delay)  # Ensure non-negative
 
-    def set_message_handler(self, handler: Callable[[str, str, str], None]):
-        """Set the message handler callback"""
+    def set_message_handler(self, handler: Callable[[str, str, str], Any]):
+        """Set the message handler callback (can be sync or async)"""
         self.message_handler = handler
 
-    def set_color_change_handler(self, handler: Callable[[str, str, str], None]):
-        """Set the color change handler callback"""
+    def set_color_change_handler(self, handler: Callable[[str, str, str], Any]):
+        """Set the color change handler callback (can be sync or async)"""
         self.color_change_handler = handler

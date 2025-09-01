@@ -485,6 +485,6 @@ def _save_updated_config(updated_users, config_file):
     """Save updated configuration to file."""
     try:
         save_users_to_config(updated_users, config_file)
-        print_log("💾 Configuration updated with new tokens", BColors.OKGREEN)
+        print_log("💾 Configuration updated with refreshed tokens", BColors.OKGREEN)
     except Exception as e:
         print_log(f"❌ Failed to save updated configuration: {e}", BColors.FAIL)
