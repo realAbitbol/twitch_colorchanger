@@ -342,12 +342,11 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 except (asyncio.TimeoutError, asyncio.CancelledError):
                     pass
 
-            # Force reconnection
-            if self.irc.force_reconnect():
-                # Restart IRC listening task
-                loop = asyncio.get_event_loop()
-                self.irc_task = loop.run_in_executor(None, self.irc.listen)
-
+            # Force reconnection (await the coroutine!)
+            success = await self.irc.force_reconnect()
+            if success:
+                # Restart IRC listening task (pure async)
+                self.irc_task = asyncio.create_task(self.irc.listen())
                 print_log(
                     f"✅ {self.username}: IRC reconnection successful", BColors.OKGREEN
                 )
