@@ -261,6 +261,13 @@ Multi-platform images are available on:
 
 > **Note**: Both registries contain identical images. Choose based on your preference or organizational requirements.
 
+**Image Details:**
+
+- **Base Image**: Python Alpine Linux for maximum security and minimal attack surface
+- **Optimized Size**: Significantly smaller than standard Python images (~50MB vs ~300MB)
+- **Security Focused**: Alpine's security-oriented design with reduced package footprint
+- **Production Ready**: Runs as non-root user (`appuser`) for enhanced container security
+
 **Supported Architectures:**
 
 - `linux/amd64` - Standard x86_64 (Intel/AMD)
@@ -530,7 +537,14 @@ The bot automatically watches for changes to the configuration file and restarts
 
 ### Docker Configuration
 
-The container runs as a non-root user (`appuser`) for enhanced security. Mount your config file directly:
+The container is built on **Python Alpine Linux** for optimal security and performance:
+
+- **Enhanced Security**: Alpine's security-focused design with minimal attack surface
+- **Reduced Size**: ~50MB image size vs ~300MB for standard Python images
+- **Non-root Execution**: Runs as `appuser` (UID 1000) for additional security hardening
+- **Production Ready**: Designed for secure containerized deployment
+
+Mount your config file directly:
 
 ```bash
 docker run -v $PWD/twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf damastah/twitch-colorchanger:latest
