@@ -40,7 +40,7 @@ class SimpleTwitchIRC:
             300  # 5 minutes without any server activity = dead connection
         )
         self.last_ping_from_server = 0  # When server last sent us a PING
-        self.expected_ping_interval = 270  # Twitch typically pings every ~4.5 minutes
+        self.expected_ping_interval = 600  # Twitch pings every ~10 minutes
 
     def connect(self, token: str, username: str, channel: str) -> bool:
         """Connect to Twitch IRC with the given credentials"""
@@ -68,6 +68,12 @@ class SimpleTwitchIRC:
 
             self.connected = True
             self.running = True  # Enable the listening loop
+
+            # Initialize ping timers
+            now = time.time()
+            self.last_server_activity = now
+            self.last_ping_from_server = now
+
             print_log(f"✅ Connected to Twitch IRC as {self.username}", BColors.OKGREEN)
             return True
 
@@ -170,14 +176,6 @@ class SimpleTwitchIRC:
         self.sock.send(f"{pong}\r\n".encode("utf-8"))
         print_log("🏓 Responded to server PING", BColors.OKCYAN, debug_only=True)
 
-    def _handle_pong(self, line: str):
-        """Handle PONG responses from server"""
-        now = time.time()
-        self.last_server_activity = now
-        print_log(
-            f"🏓 Received PONG from server: {line}", BColors.OKCYAN, debug_only=True
-        )
-
     def _check_connection_health(self) -> bool:
         """Check if connection is healthy based on Twitch server activity"""
         now = time.time()
@@ -237,10 +235,6 @@ class SimpleTwitchIRC:
 
         if line.startswith("PING"):
             self._handle_ping(line)
-            return
-
-        if line.startswith("PONG"):
-            self._handle_pong(line)
             return
 
         # Parse message
@@ -434,9 +428,16 @@ class SimpleTwitchIRC:
         success = self.connect(self.token, self.username, channel)
 
         if success:
+            # Reset ping timer after successful reconnection
+            now = time.time()
+            self.last_ping_from_server = now
+            self.last_server_activity = now
+
             # Restore the original channels list and re-join all channels
             self.channels = original_channels
             for channel in self.channels:
                 self.join_channel(channel)
+
+            print_log(f"✅ {self.username}: Reconnected and rejoined {len(self.channels)} channels", BColors.OKGREEN)
 
         return success

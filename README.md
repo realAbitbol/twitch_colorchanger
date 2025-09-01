@@ -1,10 +1,7 @@
 # Twitch ColorChanger
 
 [![Build and Push Docker Images](https://github.com/realAbitbol/twitch_colorchanger/actions/workflows/docker-build.yml/badge.svg)](https://github.com/realAbitbol/twitch_colorchanger/actions/workflows/docker-build.yml)
-[![Tests](https://github.com/realAbitbol/twitch_colorchanger/actions/workflows/tests.yml/badge.svg)](https://github.com/realAbitbol/twitch_colorchanger/actions/workflows/tests.yml)
-[![Codecov](https://codecov.io/gh/realAbitbol/twitch_colorchanger/branch/main/graph/badge.svg)](https://codecov.io/gh/realAbitbol/twitch_colorchanger)
-[![Coverage: 100%](https://img.shields.io/badge/Coverage-100%25-brightgreen.svg)](https://codecov.io/gh/realAbitbol/twitch_colorchanger)
-[![Tests: 551 Passing](https://img.shields.io/badge/Tests-551%20Passing-brightgreen.svg)](https://github.com/realAbitbol/twitch_colorchanger/actions/workflows/tests.yml)
+[![Code Quality](https://github.com/realAbitbol/twitch_colorchanger/actions/workflows/code-quality.yml/badge.svg)](https://github.com/realAbitbol/twitch_colorchanger/actions/workflows/code-quality.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python](https://img.shields.io/badge/Python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![Docker](https://img.shields.io/badge/Docker-Multi--Platform-blue.svg)](https://hub.docker.com/r/damastah/twitch-colorchanger)
@@ -475,7 +472,6 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 For maintainers setting up GitHub Actions with full functionality, see [CI/CD Setup Guide](.github/CI_SETUP.md) for configuring:
 
 - **Docker Hub Credentials**: For automatic Docker image builds and publishing
-- **Codecov Token**: For test coverage reporting and badges
 - **Safety API Key**: For comprehensive security vulnerability scanning
 
 ### Development Setup
@@ -492,10 +488,6 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 # Install development dependencies
 pip install -r requirements-dev.txt
 
-# Run tests with coverage
-make test-coverage
-# or manually: pytest --cov=src --cov=main --cov-report=html --cov-report=term
-
 # Format code
 black . && isort .
 # or: make format
@@ -506,8 +498,6 @@ make lint
 # Run comprehensive checks
 make check
 ```
-
-**Test Coverage Achievement**: 100% coverage across 1,587 lines and 440 branches with 551 comprehensive tests.
 
 ## License
 
