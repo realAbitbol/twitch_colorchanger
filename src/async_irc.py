@@ -717,7 +717,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
 
     def _calculate_backoff_delay(self) -> float:
         """Calculate exponential backoff delay with jitter"""
-        import random
+        import secrets
 
         if self.consecutive_failures == 0:
             return 0.0
@@ -731,8 +731,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         delay = min(delay, BACKOFF_MAX_DELAY)
 
         # Add jitter to avoid thundering herd
+        # Use secrets for cryptographically secure random numbers
+        import secrets
         jitter = (
-            delay * BACKOFF_JITTER_FACTOR * (random.random() * 2 - 1)
+            delay * BACKOFF_JITTER_FACTOR * (secrets.SystemRandom().random() * 2 - 1)
         )  # ±10% jitter
         delay += jitter
 

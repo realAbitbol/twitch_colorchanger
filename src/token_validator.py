@@ -12,7 +12,7 @@ import httpx
 from .logger import BColors, print_log
 
 # Constants
-VALIDATE_TOKEN_URL = "https://id.twitch.tv/oauth2/validate"
+TWITCH_VALIDATION_ENDPOINT = "https://id.twitch.tv/oauth2/validate"
 
 
 class TokenValidator:
@@ -62,7 +62,7 @@ class TokenValidator:
         """
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                VALIDATE_TOKEN_URL,
+                TWITCH_VALIDATION_ENDPOINT,
                 headers={"Authorization": f"OAuth {self.access_token}"},
                 timeout=10.0,
             )
