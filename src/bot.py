@@ -4,7 +4,6 @@ Main bot class for Twitch color changing functionality
 
 import asyncio
 import json
-import threading
 import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Tuple
@@ -16,7 +15,7 @@ from .config import disable_random_colors_for_user, update_user_in_config
 from .error_handling import APIError, simple_retry
 from .logger import logger
 from .rate_limiter import get_rate_limiter
-from .async_irc_adapter import AsyncIRCAdapter
+from .async_irc import AsyncTwitchIRC
 from .utils import print_log
 
 # Constants
@@ -109,9 +108,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         """Start the bot"""
         print_log(f"🚀 Starting bot for {self.username}", BColors.OKBLUE)
         self.running = True
-        # Force a token refresh at launch (if refresh token available) to ensure
-        # fresh 4h window
-        await self._check_and_refresh_token(force=True)
+        # Validate token and refresh only if needed
+        print_log(f"🔍 {self.username}: Checking token validity...", BColors.OKCYAN)
+        await self._check_and_refresh_token()
 
         # Fetch user_id if not set
         if not self.user_id:
@@ -142,9 +141,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 BColors.OKGREEN,
             )
 
-        # Create IRC connection using async IRC adapter
-        print_log(f"🚀 {self.username}: Using async IRC adapter", BColors.OKCYAN)
-        self.irc = AsyncIRCAdapter()
+        # Create IRC connection using async IRC client
+        print_log(f"🚀 {self.username}: Using async IRC client", BColors.OKCYAN)
+        self.irc = AsyncTwitchIRC()
 
         # Deduplicate and normalize channels
         unique_channels = list(
@@ -175,19 +174,21 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         # Set up message handler BEFORE connecting to avoid race condition
         self.irc.set_message_handler(self.handle_irc_message)
 
-        # Connect to IRC with the first channel
-        self.irc.connect(self.access_token, self.username, unique_channels[0])
+        # Connect to IRC with the first channel (now async)
+        if not await self.irc.connect(self.access_token, self.username, unique_channels[0]):
+            print_log(f"❌ {self.username}: Failed to connect to IRC", BColors.FAIL)
+            return
 
-        # Join all configured channels (join_channel now checks for duplicates)
-        for channel in unique_channels:
-            self.irc.join_channel(channel)
+        # Start IRC listening task immediately after connection
+        print_log(f"👂 {self.username}: Starting async message listener...", BColors.OKCYAN)
+        self.irc_task = asyncio.create_task(self.irc.listen())
 
-        # Start background tasks
+        # Join all additional configured channels (now async)
+        for channel in unique_channels[1:]:  # Skip first channel, already joined in connect
+            await self.irc.join_channel(channel)
+
+        # Start token monitoring task
         self.token_task = asyncio.create_task(self._periodic_token_check())
-
-        # Run IRC listening in executor since it's not async
-        loop = asyncio.get_event_loop()
-        self.irc_task = loop.run_in_executor(None, self.irc.listen)
 
         try:
             # Wait for either task to complete
@@ -214,9 +215,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 )
                 raise
 
-        # Disconnect IRC (this sets running=False on IRC object)
+        # Disconnect IRC (now async)
         if self.irc:
-            self.irc.disconnect()
+            await self.irc.disconnect()
 
         # Wait for IRC task to finish (disconnect should cause it to exit)
         if self.irc_task and not self.irc_task.done():
@@ -234,7 +235,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         # Add a small delay to ensure cleanup
         await asyncio.sleep(0.1)
 
-    def handle_irc_message(self, sender: str, channel: str, message: str):
+    async def handle_irc_message(self, sender: str, channel: str, message: str):
         """Handle IRC messages from the async IRC client"""
         # Suppress unused argument warnings
         _ = channel
@@ -242,20 +243,12 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         # Only react to our own messages
         if sender.lower() == self.username.lower():
             self.messages_sent += 1
-            # Schedule color change in the event loop (no more fixed delays!)
-            try:
-                loop = asyncio.get_event_loop()
-                asyncio.run_coroutine_threadsafe(self._change_color(), loop)
-                # Don't wait for completion to avoid blocking the IRC thread
-            except RuntimeError:
-                # Fallback: run in new thread
-                threading.Thread(
-                    target=lambda: asyncio.run(self._change_color()), daemon=True
-                ).start()
+            # Direct async color change - no more threading complexity!
+            await self._change_color()
 
-    def _handle_message(self, sender: str, message: str, channel: str):
+    async def _handle_message(self, sender: str, message: str, channel: str):
         """Handle message (for testing compatibility)"""
-        self.handle_irc_message(sender, channel, message)
+        await self.handle_irc_message(sender, channel, message)
 
     async def _periodic_token_check(self):
         """Periodically check and refresh token if needed"""
@@ -469,7 +462,6 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 self.username}: Token is valid and has sufficient time remaining ({
                 hours_remaining:.1f}h)",
             BColors.OKGREEN,
-            debug_only=True,
         )
         return True
 
@@ -478,9 +470,8 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             user_info = await self._get_user_info()
             if user_info:
                 print_log(
-                    f"✅ {self.username}: Token is valid (API check)",
+                    f"✅ {self.username}: Token is valid",
                     BColors.OKGREEN,
-                    debug_only=True,
                 )
                 return True
             print_log(
@@ -917,7 +908,8 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         self.running = False
 
         if self.irc:
-            self.irc.disconnect()
+            # For sync cleanup, we can't await, so just set the connection to None
+            # The real cleanup happens in the async stop() method
             self.irc = None
 
     def print_statistics(self):
