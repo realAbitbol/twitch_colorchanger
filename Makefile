@@ -1,6 +1,6 @@
 # Makefile for Twitch ColorChanger Bot Development
 
-.PHONY: help install install-dev lint security check-all check clean build docker-build docker-run dev-setup pre-commit dev-check ci validate-config docs docs-serve profile version check-env ruff-lint ruff-format ruff-check md-format md-check
+.PHONY: help install install-dev lint security check-all check clean build docker-build docker-run dev-setup pre-commit dev-check ci validate-config docs docs-serve profile version check-env ruff-lint ruff-format ruff-check md-format md-check vulture-check
 
 # Default target
 help:
@@ -13,6 +13,7 @@ help:
 	@echo "  ruff-check      - Check code with Ruff (lint + format check)"
 	@echo "  md-format       - Format Markdown files"
 	@echo "  md-check        - Check Markdown formatting"
+	@echo "  vulture-check   - Run dead code detection with Vulture"
 	@echo "  security        - Run security checks"
 	@echo "  check-all       - Run all Python quality checks"
 	@echo "  clean           - Clean temporary files"
@@ -37,6 +38,11 @@ lint:
 	.venv/bin/python -m mypy src/
 	@echo "Running bandit..."
 	.venv/bin/python -m bandit -r src/
+
+# Vulture dead code detection
+vulture-check:
+	@echo "🦢 Running vulture for dead code detection..."
+	.venv/bin/vulture src/ --min-confidence 80
 
 # Ruff commands (modern alternative)
 ruff-lint:
@@ -65,7 +71,7 @@ security:
 	.venv/bin/python -m bandit -r src/
 
 # Comprehensive checks
-check-all: ruff-check lint security
+check-all: ruff-check lint vulture-check security
 	@echo "All Python checks passed!"
 	@echo "Note: Run 'make md-check' separately to check Markdown formatting"
 
