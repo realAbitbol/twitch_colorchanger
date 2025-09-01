@@ -1,19 +1,20 @@
 # Makefile for Twitch ColorChanger Bot Development
 
-.PHONY: help install install-dev lint format format-check security check-all check clean build docker-build docker-run dev-setup pre-commit dev-check ci validate-config docs docs-serve profile version check-env ruff-lint ruff-format ruff-check
+.PHONY: help install install-dev lint security check-all check clean build docker-build docker-run dev-setup pre-commit dev-check ci validate-config docs docs-serve profile version check-env ruff-lint ruff-format ruff-check md-format md-check
 
 # Default target
 help:
 	@echo "Available targets:"
 	@echo "  install         - Install production dependencies"
 	@echo "  install-dev     - Install development dependencies"
-	@echo "  lint            - Run all linting tools"
-	@echo "  format          - Format code with black and isort"
-	@echo "  ruff-lint       - Run Ruff linter (fast alternative)"
-	@echo "  ruff-format     - Format code with Ruff (fast alternative)"
+	@echo "  lint            - Run all linting tools (Ruff, mypy, bandit)"
+	@echo "  ruff-lint       - Run Ruff linter with auto-fix"
+	@echo "  ruff-format     - Format code with Ruff"
 	@echo "  ruff-check      - Check code with Ruff (lint + format check)"
+	@echo "  md-format       - Format Markdown files"
+	@echo "  md-check        - Check Markdown formatting"
 	@echo "  security        - Run security checks"
-	@echo "  check-all       - Run all quality checks"
+	@echo "  check-all       - Run all Python quality checks"
 	@echo "  clean           - Clean temporary files"
 	@echo "  build           - Build package"
 	@echo "  docker-build    - Build Docker image"
@@ -30,42 +31,43 @@ install-dev:
 
 # Code quality
 lint:
-	@echo "Running flake8..."
-	flake8 src/
+	@echo "Running Ruff linter..."
+	python -m ruff check src/
 	@echo "Running mypy..."
-	mypy src/
+	python -m mypy src/
 	@echo "Running bandit..."
-	bandit -r src/
-
-format:
-	@echo "Formatting with black..."
-	black src/
-	@echo "Sorting imports with isort..."
-	isort src/
-
-format-check:
-	black --check src/
-	isort --check-only src/
+	python -m bandit -r src/
 
 # Ruff commands (modern alternative)
 ruff-lint:
 	@echo "Running Ruff linter..."
-	ruff check src/ --fix
+	python -m ruff check src/ --fix
 
 ruff-format:
 	@echo "Formatting with Ruff..."
-	ruff format src/
+	python -m ruff format src/
 
 ruff-check:
 	@echo "Running Ruff checks..."
-	ruff check src/
-	ruff format src/ --check
+	python -m ruff check src/
+	python -m ruff format src/ --check
+
+# Markdown formatting commands
+md-format:
+	@echo "Formatting Markdown files..."
+	python -m mdformat README.md FUNCTIONAL_DOCUMENTATION.md
+
+md-check:
+	@echo "Checking Markdown formatting..."
+	python -m mdformat --check README.md FUNCTIONAL_DOCUMENTATION.md
 
 security:
-	bandit -r src/
+	python -m bandit -r src/
+
 # Comprehensive checks
-check-all: format-check lint security
-	@echo "All checks passed!"
+check-all: ruff-check lint security
+	@echo "All Python checks passed!"
+	@echo "Note: Run 'make md-check' separately to check Markdown formatting"
 
 # Run comprehensive checks (linting only)
 check: lint
@@ -98,7 +100,7 @@ pre-commit:
 	pre-commit run --all-files
 
 # Quick development cycle
-dev-check: format lint
+dev-check: ruff-check lint
 	@echo "Quick development checks passed!"
 
 # CI/CD simulation
@@ -132,4 +134,4 @@ check-env:
 	@echo "Pip version: $(shell pip --version)"
 	@echo "Virtual environment: $(VIRTUAL_ENV)"
 	@echo "Dependencies:"
-	@pip list | grep -E "(aiohttp|watchdog|black|flake8|mypy|bandit)"
+	@pip list | grep -E "(aiohttp|watchdog|ruff|mypy|bandit)"

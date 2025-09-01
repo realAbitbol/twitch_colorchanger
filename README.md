@@ -489,15 +489,27 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 # Install development dependencies
 pip install -r requirements-dev.txt
 
-# Format code
-black . && isort .
-# or: make format
+# Set up pre-commit hooks (recommended)
+pre-commit install
 
-# Run linting
+# Format Python code with Ruff
+python -m ruff format .
+# or: make ruff-format
+
+# Format Markdown files with mdformat (optional)
+make md-format
+
+# Run linting (includes Ruff, mypy, bandit)
 make lint
 
-# Run comprehensive checks
-make check
+# Check Markdown formatting (optional)
+make md-check
+
+# Run comprehensive Python quality checks
+make check-all
+
+# Run mdformat via pre-commit (manual)
+pre-commit run mdformat --all-files
 ```
 
 ## License

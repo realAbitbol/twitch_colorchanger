@@ -83,8 +83,6 @@ coverage.xml
 # Linting and formatting caches
 .ruff_cache/
 .mypy_cache/
-.black_cache/
-.isort_cache/
 
 # Package managers
 poetry.lock

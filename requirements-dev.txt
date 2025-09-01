@@ -1,12 +1,14 @@
 # Development dependencies for Twitch ColorChanger Bot
 # Install with: pip install -r requirements-dev.txt
 
-# Code quality tools
-black>=23.7.0,<26.0.0
-isort>=5.12.0,<6.0.0
-flake8>=6.0.0,<7.0.0
-mypy>=1.5.0,<2.0.0
-ruff>=0.1.0,<1.0.0  # Modern Python linter and formatter
+# Code quality tools (modern Ruff-based stack)
+ruff>=0.1.0,<1.0.0     # Fast Python linter and formatter (replaces black, isort, flake8)
+mypy>=1.5.0,<2.0.0     # Type checking
+
+# Markdown formatting and linting
+mdformat>=0.7.0,<1.0.0         # Markdown formatter (like Black for Markdown)
+mdformat-gfm>=0.3.0,<1.0.0     # GitHub Flavored Markdown support
+mdformat-tables>=0.4.0,<1.0.0  # Table formatting support
 
 # Security scanning
 bandit>=1.7.0,<2.0.0
