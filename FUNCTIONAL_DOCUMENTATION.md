@@ -16,17 +16,30 @@ The Twitch Color Changer Bot automatically changes a user's Twitch chat color af
 4. **Smart Turbo/Prime Detection**: Automatic fallback to preset colors when hex colors fail, with persistent settings
 5. **Color Avoidance**: Never repeats the same color consecutively
 6. **Current Color Detection**: Fetches current Twitch color on startup to ensure first change is different
-7. **Token Management**: Automatic token refresh with proactive expiry checking
-8. **IRC Connection**: Custom IRC client with reliable channel joining and message processing
+7. **Token Management**: Automatic token refresh with proactive expiry checking (600-second intervals)
+8. **IRC Connection**: Custom IRC client with health monitoring and automatic reconnection
 9. **Docker Support**: Multi-architecture container images with simplified deployment
 10. **Live Configuration Reload**: Automatic bot restart when config file changes externally
+11. **Channel Deduplication**: Automatically removes duplicate channels and persists clean configuration
+12. **Connection Health Monitoring**: 600-second ping intervals with 300-second activity timeouts
+13. **Visible Connection Status**: Real-time ping/pong logging for transparency
 
 ### Color Change Flow
 
 ```text
 User sends message → IRC client receives → Bot detects own message → 
-Generate new color (avoiding current) → API call to Twitch → Color changed
+Generate new color (avoiding current) → API call to Twitch → Color changed → 
+Statistics updated
 ```
+
+### IRC Connection Management
+
+- **Health Monitoring**: Tracks server activity with 300-second timeout
+- **Ping Intervals**: Expects server pings every 600 seconds
+- **Automatic Reconnection**: Force reconnects on stale connections
+- **Visible Status**: Real-time ping/pong messages with username identification
+- **Channel Join Management**: 30-second timeouts with retry logic (max 2 attempts)
+- **Multi-Channel Support**: Joins multiple channels with confirmation tracking
 
 ## Token Lifecycle Management
 
@@ -49,14 +62,19 @@ Bot polls for completion → Receives tokens → Saves to config → Continues s
 ### Startup Behavior
 
 - **Token Validation**: Checks existing tokens first before triggering device flow
-- **Force Refresh**: Attempts token refresh if refresh token exists
+- **Force Refresh**: Attempts token refresh at startup to ensure fresh 4-hour window
 - **Device Flow Fallback**: Only used when validation and refresh both fail
 - **Config Persistence**: Automatically updates config with new tokens
+- **User ID Retrieval**: Fetches user ID from Twitch API for operations
+- **Current Color Detection**: Retrieves current color to avoid immediate repetition
+- **Channel Deduplication**: Removes duplicate channels and persists clean configuration
+- **IRC Connection**: Establishes connection and joins all configured channels
 
 ### Periodic Maintenance
 
-- **10-Minute Checks**: Validates tokens every 600 seconds
+- **600-Second Checks**: Validates tokens every 600 seconds (10 minutes)
 - **Proactive Refresh**: Refreshes when <1 hour remaining
+- **Force Refresh at Startup**: Ensures fresh 4-hour token window on bot start
 - **Fallback Validation**: API validation if expiry time unknown
 - **Config Persistence**: Updates config file with new tokens
 
@@ -101,7 +119,22 @@ Bot polls for completion → Receives tokens → Saves to config → Continues s
 - **Debouncing**: 1-second delay prevents multiple rapid restarts
 - **Statistics Persistence**: Preserves bot statistics (messages sent, colors changed) across config restarts
 
+### Configuration Validation and Processing
+
+- **Legacy Format Support**: Supports both multi-user and legacy single-user formats
+- **User Validation**: Comprehensive validation with detailed error reporting
+- **Graceful Handling**: Invalid users are skipped with warnings, valid users continue
+- **Automatic Conversion**: Legacy single-user configs automatically converted to multi-user format
+
 ## Multi-Bot Orchestration
+
+### Application Entry Point
+
+- **Main Function**: Handles startup flow, configuration loading, and token setup
+- **Health Check Mode**: `--health-check` flag for Docker health verification
+- **Welcome Instructions**: Displays setup guidance on first run
+- **Environment Variables**: Supports `TWITCH_CONF_FILE` for custom config paths
+- **Signal Handling**: Proper graceful shutdown on interruption
 
 ### Bot Manager Architecture
 
@@ -122,17 +155,29 @@ Bot polls for completion → Receives tokens → Saves to config → Continues s
 
 ### Connection Management
 
-- **Server**: irc.chat.twitch.tv:6667
-- **Authentication**: OAuth token-based authentication
+- **Server**: irc.chat.twitch.tv:6667 with 10-second connection timeout
+- **Authentication**: OAuth token-based authentication with Twitch capabilities
 - **Capabilities**: Membership, tags, and commands capabilities
-- **Keepalive**: PING/PONG handling for connection stability
+- **Health Monitoring**: 300-second activity timeout, 600-second ping interval expectation
+- **Automatic Reconnection**: Force reconnection on stale connections with state preservation
+- **Visible Status**: Real-time ping/pong logging with username identification
 
 ### Message Processing
 
-- **Real-time Processing**: Event-driven message handling
+- **Real-time Processing**: Event-driven message handling with activity timestamp tracking
 - **Own Message Detection**: Only processes messages from the bot's own username
-- **Channel Management**: Supports multiple channels per bot
-- **Debug Support**: Optional verbose message logging
+- **Channel Management**: Supports multiple channels with join confirmation tracking
+- **Channel Joining**: 30-second timeout with retry logic (maximum 2 attempts)
+- **Debug Support**: Optional verbose message logging for development
+- **Message Truncation**: Displays first 50 characters of messages in logs
+
+### Health Monitoring
+
+- **Server Activity Tracking**: Monitors any server communication (5-minute timeout)
+- **Ping Interval Monitoring**: Expects Twitch server pings every 600 seconds
+- **Connection Health Checks**: Periodic validation during message processing
+- **Automatic Recovery**: Force reconnection when connection appears stale
+- **State Preservation**: Maintains channel memberships across reconnections
 
 ### Reliability Features
 
@@ -194,8 +239,10 @@ Bot polls for completion → Receives tokens → Saves to config → Continues s
 
 - **Multi-platform Images**: amd64, arm64, arm/v7, arm/v6, riscv64
 - **Minimal Base**: Alpine Linux for small image size
-- **Health Checks**: Built-in health check endpoint
+- **Health Checks**: Built-in health check endpoint with `--health-check` flag
 - **Volume Mapping**: Config persistence through volume mounts
+- **Non-root Execution**: Runs as dedicated application user (UID 1000)
+- **RISCV64 Support**: Special build handling for RISC-V architecture
 
 ### Security Features
 
@@ -257,5 +304,30 @@ Bot polls for completion → Receives tokens → Saves to config → Continues s
 - **Fast API Calls**: Optimized HTTP client with connection pooling
 - **Real-time IRC**: Event-driven message processing
 - **Quick Startup**: Fast bot initialization and connection
+
+## Dependencies and Requirements
+
+### Runtime Dependencies
+
+- **aiohttp 3.12+**: Primary async HTTP client for Twitch API communication
+- **httpx 0.28+**: Secondary HTTP client for specific operations
+- **watchdog 3.0+**: File system monitoring for live configuration reload
+- **Python 3.13+**: Core runtime environment
+
+### Development Dependencies
+
+- **black**: Code formatting for consistent style
+- **isort**: Import statement organization
+- **flake8**: Code linting and style checking
+- **mypy**: Static type checking
+- **bandit**: Security vulnerability scanning
+- **pre-commit**: Git hook automation
+
+### System Requirements
+
+- **Python 3.13+**: Tested and optimized for Python 3.13.7
+- **Docker**: Optional for containerized deployment
+- **Network Access**: Outbound HTTPS (Twitch API) and IRC connections
+- **File System**: Read/write access for configuration persistence
 
 This functional documentation reflects the actual implementation and behavior of the Twitch Color Changer Bot as currently deployed.
