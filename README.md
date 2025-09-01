@@ -50,6 +50,7 @@ Automatically change your Twitch username color after each message you send in c
 - [Troubleshooting](#troubleshooting)
   - [Startup Script Issues](#startup-script-issues)
   - [Configuration Issues](#configuration-issues)
+  - [Channel Configuration Issues](#channel-configuration-issues)
   - [Authentication Issues](#authentication-issues)
   - [Docker Issues](#docker-issues)
   - [Turbo/Prime Limitations](#turboprime-limitations)
@@ -639,6 +640,40 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate.bat
 pip install -r requirements.txt
 python -m src.main
 ```
+
+### Channel Configuration Issues
+
+**"Bot doesn't change colors when I chat":**
+
+- **Missing channels**: The bot can only detect messages in channels listed in your `channels` array
+- **Check your config**: Ensure the channel name matches exactly (case-sensitive)
+- **Add missing channels**: Update your config file to include all channels where you want color changes
+
+**Example fix:**
+
+```json
+{
+  "users": [
+    {
+      "username": "your_username",
+      "channels": ["your_channel", "streamer1", "streamer2"],
+      // Add any channel where you want the bot to detect your messages
+    }
+  ]
+}
+```
+
+**"Bot works in some channels but not others":**
+
+- **Channel list verification**: Check that all desired channels are in your `channels` array
+- **Spelling mistakes**: Verify channel names are spelled correctly (no # symbol needed)
+- **Case sensitivity**: Channel names must match exactly: `"ForsenTV"` ≠ `"forsentv"`
+
+**"Bot joins channels but never triggers":**
+
+- **Message visibility**: The bot needs to see your messages to trigger color changes
+- **Channel permissions**: Ensure the bot can read chat in those channels
+- **Live config reload**: After adding channels, the bot will automatically restart and join new channels
 
 ### Authentication Issues
 
