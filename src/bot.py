@@ -234,6 +234,9 @@ class TwitchColorBot:
 
     def handle_irc_message(self, sender: str, channel: str, message: str):
         """Handle IRC messages from SimpleTwitchIRC"""
+        # Suppress unused argument warnings
+        _ = channel
+        _ = message
         # Only react to our own messages
         if sender.lower() == self.username.lower():
             self.messages_sent += 1
@@ -259,17 +262,18 @@ class TwitchColorBot:
         last_irc_check = 0
         last_token_check = 0
         irc_check_interval = 120  # Check IRC health every 2 minutes
-        
+
         while self.running:
             try:
                 # Sleep for the IRC check interval (shorter of the two)
                 await asyncio.sleep(irc_check_interval)
-                # Capture current time first so the line is always executed (improves testability)
+                # Capture current time first so the line is always executed
+                # (improves testability)
                 current_time = time.time()
 
                 if not self.running:  # Check if still running after sleep
                     break
-                
+
                 # Always check IRC health every 2 minutes
                 if current_time - last_irc_check >= irc_check_interval:
                     await self._check_irc_health()
@@ -369,14 +373,12 @@ class TwitchColorBot:
                 hours_remaining = self._hours_until_expiry()
                 if hours_remaining < 0.5:  # Less than 30 minutes
                     return 180  # Check every 3 minutes if <30 minutes remaining
-                elif hours_remaining < 1:  # Less than 1 hour
+                if hours_remaining < 1:  # Less than 1 hour
                     return 300  # Check every 5 minutes if <1 hour remaining
-                elif hours_remaining < 2:  # Less than 2 hours
+                if hours_remaining < 2:  # Less than 2 hours
                     return 600  # Check every 10 minutes if <2 hours remaining
-                else:
-                    return 1800  # Check every 30 minutes if >2 hours remaining
-            else:
-                return 600  # Default 10 minutes if no expiry known
+                return 1800  # Check every 30 minutes if >2 hours remaining
+            return 600  # Default 10 minutes if no expiry known
         except Exception:
             return 600  # Default 10 minutes on error
 
@@ -476,20 +478,18 @@ class TwitchColorBot:
             user_info = await self._get_user_info()
             if user_info:
                 print_log(
-                    f"✅ {
-                        self.username}: Token is valid (API check)",
+                    f"✅ {self.username}: Token is valid (API check)",
                     BColors.OKGREEN,
                     debug_only=True,
                 )
                 return True
-            else:
-                print_log(
-                    f"🔍 {
-                        self.username}: Token validation failed, attempting refresh...",
-                    BColors.WARNING,
-                    debug_only=True,
-                )
-                return False
+            print_log(
+                f"🔍 {self.username}: Token validation failed (API check), "
+                "attempting refresh...",
+                BColors.WARNING,
+                debug_only=True,
+            )
+            return False
         except Exception as e:  # Broad by design; upstream already categorized.
             print_log(
                 f"🔍 {self.username}: Token validation failed ({e}), "
@@ -531,20 +531,19 @@ class TwitchColorBot:
 
             if status_code == 200 and data and data.get("data"):
                 return data["data"][0]
-            elif status_code == 429:
+            if status_code == 429:
                 self.rate_limiter.handle_429_error(headers, is_user_request=True)
                 return None
-            elif status_code == 401:
+            if status_code == 401:
                 # Don't log 401 as error - it's expected when tokens are expired
                 # The calling function will handle the refresh
                 return None
-            else:
-                logger.error(
-                    f"Failed to get user info: {status_code}",
-                    user=self.username,
-                    status_code=status_code,
-                )
-                return None
+            logger.error(
+                f"Failed to get user info: {status_code}",
+                user=self.username,
+                status_code=status_code,
+            )
+            return None
 
         except APIError as e:
             if e.status_code == 401:
@@ -552,8 +551,7 @@ class TwitchColorBot:
                 if await self._check_and_refresh_token():
                     # Retry with new token
                     return await self._get_user_info_impl()
-                else:
-                    raise APIError("Token refresh failed")
+                raise APIError("Token refresh failed") from e
             raise
         except Exception as e:
             logger.error(
@@ -620,7 +618,8 @@ class TwitchColorBot:
                 "access_token": self.access_token,
                 "refresh_token": self.refresh_token,
                 "channels": getattr(self, "channels", [self.username.lower()]),
-                "is_prime_or_turbo": self.use_random_colors,  # Preserve the current setting
+                # Preserve the current setting
+                "is_prime_or_turbo": self.use_random_colors,
             }
             try:
                 update_user_in_config(user_config, self.config_file)
@@ -689,9 +688,8 @@ class TwitchColorBot:
         if self.use_random_colors:
             # Use hex colors for Prime/Turbo users
             return generate_random_hex_color(exclude_color=self.last_color)
-        else:
-            # Use static Twitch preset colors for regular users
-            return get_different_twitch_color(exclude_color=self.last_color)
+        # Use static Twitch preset colors for regular users
+        return get_different_twitch_color(exclude_color=self.last_color)
 
     async def _attempt_color_change(self, color):
         """Attempt to change color and handle the response"""
@@ -729,19 +727,18 @@ class TwitchColorBot:
             rate_status = self._get_rate_limit_display()
             logger.info(f"Color changed to {color}{rate_status}", user=self.username)
             return True
-        elif status_code == 429:
+        if status_code == 429:
             self.rate_limiter.handle_429_error(
                 {}, is_user_request=True
             )  # headers were already processed
             logger.warning("Rate limited, will retry automatically", user=self.username)
             return False
-        else:
-            logger.error(
-                f"Failed to change color. Status: {status_code}",
-                user=self.username,
-                status_code=status_code,
-            )
-            return False
+        logger.error(
+            f"Failed to change color. Status: {status_code}",
+            user=self.username,
+            status_code=status_code,
+        )
+        return False
 
     def _handle_api_error(self, e):
         """Handle API errors, specifically the Turbo/Prime requirement error"""
@@ -774,11 +771,10 @@ class TwitchColorBot:
                     )
 
             return False  # Indicate that fallback is needed
-        else:
-            logger.error(
-                f"Error changing color: {e}", exc_info=True, user=self.username
-            )
-            return False
+        logger.error(
+            f"Error changing color: {e}", exc_info=True, user=self.username
+        )
+        return False
 
     async def _try_preset_color_fallback(self):
         """Try changing color with preset colors as fallback"""
@@ -809,13 +805,12 @@ class TwitchColorBot:
                     user=self.username,
                 )
                 return True
-            else:
-                logger.error(
-                    f"Failed to change color with preset color. Status: {status_code}",
-                    user=self.username,
-                    status_code=status_code,
-                )
-                return False
+            logger.error(
+                f"Failed to change color with preset color. Status: {status_code}",
+                user=self.username,
+                status_code=status_code,
+            )
+            return False
 
         except Exception as fallback_e:
             logger.error(
@@ -827,8 +822,6 @@ class TwitchColorBot:
 
     def _get_rate_limit_display(self):
         """Get rate limit information for display in messages"""
-        import time
-
         if not self.rate_limiter.user_bucket:
             return " [rate limit info pending]"
 
@@ -847,12 +840,11 @@ class TwitchColorBot:
         if remaining > 100:
             # Plenty of requests left - show simple status
             return f" [{remaining}/{limit} reqs]"
-        elif remaining > 10:
+        if remaining > 10:
             # Getting low - show with time until reset
             return f" [{remaining}/{limit} reqs, reset in {reset_in:.0f}s]"
-        else:
-            # Very low - highlight the critical status
-            return f" [⚠️ {remaining}/{limit} reqs, reset in {reset_in:.0f}s]"
+        # Very low - highlight the critical status
+        return f" [⚠️ {remaining}/{limit} reqs, reset in {reset_in:.0f}s]"
 
     async def _refresh_access_token(self):
         """Refresh the access token using the refresh token"""
@@ -892,14 +884,13 @@ class TwitchColorBot:
                             )
 
                         return True
-                    else:
-                        error_text = await response.text()
-                        logger.error(
-                            f"Token refresh failed. Status: {
-                                response.status}, Response: {error_text}",
-                            user=self.username,
-                            status_code=response.status,
-                        )
+                    error_text = await response.text()
+                    logger.error(
+                        f"Token refresh failed. Status: {
+                            response.status}, Response: {error_text}",
+                        user=self.username,
+                        status_code=response.status,
+                    )
                 return False
 
         except Exception as e:

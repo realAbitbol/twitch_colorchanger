@@ -133,6 +133,7 @@ logger = BotLogger()
 def print_log(message: str, color: str = "", debug_only: bool = False):
     """Legacy print_log function for backward compatibility"""
     # color parameter kept for backward compatibility but ignored
+    _ = color  # Suppress unused argument warning
     if debug_only:
         logger.debug(message)
     else:

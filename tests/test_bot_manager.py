@@ -1620,7 +1620,7 @@ class TestBotManagerHealthMonitoring:
         # Track call count to exit after health check completes
         call_count = 0
 
-        def mock_sleep(duration):
+        def mock_sleep(_duration):
             nonlocal call_count
             call_count += 1
             # After the second sleep (after health check), stop running
