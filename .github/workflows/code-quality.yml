@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   lint:
-    name: Lint (flake8)
+    name: Lint (Ruff)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -27,8 +27,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
-      - name: Run flake8
-        run: flake8 src
+      - name: Run Ruff linter
+        run: ruff check src/
+      - name: Run Ruff formatter check
+        run: ruff format src/ --check
 
   typecheck:
     name: Type Check (mypy)
