@@ -335,7 +335,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                 return False
 
             # Force reconnection in the IRC client
-            success = bot.irc.force_reconnect()
+            success = await bot.irc.force_reconnect()
 
             if success:
                 # Give it a moment to stabilize
