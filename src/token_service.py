@@ -2,21 +2,19 @@
 Token service for unified token validation and refresh logic
 """
 
-import json
-import time
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Optional, Tuple
 
 import aiohttp
 
-from .logger import logger
-from .utils import print_log
 from .colors import BColors
+from .utils import print_log
 
 
 class TokenStatus(Enum):
     """Status of token validation result"""
+
     VALID = "valid"
     REFRESHED = "refreshed"
     FAILED = "failed"
@@ -25,22 +23,24 @@ class TokenStatus(Enum):
 class TokenService:
     """Service for managing token validation and refresh"""
 
-    def __init__(self, client_id: str, client_secret: str, http_session: aiohttp.ClientSession):
+    def __init__(
+        self, client_id: str, client_secret: str, http_session: aiohttp.ClientSession
+    ):
         self.client_id = client_id
         self.client_secret = client_secret
         self.http_session = http_session
 
     async def validate_and_refresh(
-        self, 
-        access_token: str, 
-        refresh_token: str, 
+        self,
+        access_token: str,
+        refresh_token: str,
         username: str,
         token_expiry: Optional[datetime] = None,
-        force_refresh: bool = False
+        force_refresh: bool = False,
     ) -> Tuple[TokenStatus, Optional[str], Optional[str], Optional[datetime]]:
         """
         Validate and refresh token if needed
-        
+
         Returns:
             (status, new_access_token, new_refresh_token, new_expiry)
         """
@@ -52,21 +52,30 @@ class TokenService:
             is_valid = await self._validate_token(access_token, username)
             if is_valid:
                 # Token is valid, calculate next expiry check
-                new_expiry = datetime.now() + timedelta(minutes=30)
+                new_expiry: Optional[datetime] = datetime.now() + timedelta(minutes=30)
                 return TokenStatus.VALID, access_token, refresh_token, new_expiry
 
         # Token is invalid or refresh is forced, try to refresh
         print_log(f"🔄 {username}: Token needs refresh", BColors.OKCYAN)
-        
+
         new_access_token, new_refresh_token, expires_in = await self._refresh_token(
             refresh_token, username
         )
-        
+
         if new_access_token:
             # Calculate expiry time with buffer
-            new_expiry = datetime.now() + timedelta(seconds=expires_in - 300) if expires_in else None
+            new_expiry = (
+                datetime.now() + timedelta(seconds=expires_in - 300)
+                if expires_in
+                else None
+            )
             print_log(f"✅ {username}: Token refreshed successfully", BColors.OKGREEN)
-            return TokenStatus.REFRESHED, new_access_token, new_refresh_token, new_expiry
+            return (
+                TokenStatus.REFRESHED,
+                new_access_token,
+                new_refresh_token,
+                new_expiry,
+            )
         else:
             print_log(f"❌ {username}: Token refresh failed", BColors.FAIL)
             return TokenStatus.FAILED, None, None, None
@@ -86,17 +95,18 @@ class TokenService:
             }
 
             url = "https://id.twitch.tv/oauth2/validate"
-            
+
             async with self.http_session.get(url, headers=headers) as response:
                 if response.status == 200:
                     return True
                 else:
                     print_log(
-                        f"⚠️ {username}: Token validation failed with status {response.status}",
-                        BColors.WARNING
+                        f"⚠️ {username}: Token validation failed with status "
+                        f"{response.status}",
+                        BColors.WARNING,
                     )
                     return False
-                    
+
         except Exception as e:
             print_log(f"❌ {username}: Token validation error: {e}", BColors.FAIL)
             return False
@@ -114,23 +124,26 @@ class TokenService:
             }
 
             url = "https://id.twitch.tv/oauth2/token"
-            
+
             async with self.http_session.post(url, data=data) as response:
                 if response.status == 200:
                     response_data = await response.json()
                     new_access_token = response_data.get("access_token")
-                    new_refresh_token = response_data.get("refresh_token", refresh_token)
+                    new_refresh_token = response_data.get(
+                        "refresh_token", refresh_token
+                    )
                     expires_in = response_data.get("expires_in")
-                    
+
                     return new_access_token, new_refresh_token, expires_in
                 else:
                     error_text = await response.text()
                     print_log(
-                        f"❌ {username}: Token refresh failed: {response.status} - {error_text}",
-                        BColors.FAIL
+                        f"❌ {username}: Token refresh failed: {response.status} - "
+                        f"{error_text}",
+                        BColors.FAIL,
                     )
                     return None, None, None
-                    
+
         except Exception as e:
             print_log(f"❌ {username}: Token refresh error: {e}", BColors.FAIL)
             return None, None, None
@@ -139,10 +152,10 @@ class TokenService:
         """Calculate the next token check delay in seconds"""
         if not token_expiry:
             return 300  # Default 5 minutes if no expiry info
-            
+
         # Check again 5 minutes before expiry
         check_time = token_expiry - timedelta(minutes=5)
         delay = (check_time - datetime.now()).total_seconds()
-        
+
         # Ensure minimum 1 minute delay and maximum 1 hour
         return max(60, min(delay, 3600))

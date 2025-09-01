@@ -40,9 +40,11 @@ class TwitchRateLimiter:
         # Safety margins
         self.safety_buffer = 5  # Keep 5 points as safety buffer
         self.min_delay = 0.1  # Minimum delay between requests (100ms)
-        
+
         # Hysteresis parameters to avoid oscillation
-        self.hysteresis_threshold = 10  # Extra buffer when switching to conservative mode
+        self.hysteresis_threshold = (
+            10  # Extra buffer when switching to conservative mode
+        )
         self.is_conservative_mode = False
 
     def get_delay(self, is_user_request: bool = True, points_needed: int = 1) -> float:
@@ -187,10 +189,14 @@ class TwitchRateLimiter:
         current_monotonic = time.monotonic()
 
         # Use monotonic time for elapsed calculations to avoid clock drift
-        if hasattr(bucket, 'monotonic_last_updated'):
+        if hasattr(bucket, "monotonic_last_updated"):
             elapsed_monotonic = current_monotonic - bucket.monotonic_last_updated
             # Update reset timestamp based on monotonic elapsed time
-            adjusted_reset = bucket.reset_timestamp - (current_time - bucket.last_updated) + elapsed_monotonic
+            adjusted_reset = (
+                bucket.reset_timestamp
+                - (current_time - bucket.last_updated)
+                + elapsed_monotonic
+            )
         else:
             # Fallback for old bucket format
             adjusted_reset = bucket.reset_timestamp
@@ -211,12 +217,18 @@ class TwitchRateLimiter:
             effective_safety_buffer += self.hysteresis_threshold
 
         # Check if we can exit conservative mode
-        if self.is_conservative_mode and bucket.remaining > effective_safety_buffer + points_needed + 5:
+        if (
+            self.is_conservative_mode
+            and bucket.remaining > effective_safety_buffer + points_needed + 5
+        ):
             self.is_conservative_mode = False
             effective_safety_buffer = self.safety_buffer
 
         # Check if we need to enter conservative mode
-        if not self.is_conservative_mode and bucket.remaining < self.safety_buffer + points_needed:
+        if (
+            not self.is_conservative_mode
+            and bucket.remaining < self.safety_buffer + points_needed
+        ):
             self.is_conservative_mode = True
             effective_safety_buffer = self.safety_buffer + self.hysteresis_threshold
 
@@ -236,11 +248,11 @@ class TwitchRateLimiter:
         # Speculative tracking: estimate points that will be available
         time_until_reset = max(1, adjusted_reset - current_time)
         points_available = bucket.remaining - effective_safety_buffer
-        
+
         # Calculate regeneration rate (points per second)
         if time_until_reset > 0:
             regeneration_rate = bucket.limit / time_until_reset
-            
+
             # Estimate when we'll have enough points
             points_deficit = points_needed - points_available
             if points_deficit > 0:

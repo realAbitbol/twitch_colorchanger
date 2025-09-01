@@ -12,10 +12,7 @@ import aiohttp
 from .bot import TwitchColorBot
 from .colors import BColors
 from .config_watcher import create_config_watcher
-from .constants import (
-    HEALTH_MONITOR_INTERVAL,
-    TASK_WATCHDOG_INTERVAL,
-)
+from .constants import HEALTH_MONITOR_INTERVAL, TASK_WATCHDOG_INTERVAL
 from .utils import print_log
 from .watcher_globals import set_global_watcher
 
@@ -32,7 +29,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         self.shutdown_initiated = False
         self.restart_requested = False
         self.new_config: Optional[List[Dict[str, Any]]] = None
-        
+
         # Shared HTTP session for all bots
         self.http_session: Optional[aiohttp.ClientSession] = None
 
@@ -272,7 +269,10 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         for i, task in enumerate(self.tasks):
             if task.done():
                 if task.exception():
-                    print_log(f"⚠️ Task {i} died with exception: {task.exception()}", BColors.WARNING)
+                    print_log(
+                        f"⚠️ Task {i} died with exception: {task.exception()}",
+                        BColors.WARNING,
+                    )
                 else:
                     print_log(f"ℹ️ Task {i} completed normally", BColors.OKCYAN)
                 dead_tasks.append(i)
