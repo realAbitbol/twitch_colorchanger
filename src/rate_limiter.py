@@ -186,31 +186,59 @@ class TwitchRateLimiter:
             Delay in seconds (0 if no delay needed)
         """
         current_time = time.time()
+        adjusted_reset = self._get_adjusted_reset_time(bucket, current_time)
+
+        # Check if bucket info is stale
+        if self._is_bucket_stale(bucket):
+            return 1.0
+
+        # Update conservative mode and get effective safety buffer
+        effective_safety_buffer = self._update_conservative_mode(bucket, points_needed)
+
+        # Check if we can make the request immediately
+        if bucket.remaining >= points_needed + effective_safety_buffer:
+            return 0
+
+        # Calculate delay based on remaining points and time
+        return self._calculate_delay_for_insufficient_points(
+            bucket, points_needed, effective_safety_buffer, adjusted_reset, current_time
+        )
+
+    def _get_adjusted_reset_time(self, bucket: RateLimitInfo, current_time: float) -> float:
+        """Get adjusted reset time accounting for monotonic time drift"""
         current_monotonic = time.monotonic()
 
-        # Use monotonic time for elapsed calculations to avoid clock drift
         if hasattr(bucket, "monotonic_last_updated"):
             elapsed_monotonic = current_monotonic - bucket.monotonic_last_updated
-            # Update reset timestamp based on monotonic elapsed time
-            adjusted_reset = (
+            return (
                 bucket.reset_timestamp
                 - (current_time - bucket.last_updated)
                 + elapsed_monotonic
             )
-        else:
-            # Fallback for old bucket format
-            adjusted_reset = bucket.reset_timestamp
-            elapsed_monotonic = current_time - bucket.last_updated
+        
+        # Fallback for old bucket format
+        return bucket.reset_timestamp
 
-        # If bucket info is stale (older than 60 seconds), be conservative
+    def _is_bucket_stale(self, bucket: RateLimitInfo) -> bool:
+        """Check if bucket info is too old to be reliable"""
+        current_monotonic = time.monotonic()
+
+        if hasattr(bucket, "monotonic_last_updated"):
+            elapsed_monotonic = current_monotonic - bucket.monotonic_last_updated
+        else:
+            elapsed_monotonic = time.time() - bucket.last_updated
+
         if elapsed_monotonic > 60:
             print_log(
                 "⚠️ Rate limit info is stale, using conservative delay",
                 BColors.WARNING,
                 debug_only=True,
             )
-            return 1.0
+            return True
+        return False
 
+    def _update_conservative_mode(self, bucket: RateLimitInfo, points_needed: int) -> float:
+        """Update conservative mode and return effective safety buffer"""
         # Apply hysteresis to avoid oscillation between modes
         effective_safety_buffer = self.safety_buffer
         if self.is_conservative_mode:
@@ -232,10 +260,17 @@ class TwitchRateLimiter:
             self.is_conservative_mode = True
             effective_safety_buffer = self.safety_buffer + self.hysteresis_threshold
 
-        # If we have enough points (including safety buffer), no delay needed
-        if bucket.remaining >= points_needed + effective_safety_buffer:
-            return 0
+        return effective_safety_buffer
 
+    def _calculate_delay_for_insufficient_points(
+        self,
+        bucket: RateLimitInfo,
+        points_needed: int,
+        effective_safety_buffer: float,
+        adjusted_reset: float,
+        current_time: float,
+    ) -> float:
+        """Calculate delay when we don't have enough points available"""
         # If we're completely out of points, wait until reset
         if bucket.remaining < points_needed:
             reset_delay = max(0, adjusted_reset - current_time)
@@ -245,16 +280,14 @@ class TwitchRateLimiter:
             )
             return reset_delay + 0.1  # Add small buffer
 
-        # Speculative tracking: estimate points that will be available
+        # Calculate delay based on regeneration rate
         time_until_reset = max(1, adjusted_reset - current_time)
         points_available = bucket.remaining - effective_safety_buffer
 
-        # Calculate regeneration rate (points per second)
         if time_until_reset > 0:
             regeneration_rate = bucket.limit / time_until_reset
-
-            # Estimate when we'll have enough points
             points_deficit = points_needed - points_available
+
             if points_deficit > 0:
                 estimated_wait = points_deficit / regeneration_rate
                 return max(self.min_delay, estimated_wait)
