@@ -260,10 +260,10 @@ async def validate_new_tokens(user: Dict[str, Any]) -> Dict[str, Any]:
             refresh_token=str(user["refresh_token"]),
         )
 
-        # Validate the new tokens
-        valid = await validator.validate_token()
+        # Validate the new tokens (returns tuple)
+        token_valid, _ = await validator.validate_token()
 
-        if valid:
+        if token_valid:
             # Update user with any refreshed token information
             user["access_token"] = validator.access_token
             user["refresh_token"] = validator.refresh_token
@@ -273,6 +273,7 @@ async def validate_new_tokens(user: Dict[str, Any]) -> Dict[str, Any]:
                 debug_only=True,
             )
             return {"valid": True, "user": user}
+
         print_log(
             f"⚠️ New tokens for {username} validation failed",
             BColors.WARNING,
