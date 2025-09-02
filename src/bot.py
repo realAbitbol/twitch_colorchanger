@@ -599,31 +599,59 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     ) -> bool:
         """Handle the result of token validation/refresh with failure tracking"""
         if status == TokenStatus.VALID:
-            # Update expiry even for valid tokens
-            if new_expiry:
-                self.token_expiry = new_expiry
-                self._display_token_expiry()
-            # Reset failure counters on success
-            self.consecutive_refresh_failures = 0
-            return True
+            return self._handle_valid_token(new_access_token, new_expiry)
 
         if status == TokenStatus.REFRESHED:
-            # Update all token information
-            if new_access_token:
-                self.access_token = new_access_token
-            if new_refresh_token:
-                self.refresh_token = new_refresh_token
-            if new_expiry:
-                self.token_expiry = new_expiry
-                self._display_token_expiry()
-
-            # Persist changes to config file
-            self._persist_token_changes()
-            # Reset failure counters on success
-            self.consecutive_refresh_failures = 0
-            return True
+            return self._handle_refreshed_token(
+                new_access_token, new_refresh_token, new_expiry
+            )
 
         # TokenStatus.FAILED - track failure
+        return self._handle_failed_token()
+
+    def _handle_valid_token(
+        self, new_access_token: str | None, new_expiry: Optional["datetime"]
+    ) -> bool:
+        """Handle a valid token status"""
+        # Update expiry even for valid tokens
+        if new_expiry:
+            self.token_expiry = new_expiry
+            self._display_token_expiry()
+        # Update IRC token if we got a new access token from live validation
+        if new_access_token and self.irc and new_access_token != self.access_token:
+            self.access_token = new_access_token
+            self.irc.update_token(new_access_token)
+        # Reset failure counters on success
+        self.consecutive_refresh_failures = 0
+        return True
+
+    def _handle_refreshed_token(
+        self,
+        new_access_token: str | None,
+        new_refresh_token: str | None,
+        new_expiry: Optional["datetime"],
+    ) -> bool:
+        """Handle a refreshed token status"""
+        # Update all token information
+        if new_access_token:
+            self.access_token = new_access_token
+            # Update IRC client with new token for future reconnections
+            if self.irc:
+                self.irc.update_token(new_access_token)
+        if new_refresh_token:
+            self.refresh_token = new_refresh_token
+        if new_expiry:
+            self.token_expiry = new_expiry
+            self._display_token_expiry()
+
+        # Persist changes to config file
+        self._persist_token_changes()
+        # Reset failure counters on success
+        self.consecutive_refresh_failures = 0
+        return True
+
+    def _handle_failed_token(self) -> bool:
+        """Handle a failed token status"""
         self.consecutive_refresh_failures += 1
         self.token_failure_count += 1
         self.last_token_failure = time.time()
