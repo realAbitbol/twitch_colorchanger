@@ -96,9 +96,19 @@ class TokenService:
         if is_valid:
             # Token is valid, use actual expiry from validation or keep original
             final_expiry = actual_expiry if actual_expiry else token_expiry
-            # Reset retry count on successful validation
-            self._refresh_retry_count.pop(username, None)
-            return TokenStatus.VALID, access_token, refresh_token, final_expiry
+
+            # Check if the token has enough time remaining (same logic as cached validation)
+            if self._is_token_still_valid(final_expiry):
+                # Reset retry count on successful validation
+                self._refresh_retry_count.pop(username, None)
+                return TokenStatus.VALID, access_token, refresh_token, final_expiry
+            else:
+                # Token is valid but expires soon, should be refreshed
+                print_log(
+                    f"🕐 {username}: Token valid but expires soon, proceeding to refresh",
+                    BColors.WARNING,
+                )
+                return None
         return None
 
     async def _perform_token_refresh(

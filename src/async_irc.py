@@ -665,6 +665,17 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         # Return true if we're beyond 50% of timeout (original behavior preserved)
         return time_since_activity > (self.server_activity_timeout / 2)
 
+    def update_token(self, new_token: str):
+        """Update the stored token for future reconnections"""
+        self.token = (
+            new_token if new_token.startswith("oauth:") else f"oauth:{new_token}"
+        )
+        print_log(
+            f"🔑 {self.username}: IRC token updated for future connections",
+            BColors.OKGREEN,
+            debug_only=True,
+        )
+
     async def disconnect(self):
         """Disconnect from IRC server"""
         self.running = False
