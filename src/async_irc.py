@@ -88,6 +88,8 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
 
         # Buffer for partial messages
         self.message_buffer = ""
+        # Grace period after (re)connect where pending joins don't affect health
+        self._join_grace_deadline: float | None = None
 
     def _set_state(self, new_state: ConnectionState):
         """Set connection state with logging"""
@@ -163,6 +165,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                 self.connected = True
                 self._reset_connection_timer()  # Reset timer after successful connection
                 self._set_state(ConnectionState.READY)
+                self._join_grace_deadline = time.time() + 30  # 30s grace for joins
                 print_log(
                     f"✅ {self.username}: Connected and joined #{channel}",
                     BColors.OKGREEN,
@@ -370,74 +373,100 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             print_log(
                 f"⏰ {self.username}: Join timeout for #{channel}", BColors.WARNING
             )
+            self.pending_joins.pop(channel, None)
             return False
 
         except Exception as e:
             print_log(
                 f"❌ {self.username}: Error joining #{channel}: {e}", BColors.FAIL
             )
+            self.pending_joins.pop(channel, None)
             return False
 
     async def listen(self):
         """Main async listening loop"""
+        if not self._can_start_listening():
+            return
+
+        self._initialize_listening()
+
+        try:
+            while self.running and self.connected:
+                should_break = await self._process_read_cycle()
+                if should_break:
+                    break
+        finally:
+            self._finalize_listening()
+
+    def _can_start_listening(self) -> bool:
+        """Check if we can start listening"""
         if not self.connected or not self.reader:
             print_log(
                 f"❌ {self.username}: Cannot listen - not connected", BColors.FAIL
             )
-            return
+            return False
+        return True
 
+    def _initialize_listening(self):
+        """Initialize the listening state"""
         print_log(
             f"👂 {self.username}: Starting async message listener...", BColors.OKCYAN
         )
         self.running = True
+        self.last_server_activity = time.time()
 
-        # Initialize health monitoring
-        now = time.time()
-        self.last_server_activity = now
-
+    async def _process_read_cycle(self) -> bool:
+        """Process one read cycle. Returns True if listening should break."""
         try:
-            while self.running and self.connected:
-                try:
-                    # Non-blocking read with timeout
-                    data = await asyncio.wait_for(
-                        self.reader.read(4096),
-                        # 1 second timeout for responsiveness
-                        timeout=ASYNC_IRC_READ_TIMEOUT,
-                    )
+            return await self._handle_data_read()
+        except TimeoutError:
+            return self._handle_read_timeout()
+        except Exception as e:
+            print_log(f"❌ {self.username}: Listen error: {e}", BColors.FAIL)
+            return True
 
-                    if not data:
-                        print_log(
-                            f"❌ {self.username}: IRC connection lost", BColors.FAIL
-                        )
-                        break
+    async def _handle_data_read(self) -> bool:
+        """Handle reading data from the connection. Returns True if should break."""
+        if not self.reader:
+            print_log(f"❌ {self.username}: No reader available", BColors.FAIL)
+            return True
 
-                    # Process incoming data
-                    decoded_data = data.decode("utf-8", errors="ignore")
-                    self.message_buffer = await self._process_incoming_data(
-                        self.message_buffer, decoded_data
-                    )
+        data = await asyncio.wait_for(
+            self.reader.read(4096),
+            timeout=ASYNC_IRC_READ_TIMEOUT,
+        )
 
-                    # Perform periodic checks
-                    if self._perform_periodic_checks():
-                        break
+        if not data:
+            print_log(f"❌ {self.username}: IRC connection lost", BColors.FAIL)
+            self.connected = False
+            return True
 
-                except TimeoutError:
-                    # Timeout is normal - allows for periodic checks
-                    if self._is_connection_stale():
-                        print_log(
-                            f"💀 {self.username}: Connection appears stale",
-                            BColors.WARNING,
-                        )
-                        break
-                    continue
+        # Process incoming data
+        decoded_data = data.decode("utf-8", errors="ignore")
+        self.message_buffer = await self._process_incoming_data(
+            self.message_buffer, decoded_data
+        )
 
-                except Exception as e:
-                    print_log(f"❌ {self.username}: Listen error: {e}", BColors.FAIL)
-                    break
+        # Perform periodic checks
+        return self._perform_periodic_checks()
 
-        finally:
-            self.running = False
-            print_log(f"🔇 {self.username}: Stopped listening", BColors.WARNING)
+    def _handle_read_timeout(self) -> bool:
+        """Handle read timeout. Returns True if should break."""
+        if self._is_connection_stale():
+            print_log(
+                f"💀 {self.username}: Connection appears stale",
+                BColors.WARNING,
+            )
+            self.connected = False
+            return True
+        return False
+
+    def _finalize_listening(self):
+        """Finalize the listening state"""
+        self.running = False
+        print_log(f"🔇 {self.username}: Stopped listening", BColors.WARNING)
+        if not self.writer or not self.reader:
+            self.connected = False
 
     async def _process_incoming_data(self, buffer: str, new_data: str) -> str:
         """Process incoming IRC data and handle complete messages"""
@@ -766,17 +795,12 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                 self.last_ping_from_server = now
                 self.last_server_activity = now
 
-                # Restore the original channels list and re-join all channels
+                # Restore the original channels list but defer joining extras until listener runs
                 self.channels = original_channels
-                # Skip first channel (already joined in connect)
-                for channel in self.channels[1:]:
-                    await self.join_channel(channel)
+                self._join_grace_deadline = time.time() + 30
 
                 num_channels = len(self.channels)
-                success_msg = (
-                    f"✅ {self.username}: Async reconnected and rejoined "
-                    f"{num_channels} channels"
-                )
+                success_msg = f"✅ {self.username}: Async reconnected (base channel joined). Pending rejoin of {num_channels - 1} extra channels"
                 print_log(success_msg, BColors.OKGREEN)
             else:
                 failure_msg = (
@@ -908,6 +932,13 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         time_since_activity = self._check_activity_health(reasons, current_time)
         self._check_ping_health(reasons, current_time)
         self._check_operational_health(reasons)
+        # Suppress pending_joins penalty during grace period
+        if (
+            self._join_grace_deadline
+            and current_time < self._join_grace_deadline
+            and "pending_joins" in reasons
+        ):
+            reasons.remove("pending_joins")
 
         return {
             "username": self.username,

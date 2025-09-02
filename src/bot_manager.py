@@ -458,6 +458,22 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         if not success:
             print_log(f"❌ {bot.username}: IRC reconnection failed", BColors.FAIL)
             return False
+        # Start listener immediately after base reconnection
+        try:
+            if hasattr(bot, "irc_task") and bot.irc_task and not bot.irc_task.done():
+                bot.irc_task.cancel()
+        except Exception:  # nosec B110
+            pass  # Intentionally ignoring task cancellation errors
+        bot.irc_task = asyncio.create_task(bot.irc.listen())  # type: ignore[attr-defined]
+        # Rejoin remaining channels (skip first) without blocking health entirely
+        for channel in bot.irc.channels[1:]:
+            try:
+                await bot.irc.join_channel(channel)
+            except Exception as je:  # noqa: BLE001
+                print_log(
+                    f"⚠️ {bot.username}: Failed to rejoin {channel}: {je}",
+                    BColors.WARNING,
+                )
         return True
 
     def _start_fresh_listener(self, bot) -> bool:
