@@ -5,13 +5,12 @@ import logging
 import time
 from dataclasses import dataclass
 
-from constants import (
+from ..constants import (
     DEFAULT_BUCKET_LIMIT,
     RATE_LIMIT_SAFETY_BUFFER,
     STALE_BUCKET_AGE,
 )
-from logs.logger import logger
-
+from ..logs.logger import logger
 from .backoff_strategy import AdaptiveBackoff
 from .rate_limit_headers import parse_rate_limit_headers
 

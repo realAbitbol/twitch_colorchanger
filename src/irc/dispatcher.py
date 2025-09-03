@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import inspect
 import logging
+import traceback
 from typing import TYPE_CHECKING
 
-from logs.logger import logger
-
+from ..logs.logger import logger
 from .parser import build_privmsg, parse_irc_message
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -136,6 +136,7 @@ class IRCDispatcher:
                 user=self.client.username,
                 error=str(e),
                 error_type=type(e).__name__,
+                stack=traceback.format_exc().splitlines()[-10:],
             )
 
     async def _handle_color_change_command(
@@ -161,4 +162,5 @@ class IRCDispatcher:
                 user=self.client.username,
                 error=str(e),
                 error_type=type(e).__name__,
+                stack=traceback.format_exc().splitlines()[-10:],
             )

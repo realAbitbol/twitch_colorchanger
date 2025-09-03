@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from constants import (
+from ..constants import (
     ASYNC_IRC_CONNECT_TIMEOUT,
     CHANNEL_JOIN_TIMEOUT,
     CONNECTION_RETRY_TIMEOUT,
@@ -16,8 +16,7 @@ from constants import (
     PING_EXPECTED_INTERVAL,
     SERVER_ACTIVITY_TIMEOUT,
 )
-from logs.logger import logger
-
+from ..logs.logger import logger
 from . import (
     ConnectionState,
     IRCConnectionController,

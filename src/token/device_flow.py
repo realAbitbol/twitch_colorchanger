@@ -6,8 +6,8 @@ import time
 
 import aiohttp
 
-from logs.logger import logger
-from utils import format_duration
+from ..logs.logger import logger
+from ..utils import format_duration
 
 
 class DeviceCodeFlow:

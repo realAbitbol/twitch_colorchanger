@@ -6,8 +6,7 @@ import logging
 import os
 import sys
 
-from logs.logger import logger
-
+from ..logs.logger import logger
 from .model import UserConfig  # normalize_user_list provided below
 from .repository import ConfigRepository
 
@@ -215,9 +214,9 @@ def normalize_user_channels(users, config_file):
 
 
 async def setup_missing_tokens(users, config_file):
-    from token.provisioner import TokenProvisioner  # local import
-
     import aiohttp
+
+    from ..token.provisioner import TokenProvisioner  # local import
 
     updated_users: list[dict] = []
     any_updates = False

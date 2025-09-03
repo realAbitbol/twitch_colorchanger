@@ -9,13 +9,13 @@ from enum import Enum
 
 import aiohttp
 
-from constants import (
+from ..constants import (
     TOKEN_REFRESH_SAFETY_BUFFER_SECONDS,
     TOKEN_REFRESH_THRESHOLD_SECONDS,
 )
-from errors.internal import NetworkError, OAuthError, ParsingError, RateLimitError
-from logs.logger import logger
-from utils import format_duration
+from ..errors.internal import NetworkError, OAuthError, ParsingError, RateLimitError
+from ..logs.logger import logger
+from ..utils import format_duration
 
 
 class TokenOutcome(str, Enum):
@@ -208,10 +208,12 @@ class TokenClient:
                         )
                     return True, expiry
                 if resp.status == 401:
+                    # 401 here usually just means the stored access token is expired; a refresh will follow.
+                    # Demote to INFO to avoid alarming users on normal startup token rotations.
                     logger.log_event(
                         "token",
                         "validation_invalid",
-                        level=logging.WARNING,
+                        level=logging.INFO,
                         user=username,
                         status=resp.status,
                     )

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-from logs.logger import logger
+from ..logs.logger import logger
 
 ## Removed legacy simple_retry wrapper (superseded by run_with_retry)  # noqa: ERA001
 

@@ -13,8 +13,7 @@ import asyncio
 import time
 from typing import Any
 
-from logs.logger import logger
-
+from ..logs.logger import logger
 from .core import update_user_in_config
 
 __all__ = [

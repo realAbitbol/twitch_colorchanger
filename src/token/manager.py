@@ -5,21 +5,24 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from secrets import SystemRandom
+from typing import Any, TypeVar
 
 import aiohttp
 
-from constants import (
+from ..constants import (
     TOKEN_MANAGER_BACKGROUND_BASE_SLEEP,
     TOKEN_MANAGER_VALIDATION_MIN_INTERVAL,
     TOKEN_REFRESH_THRESHOLD_SECONDS,
 )
-from logs.logger import logger
+from ..logs.logger import logger
+from .client import TokenClient, TokenOutcome, TokenResult
 
-from .client import TokenClient, TokenOutcome
+T = TypeVar("T")
 
 _jitter_rng = SystemRandom()
 
@@ -45,8 +48,7 @@ class TokenInfo:
 
 
 class TokenManager:
-    _instance = None
-    _initialized = False
+    _instance = None  # Simple singleton; not thread-safe by design (single event loop).
 
     def __new__(cls, http_session: aiohttp.ClientSession):
         if cls._instance is None:
@@ -54,15 +56,23 @@ class TokenManager:
         return cls._instance
 
     def __init__(self, http_session: aiohttp.ClientSession):
-        if TokenManager._initialized:
+        """Initialize the token manager singleton instance."""
+        # Guard: if already initialized (singleton), skip re-initialization.
+        if getattr(self, "_inst_initialized", False):  # pragma: no cover - simple guard
             return
+        # Core state
         self.http_session = http_session
         self.tokens: dict[str, TokenInfo] = {}
         self.background_task: asyncio.Task | None = None
         self.running = False
         self.logger = logger
         self._client_cache: dict[tuple[str, str], TokenClient] = {}
-        TokenManager._initialized = True
+        # Registered per-user async persistence hooks (called after token refresh).
+        self._update_hooks: dict[str, Callable[[], Coroutine[Any, Any, None]]] = {}
+        # Retained background tasks (e.g. persistence hooks) to prevent premature GC.
+        self._hook_tasks: list[asyncio.Task[Any]] = []
+        # Mark as initialized to avoid repeating work on future constructions.
+        self._inst_initialized = True
 
     async def start(self):
         if self.running:
@@ -146,6 +156,16 @@ class TokenManager:
             )
         self.logger.log_event("token_manager", "registered", user=username)
 
+    def register_update_hook(
+        self, username: str, hook: Callable[[], Coroutine[Any, Any, None]]
+    ) -> None:
+        """Register a coroutine hook invoked after a successful token refresh.
+
+        The hook should perform persistence of updated tokens. Errors are suppressed
+        at invocation time to avoid disrupting refresh cycles.
+        """
+        self._update_hooks[username] = hook
+
     def remove(self, username: str) -> bool:
         """Remove a user from token tracking (e.g., config removal)."""
         if username in self.tokens:
@@ -188,16 +208,39 @@ class TokenManager:
         info = self.tokens.get(username)
         if not info:
             return TokenOutcome.FAILED
+
+        if self._should_skip_refresh(info, force_refresh):
+            return TokenOutcome.VALID
+
+        client = self._get_client(info.client_id, info.client_secret)
+        result, token_changed = await self._refresh_with_lock(
+            client, info, username, force_refresh
+        )
+        self._maybe_fire_update_hook(username, token_changed)
+        return result.outcome
+
+    # --- Internal helpers (extracted to reduce complexity) ---
+    def _should_skip_refresh(self, info: TokenInfo, force_refresh: bool) -> bool:
+        if force_refresh:
+            return False
         remaining = self._remaining_seconds(info)
-        if (
-            not force_refresh
-            and info.expiry
+        return (
+            bool(info.expiry)
             and remaining is not None
             and remaining > TOKEN_REFRESH_THRESHOLD_SECONDS
-        ):
-            return TokenOutcome.VALID
-        client = self._get_client(info.client_id, info.client_secret)
+        )
+
+    async def _refresh_with_lock(
+        self,
+        client: TokenClient,
+        info: TokenInfo,
+        username: str,
+        force_refresh: bool,
+    ) -> tuple[TokenResult, bool]:
+        token_changed = False
         async with info.refresh_lock:
+            before_access = info.access_token
+            before_refresh = info.refresh_token
             result = await client.ensure_fresh(
                 username,
                 info.access_token,
@@ -205,20 +248,84 @@ class TokenManager:
                 info.expiry,
                 force_refresh,
             )
-
             if result.outcome != TokenOutcome.FAILED and result.access_token:
-                info.access_token = result.access_token
-                if result.refresh_token:
-                    info.refresh_token = result.refresh_token
-                info.expiry = result.expiry
-                info.state = (
-                    TokenState.FRESH
-                    if result.outcome in (TokenOutcome.VALID, TokenOutcome.SKIPPED)
-                    else TokenState.STALE
+                self._apply_successful_refresh(info, result)
+                token_changed = (
+                    info.access_token != before_access
+                    or info.refresh_token != before_refresh
                 )
             elif result.outcome == TokenOutcome.FAILED:
                 info.state = TokenState.EXPIRED
-            return result.outcome
+        return result, token_changed
+
+    def _apply_successful_refresh(self, info: TokenInfo, result: TokenResult) -> None:
+        if result.access_token is not None:
+            info.access_token = result.access_token
+        if result.refresh_token:
+            info.refresh_token = result.refresh_token
+        info.expiry = result.expiry
+        info.state = (
+            TokenState.FRESH
+            if result.outcome in (TokenOutcome.VALID, TokenOutcome.SKIPPED)
+            else TokenState.STALE
+        )
+
+    def _maybe_fire_update_hook(self, username: str, token_changed: bool) -> None:
+        if not token_changed:
+            return
+        hook = self._update_hooks.get(username)
+        if not hook:
+            return
+        try:
+            # Delegate creation to helper so both Ruff and VS Code recognize
+            # the task is retained and exceptions logged.
+            self._create_retained_task(hook(), category="update_hook")
+        except Exception as e:  # noqa: BLE001
+            self.logger.log_event(
+                "token_manager",
+                "update_hook_error",
+                level=logging.DEBUG,
+                user=username,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+
+    def _create_retained_task(
+        self, coro: Coroutine[Any, Any, T], *, category: str
+    ) -> asyncio.Task[T]:
+        """Create and retain a background task with exception logging.
+
+        Ensures the task handle is stored (preventing premature GC) and any
+        exception is surfaced via structured logging.
+        """
+        # Sonar/VSC S7502: we retain task in self._hook_tasks; suppression justified.
+        task: asyncio.Task[T] = asyncio.create_task(coro)  # NOSONAR S7502
+        self._hook_tasks.append(task)
+
+        def _cb(t: asyncio.Task[T]) -> None:  # noqa: D401
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if not exc:
+                return
+            try:
+                self.logger.log_event(
+                    "token_manager",
+                    "retained_task_error",
+                    level=logging.DEBUG,
+                    category=category,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
+            except Exception as log_exc:  # pragma: no cover
+                logging.debug(
+                    "TokenManager retained task logging failed: %s (%s)",
+                    log_exc,
+                    type(log_exc).__name__,
+                )
+
+        task.add_done_callback(_cb)
+        return task
 
     async def validate(self, username: str) -> TokenOutcome:
         info = self.tokens.get(username)

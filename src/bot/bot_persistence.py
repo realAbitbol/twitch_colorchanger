@@ -9,11 +9,11 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from config.async_persistence import (
+from ..config.async_persistence import (
     async_update_user_in_config,
     queue_user_update,
 )
-from logs.logger import logger
+from ..logs.logger import logger
 
 if TYPE_CHECKING:  # pragma: no cover
     pass

@@ -8,10 +8,9 @@ from datetime import datetime, timedelta
 
 import aiohttp
 
-from constants import TOKEN_REFRESH_SAFETY_BUFFER_SECONDS
-from logs.logger import logger
-from utils import format_duration
-
+from ..constants import TOKEN_REFRESH_SAFETY_BUFFER_SECONDS
+from ..logs.logger import logger
+from ..utils import format_duration
 from .device_flow import DeviceCodeFlow
 
 

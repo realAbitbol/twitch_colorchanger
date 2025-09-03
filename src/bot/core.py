@@ -10,23 +10,22 @@ from datetime import datetime
 
 import aiohttp
 
-from api.twitch import TwitchAPI
-from application_context import ApplicationContext
-from color.models import ColorRequestResult, ColorRequestStatus
-from config.async_persistence import (
+from ..api.twitch import TwitchAPI
+from ..application_context import ApplicationContext
+from ..color.models import ColorRequestResult, ColorRequestStatus
+from ..config.async_persistence import (
     flush_pending_updates,
     queue_user_update,
 )
-from config.model import normalize_channels_list
-from irc.async_irc import AsyncTwitchIRC
-from logs.logger import logger
-from rate.retry_policies import (
+from ..config.model import normalize_channels_list
+from ..irc.async_irc import AsyncTwitchIRC
+from ..logs.logger import logger
+from ..rate.retry_policies import (
     COLOR_CHANGE_RETRY,
     DEFAULT_NETWORK_RETRY,
     run_with_retry,
 )
-from scheduler.adaptive_scheduler import AdaptiveScheduler
-
+from ..scheduler.adaptive_scheduler import AdaptiveScheduler
 from . import BotPersistenceMixin, BotRegistrar, BotStats
 
 CHAT_COLOR_ENDPOINT = "chat/color"
@@ -296,38 +295,47 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             return
         self.stats.messages_sent += 1
         msg_lower = message.strip().lower()
-
-        async def _persist_enabled(flag: bool, failure_event: str):
-            if not self.config_file:
-                return
-            user_config = self._build_user_config()
-            user_config["enabled"] = flag
-            try:
-                # Use debounced queue for rapid toggle spam.
-                await queue_user_update(user_config, self.config_file)
-            except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "bot",
-                    failure_event,
-                    level=logging.WARNING,
-                    user=self.username,
-                    error=str(e),
-                )
-
-        if msg_lower == "ccd":
-            if getattr(self, "enabled", True):
-                self.enabled = False
-                logger.log_event("bot", "auto_color_disabled", user=self.username)
-                await _persist_enabled(False, "persist_disable_failed")
+        handled = await self._maybe_handle_toggle(msg_lower)
+        if handled:
             return
-        if msg_lower == "cce":
-            if not getattr(self, "enabled", True):
-                self.enabled = True
-                logger.log_event("bot", "auto_color_enabled", user=self.username)
-                await _persist_enabled(True, "persist_enable_failed")
-            return
-        if getattr(self, "enabled", True):
+        if self._is_color_change_allowed():
             await self._change_color()
+
+    def _is_color_change_allowed(self) -> bool:
+        return bool(getattr(self, "enabled", True))
+
+    async def _maybe_handle_toggle(self, msg_lower: str) -> bool:
+        """Handle enable/disable commands; return True if processed."""
+        if msg_lower not in {"ccd", "cce"}:
+            return False
+        target_enabled = msg_lower == "cce"
+        currently_enabled = getattr(self, "enabled", True)
+        if target_enabled == currently_enabled:
+            return True  # Command redundant; treat as handled (no spam)
+        self.enabled = target_enabled
+        logger.log_event(
+            "bot",
+            "auto_color_enabled" if target_enabled else "auto_color_disabled",
+            user=self.username,
+        )
+        await self._persist_enabled_flag(target_enabled)
+        return True
+
+    async def _persist_enabled_flag(self, flag: bool):
+        if not self.config_file:
+            return
+        user_config = self._build_user_config()
+        user_config["enabled"] = flag
+        try:
+            await queue_user_update(user_config, self.config_file)
+        except Exception as e:  # noqa: BLE001
+            logger.log_event(
+                "bot",
+                "persist_disable_failed" if not flag else "persist_enable_failed",
+                level=logging.WARNING,
+                user=self.username,
+                error=str(e),
+            )
 
     async def _check_and_refresh_token(self, force: bool = False) -> bool:
         if not self.token_manager:
@@ -469,7 +477,9 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         self.stats.colors_changed += 1
 
     async def _change_color(self, hex_color=None):
-        from color import ColorChangeService  # local import
+        # Local import to avoid circular imports; use relative path so that
+        # running via `python -m src.main` (package root `src`) works.
+        from ..color import ColorChangeService  # type: ignore
 
         if not hasattr(self, "_color_service"):
             self._color_service = ColorChangeService(self)  # type: ignore[attr-defined]
@@ -478,9 +488,17 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
     async def _perform_color_request(
         self, params: dict, action: str
     ) -> ColorRequestResult:
+        status_code = await self._execute_color_status_request(params, action)
+        if isinstance(status_code, ColorRequestResult):  # error short-circuit
+            return status_code
+        return self._classify_color_status(status_code, action)
+
+    async def _execute_color_status_request(
+        self, params: dict, action: str
+    ) -> int | ColorRequestResult:  # type: ignore[override]
         async def op() -> int:
             await self.rate_limiter.wait_if_needed(action, is_user_request=True)
-            _, status_code, headers = await asyncio.wait_for(
+            data, status_code, headers = await asyncio.wait_for(
                 self.api.request(
                     "PUT",
                     CHAT_COLOR_ENDPOINT,
@@ -491,10 +509,11 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                 timeout=10,
             )
             self.rate_limiter.update_from_headers(headers, is_user_request=True)
+            self._last_color_change_payload = data  # type: ignore[attr-defined]
             return status_code
 
         try:
-            status_code = await run_with_retry(
+            return await run_with_retry(
                 op, COLOR_CHANGE_RETRY, user=self.username, log_domain="retry"
             )
         except TimeoutError:
@@ -514,6 +533,9 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             )
             return ColorRequestResult(ColorRequestStatus.INTERNAL_ERROR, error=str(e))
 
+    def _classify_color_status(
+        self, status_code: int, action: str
+    ) -> ColorRequestResult:
         if status_code == 204:
             return ColorRequestResult(ColorRequestStatus.SUCCESS, http_status=204)
         if status_code == 429:
@@ -524,9 +546,32 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             return ColorRequestResult(
                 ColorRequestStatus.SUCCESS, http_status=status_code
             )
+        snippet = self._extract_color_error_snippet()
+        if snippet:
+            logger.log_event(
+                "bot",
+                "color_change_http_error_detail"
+                if action != "preset_color"
+                else "preset_color_http_error_detail",
+                level=logging.DEBUG,
+                user=self.username,
+                status_code=status_code,
+                detail=snippet,
+            )
         return ColorRequestResult(
-            ColorRequestStatus.HTTP_ERROR, http_status=status_code
+            ColorRequestStatus.HTTP_ERROR, http_status=status_code, error=snippet
         )
+
+    def _extract_color_error_snippet(self) -> str | None:
+        try:  # pragma: no cover - defensive
+            payload = getattr(self, "_last_color_change_payload", {})  # type: ignore[attr-defined]
+            if isinstance(payload, dict):
+                message = payload.get("message") or payload.get("error")
+                base = message if message else payload
+                return str(base)[:200]
+        except Exception:  # noqa: BLE001
+            return None
+        return None
 
     def _get_rate_limit_display(self, debug_only=False):
         debug_enabled = os.environ.get("DEBUG", "false").lower() in ("true", "1", "yes")
