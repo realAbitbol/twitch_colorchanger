@@ -31,6 +31,7 @@ Automatically change your Twitch username color after each message you send in c
     - [Option C: Docker](#option-c-docker)
 - [Usage](#usage)
   - [Local Development](#local-development)
+  - [Runtime Chat Commands](#runtime-chat-commands)
   - [Docker Deployment](#docker-deployment)
     - [Build Locally](#build-locally)
     - [Pre-built Images](#pre-built-images)
@@ -80,6 +81,7 @@ Automatically change your Twitch username color after each message you send in c
 - **🐳 Docker Ready**: Multi-platform support (amd64, arm64, arm/v7, arm/v6, riscv64)
 - **💾 Persistent Config**: Interactive setup with configuration file persistence
 - **👀 Live Config Reload**: Automatically detects config file changes and restarts bots without manual intervention
+- **🟢 Runtime Toggle**: Enable/disable automatic color changes live with simple chat commands
 
 ### Additional Features
 
@@ -92,6 +94,7 @@ Automatically change your Twitch username color after each message you send in c
 - **📊 Rate Limiting**: Smart rate limiting with quota tracking and logging
 - **🔗 IRC Health Monitoring**: Robust connection health tracking with automatic reconnection (600s ping intervals)
 - **📡 Connection Visibility**: Real-time ping/pong monitoring for connection status transparency
+- **🛑 Per-User Disable Switch**: Temporarily pause color cycling without editing files or restarting
 
 ---
 
@@ -243,6 +246,24 @@ pip install -r requirements.txt
 python -m src.main
 ```
 
+### Runtime Chat Commands
+
+Control a bot from any joined channel using messages sent by the bot's own account (other users are ignored):
+
+| Command | Action |
+|---------|--------|
+| `ccd`   | Disable automatic color changes (persists) |
+| `cce`   | Enable automatic color changes (persists)  |
+
+Behavior:
+
+- Persists by updating the per-user `enabled` field in the config file
+- Survives restarts (state restored on load)
+- Only reacts to the bot user's own messages
+- Disabling pauses API color calls but keeps all connections and stats active
+
+Tip: Use `DEBUG=true` to see `auto_color_enabled` / `auto_color_disabled` events.
+
 ### Docker Deployment
 
 #### Build Locally
@@ -352,6 +373,7 @@ Configuration file format:
       "client_secret": "your_client_secret",
       "channels": ["channel1", "channel2"],
       "is_prime_or_turbo": true
+  ,"enabled": true
     }
   ]
 }
@@ -370,6 +392,7 @@ Configuration file format:
       "client_secret": "your_client_secret",
       "channels": ["channel1", "channel2"],
       "is_prime_or_turbo": true
+  ,"enabled": true
     }
   ]
 }
@@ -392,12 +415,30 @@ Configuration file format:
 
 **Best Practice**: Include your own channel and any channels where you frequently chat to ensure comprehensive color change coverage.
 
+### Enabled Flag (`enabled`)
+
+Optional per-user switch:
+
+```json
+"enabled": true
+```
+
+Behavior:
+
+- Omitted → defaults to `true` (feature active)
+- `false` → bot connects but skips color change calls until re-enabled
+- Toggled via `ccd` / `cce` (writes back asynchronously)
+
+Use this to pause during events or testing without altering other users.
+See [Runtime Chat Commands](#runtime-chat-commands) for in-chat toggles (`ccd` / `cce`).
+
 ### Token Management Features
 
 - **🔄 Automatic Authorization**: Missing or invalid tokens trigger automatic device flow authorization
 - **🔑 Smart Token Validation**: Checks existing tokens on startup and validates/refreshes as needed
 - **💾 Persistent Token Storage**: Successfully authorized tokens are automatically saved to config
 - **🛡️ Fallback Handling**: Seamlessly falls back to device flow when refresh tokens fail
+- **Stateful Disable Switch**: `enabled` flag respected across all persistence operations
 - **⚡ Unattended Operation**: No user interaction required after initial authorization
 
 ### Configuration Features
@@ -658,6 +699,12 @@ python -m src.main
 ### Channel Configuration Issues
 
 **"Bot doesn't change colors when I chat":**
+
+1. Confirm you didn't previously send `ccd` (look for an `auto_color_disabled` event in logs)
+2. Check the config shows `"enabled": true` for your user
+3. Verify you are chatting in one of the configured `channels`
+4. Inspect logs for rate limiting (429 events) or token refresh failures
+5. Temporarily run with `DEBUG=true` to see detailed events
 
 - **Missing channels**: The bot can only detect messages in channels listed in your `channels` array
 - **Check your config**: Ensure the channel name matches exactly (case-sensitive)
