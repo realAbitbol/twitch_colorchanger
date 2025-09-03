@@ -1,22 +1,47 @@
+version: "3.9"
+
 services:
   twitch-colorchanger:
-    # Option 1: Build locally
+    # Build from local source (preferred for development)
     build: .
-
-    # Option 2: Use prebuilt image from Docker Hub
+    # Or pull a published image (uncomment one):
+    # image: ghcr.io/realabitbol/twitch_colorchanger:latest
     # image: damastah/twitch-colorchanger:latest
 
-    # Option 3: Use prebuilt image from GitHub Container Registry
-    # image: ghcr.io/realabitbol/twitch-colorchanger:latest
-
     container_name: twitch-colorchanger
+    restart: unless-stopped
 
-    # Configuration via mounted config file
+    # REQUIRED: Mount the configuration file (primary source of truth)
     volumes:
       - ./twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf
+    # Optional: persist logs
+    #  - ./logs:/app/logs
 
-    # Optional debug environment variable
+    # Environment variables are ONLY for advanced tuning. Typical users do
+    # not need any. All user/token/channel config lives in the file above.
     environment:
-      # - DEBUG=true  # Enable debug-level logging (verbose output)
+      - PYTHONUNBUFFERED=1
+      # Advanced examples (uncomment if needed):
+      # - NETWORK_PARTITION_THRESHOLD=1800
+      # - CONFIG_SAVE_TIMEOUT=5.0
+      # - DEFAULT_BUCKET_LIMIT=1000
+      # - DEBUG=true
 
-    restart: unless-stopped  # Automatically restart unless manually stopped
+    healthcheck:
+      test: ["CMD", "python", "-m", "src.main", "--health-check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+        reservations:
+          cpus: "0.10"
+          memory: 64M
+
+    # For production behind a process supervisor or swarm/k8s, adjust
+    # restart policy and remove deploy.resources if unsupported.

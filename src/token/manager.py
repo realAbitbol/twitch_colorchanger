@@ -67,6 +67,31 @@ class TokenManager:
     async def start(self):
         if self.running:
             return
+        # Defensive: if a previous background task is still lingering (e.g. rapid
+        # stop/start where stop hasn't fully awaited cancellation yet), ensure it
+        # is cancelled and awaited to avoid multiple loops.
+        if self.background_task and not self.background_task.done():
+            self.logger.log_event(
+                "token_manager",
+                "stale_background_detected",
+                level=logging.DEBUG,
+                human="Cancelling stale background task before restart",
+            )
+            try:
+                self.background_task.cancel()
+                await self.background_task
+            except asyncio.CancelledError:
+                # Propagate cancellation upwards; restart logic should honor this.
+                raise
+            except Exception as e:  # noqa: BLE001
+                self.logger.log_event(
+                    "token_manager",
+                    "stale_background_error",
+                    level=logging.DEBUG,
+                    error=str(e),
+                )
+            finally:
+                self.background_task = None
         self.running = True
         self.background_task = asyncio.create_task(self._background_refresh_loop())
         self.logger.log_event("token_manager", "start")
@@ -156,6 +181,7 @@ class TokenManager:
                 info.expiry,
                 force_refresh,
             )
+
             if result.outcome != TokenOutcome.FAILED and result.access_token:
                 info.access_token = result.access_token
                 if result.refresh_token:
@@ -163,7 +189,7 @@ class TokenManager:
                 info.expiry = result.expiry
                 info.state = (
                     TokenState.FRESH
-                    if result.outcome == TokenOutcome.VALID
+                    if result.outcome in (TokenOutcome.VALID, TokenOutcome.SKIPPED)
                     else TokenState.STALE
                 )
             elif result.outcome == TokenOutcome.FAILED:

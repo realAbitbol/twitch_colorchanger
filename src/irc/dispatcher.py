@@ -109,7 +109,7 @@ class IRCDispatcher:
             logger.log_event(
                 "irc",
                 "no_message_handler",
-                level=logging.WARNING,
+                level=logging.DEBUG,
                 user=self.client.username,
             )
             return
