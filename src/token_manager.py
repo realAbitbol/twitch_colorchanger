@@ -98,18 +98,32 @@ class TokenManager:
 
     async def stop(self):
         """Stop the token manager"""
+        if not self.running:
+            return
         self.running = False
         if self.background_task:
             self.background_task.cancel()
             try:
                 await self.background_task
-            except asyncio.CancelledError:
-                # Clean up background task reference before re-raising
-                self.background_task = None
-                raise
+            except Exception as e:  # noqa: BLE001
+                if isinstance(e, asyncio.CancelledError):
+                    # Swallow expected cancellation to avoid noisy traceback
+                    self.logger.log_event(
+                        "token_manager",
+                        "background_cancelled",
+                        level=logging.DEBUG,
+                        human="Background loop cancelled",
+                    )
+                else:
+                    raise
             finally:
                 self.background_task = None
-        self.logger.log_event("token_manager", "stop", level=logging.WARNING)
+        self.logger.log_event(
+            "token_manager",
+            "stop",
+            level=logging.WARNING,
+            human="Token manager stopped",
+        )
 
     def register_user(
         self,
@@ -265,12 +279,7 @@ class TokenManager:
     async def _refresh_via_client(
         self, token_info: TokenInfo, force: bool = False
     ) -> bool:
-        # Skip rapid re-validation
-        if (
-            not force
-            and time.time() - token_info.last_validation
-            < TOKEN_MANAGER_VALIDATION_MIN_INTERVAL
-        ):
+        if self._skip_due_to_min_interval(token_info, force):
             return False
         token_info.last_validation = time.time()
         client = self._get_client(token_info)
@@ -283,43 +292,77 @@ class TokenManager:
                 token_info.expiry,
                 force_refresh=force,
             )
-            if result.outcome in (TokenOutcome.VALID, TokenOutcome.REFRESHED):
-                if result.access_token:
-                    token_info.access_token = result.access_token
-                if result.refresh_token:
-                    token_info.refresh_token = result.refresh_token
-                token_info.expiry = result.expiry
-                token_info.state = self._determine_token_state(token_info)
-                if result.outcome == TokenOutcome.REFRESHED:
-                    self.logger.log_event(
-                        "token_manager", "refresh_success", username=token_info.username
-                    )
-                return True
-            # Failed path -> mark stale or expired so loop can retry
-            token_info.state = self._determine_token_state(token_info)
-            if token_info.state == TokenState.FRESH:
-                # If still reported fresh but outcome failed, degrade to STALE to force retry
-                token_info.state = TokenState.STALE
-            self.logger.log_event(
-                "token_manager",
-                "refresh_failed",
-                level=20,
-                username=token_info.username,
-            )
-            return False
+            return self._handle_refresh_result(token_info, result)
         except Exception as e:  # noqa: BLE001
+            return self._handle_refresh_exception(token_info, e)
+
+    def _skip_due_to_min_interval(self, token_info: TokenInfo, force: bool) -> bool:
+        return (
+            not force
+            and time.time() - token_info.last_validation
+            < TOKEN_MANAGER_VALIDATION_MIN_INTERVAL
+        )
+
+    def _remaining_seconds(self, token_info: TokenInfo) -> int | None:
+        if token_info.expiry:
+            return int((token_info.expiry - datetime.now()).total_seconds())
+        return None
+
+    def _handle_refresh_result(self, token_info: TokenInfo, result) -> bool:  # type: ignore[no-untyped-def]
+        if result.outcome in (TokenOutcome.VALID, TokenOutcome.REFRESHED):
+            if result.access_token:
+                token_info.access_token = result.access_token
+            if result.refresh_token:
+                token_info.refresh_token = result.refresh_token
+            token_info.expiry = result.expiry
             token_info.state = self._determine_token_state(token_info)
-            if token_info.state == TokenState.FRESH:
-                token_info.state = TokenState.STALE
-            self.logger.log_event(
-                "token_manager",
-                "refresh_failed",
-                level=40,
-                username=token_info.username,
-                error=str(e),
-                error_type=type(e).__name__,
-            )
-            return False
+            if result.outcome == TokenOutcome.REFRESHED:
+                remaining = self._remaining_seconds(token_info)
+                from .utils import format_duration
+
+                self.logger.log_event(
+                    "token_manager",
+                    "refresh_success",
+                    username=token_info.username,
+                    expires_in=remaining,
+                    human=f"Background refresh ok (remaining {format_duration(remaining)})",
+                )
+            return True
+        # Failed path
+        token_info.state = self._determine_token_state(token_info)
+        if token_info.state == TokenState.FRESH:
+            token_info.state = TokenState.STALE
+        remaining = self._remaining_seconds(token_info)
+        from .utils import format_duration
+
+        self.logger.log_event(
+            "token_manager",
+            "refresh_failed",
+            level=20,
+            username=token_info.username,
+            expires_in=remaining,
+            human=f"Refresh check failed (remaining {format_duration(remaining)})",
+        )
+        return False
+
+    def _handle_refresh_exception(self, token_info: TokenInfo, e: Exception) -> bool:
+        token_info.state = self._determine_token_state(token_info)
+        if token_info.state == TokenState.FRESH:
+            token_info.state = TokenState.STALE
+        remaining = self._remaining_seconds(token_info)
+        from .utils import format_duration
+
+        self.logger.log_event(
+            "token_manager",
+            "refresh_failed",
+            level=40,
+            username=token_info.username,
+            error=str(e),
+            error_type=type(e).__name__,
+            expires_in=remaining,
+            human=f"Refresh error (remaining {format_duration(remaining)})",
+        )
+        return False
 
     # Removed direct _call_refresh_api; TokenClient handles network operations
 

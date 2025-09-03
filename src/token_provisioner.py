@@ -18,6 +18,7 @@ from .device_flow import DeviceCodeFlow
 from .logger import logger
 from .retry_policies import TOKEN_REFRESH_RETRY, run_with_retry
 from .token_client import TokenClient, TokenOutcome
+from .utils import format_duration
 
 
 class _EnsureFreshOutcome(Protocol):  # minimal protocol for mypy
@@ -144,6 +145,7 @@ class TokenProvisioner:
                     "valid",
                     username=username,
                     expires_in_seconds=remaining,
+                    human=f"Token valid (remaining {format_duration(remaining)})",
                 )
             return ProvisionResult(user, False, ProvisionStatus.VALID)
         if outcome_obj.outcome == TokenOutcome.REFRESHED:
@@ -162,6 +164,7 @@ class TokenProvisioner:
                 "token_provision",
                 "refreshed",
                 username=username,
+                human="Token refreshed",
             )
             return ProvisionResult(user, True, ProvisionStatus.REFRESHED)
         # Any other outcome requires new tokens (return None to trigger device flow)

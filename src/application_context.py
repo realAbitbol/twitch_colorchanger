@@ -63,15 +63,6 @@ class ApplicationContext:
     async def shutdown(self):
         async with self._lock:
             logger.log_event("context", "shutdown_begin")
-            if self.token_manager:
-                try:
-                    await self.token_manager.stop()
-                except Exception as e:  # noqa: BLE001
-                    logger.log_event(
-                        "context", "token_manager_stop_error", level=40, error=str(e)
-                    )
-                finally:
-                    self.token_manager = None
             if self.session:
                 try:
                     await self.session.close()
@@ -81,6 +72,26 @@ class ApplicationContext:
                     )
                 finally:
                     self.session = None
+            if self.token_manager:
+                try:
+                    await self.token_manager.stop()
+                except Exception as e:  # noqa: BLE001
+                    if isinstance(e, asyncio.CancelledError):
+                        logger.log_event(
+                            "context",
+                            "token_manager_cancelled",
+                            level=30,
+                            human="Token manager cancellation during shutdown",
+                        )
+                    else:
+                        logger.log_event(
+                            "context",
+                            "token_manager_stop_error",
+                            level=40,
+                            error=str(e),
+                        )
+                finally:
+                    self.token_manager = None
             self._rate_limiters.clear()
             self._started = False
             logger.log_event("context", "shutdown")

@@ -312,16 +312,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         async def _persist_enabled(flag: bool, failure_event: str):
             if not self.config_file:
                 return
-            user_config = {
-                "username": self.username,
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-                "access_token": self.access_token,
-                "refresh_token": self.refresh_token,
-                "channels": self.channels,
-                "is_prime_or_turbo": self.use_random_colors,
-                "enabled": flag,
-            }
+            # Reuse builder and override enabled flag
+            user_config = self._build_user_config()
+            user_config["enabled"] = flag
             try:
                 import asyncio
 
@@ -373,6 +366,43 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     ## Removed unused _check_irc_health (IRC client owns health)  # noqa: ERA001
 
     ## Removed _check_and_refresh_token wrapper (unused).  # noqa: ERA001
+
+    async def _check_and_refresh_token(self, force: bool = False) -> bool:
+        """Ensure we have a fresh access token.
+
+        This restores a previously removed helper that callers still invoke.
+        Integrates with centralized TokenManager without duplicating logic.
+
+        Returns True if a (possibly refreshed) valid access token is available.
+        """
+        if not self.token_manager:
+            return False
+        try:
+            if force:
+                # Force refresh regardless of perceived freshness
+                await self.token_manager.force_refresh(self.username)
+            else:
+                # Opportunistic fetch (will refresh if stale)
+                await self.token_manager.get_fresh_token(self.username)
+
+            info = self.token_manager.get_token_info(self.username)
+            if info and info.access_token:
+                # Update local copy + IRC connection if changed
+                if info.access_token != self.access_token:
+                    self.access_token = info.access_token
+                    if self.irc:
+                        self.irc.update_token(info.access_token)
+                return True
+            return False
+        except Exception as e:  # noqa: BLE001
+            logger.log_event(
+                "bot",
+                "token_refresh_helper_error",
+                level=logging.ERROR,
+                user=self.username,
+                error=str(e),
+            )
+            return False
 
     ## Removed deprecated token helper methods (centralized in TokenManager)  # noqa: ERA001
 

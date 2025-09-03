@@ -639,9 +639,17 @@ async def run_bots(users_config: list[dict[str, Any]], config_file: str | None =
         try:
             await context.shutdown()
         except Exception as e:  # noqa: BLE001
-            _logger.log_event(
-                "context", "shutdown_error", level=logging.WARNING, error=str(e)
-            )
+            if isinstance(e, asyncio.CancelledError):
+                _logger.log_event(
+                    "context",
+                    "shutdown_cancelled",
+                    level=logging.DEBUG,
+                    human="Shutdown cancelled (Ctrl+C)",
+                )
+            else:
+                _logger.log_event(
+                    "context", "shutdown_error", level=logging.WARNING, error=str(e)
+                )
         _logger.log_event("app", "context_shutdown_complete")
         manager.print_statistics()
         logger.log_event("manager", "goodbye")

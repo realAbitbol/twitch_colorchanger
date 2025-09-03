@@ -110,21 +110,66 @@ class BotLogger:
 
         # Attach human text into kwargs; mark if derived
         if human_text is not None:
-            kwargs.setdefault("human", human_text)
+            # Store separately to allow special formatting without polluting structured context
+            kwargs.setdefault("_human_text", human_text)
         if derived:
             kwargs.setdefault("derived", True)
         self._log(level, event_name, exc_info=exc_info, **kwargs)
 
-    def _log(self, level: int, message: str, exc_info: bool = False, **kwargs):
-        extra: dict[str, str] = {}
-        if "user" in kwargs:
-            extra["user"] = kwargs.pop("user")
-        if "channel" in kwargs:
-            extra["channel"] = kwargs.pop("channel")
-        if kwargs:
-            context_str = ", ".join(f"{k}={v}" for k, v in kwargs.items())
-            message = f"{message} ({context_str})"
-        self.logger.log(level, message, exc_info=exc_info, extra=extra)
+    def _log(self, level: int, event_name: str, exc_info: bool = False, **kwargs):
+        """Internal low-level emitter.
+
+        Human-friendly mode (default): LEVEL [user[#channel]] Human text
+        Debug mode (DEBUG=true): retains structured key=value context after event name.
+        """
+        debug_enabled = self._is_debug_enabled()
+        user, channel, human_text = self._extract_reserved(kwargs)
+        prefix = self._build_prefix(user, channel)
+        msg = (
+            self._build_debug_message(event_name, prefix, human_text, kwargs)
+            if debug_enabled
+            else self._build_concise_message(event_name, prefix, human_text, channel)
+        )
+        self.logger.log(level, msg, exc_info=exc_info)
+
+    @staticmethod
+    def _is_debug_enabled() -> bool:
+        return os.environ.get("DEBUG", "false").lower() in ("true", "1", "yes")
+
+    @staticmethod
+    def _extract_reserved(kwargs: dict):
+        user = kwargs.pop("user", None)
+        channel = kwargs.pop("channel", None)
+        human_text = kwargs.pop("_human_text", None) or kwargs.get("human")
+        kwargs.pop("human", None)
+        return user, channel, human_text
+
+    @staticmethod
+    def _build_prefix(user: str | None, channel: str | None) -> str:
+        user_label = user or "system"
+        return f"[{user_label}#{channel}]" if channel else f"[{user_label}]"
+
+    @staticmethod
+    def _build_debug_message(
+        event_name: str, prefix: str, human_text: str | None, kwargs: dict
+    ) -> str:
+        context = ", ".join(f"{k}={v}" for k, v in kwargs.items())
+        base = f"{event_name} {prefix}"
+        if human_text:
+            base = f"{base} {human_text}"
+        if context:
+            base = f"{base} ({context})"
+        return base
+
+    @staticmethod
+    def _build_concise_message(
+        event_name: str, prefix: str, human_text: str | None, channel: str | None
+    ) -> str:
+        core = human_text or event_name
+        msg = f"{prefix} {core}"
+        if channel and event_name.endswith("privmsg") and f"#{channel}" not in prefix:
+            msg += f" (#{channel})"
+        return msg
 
 
 # Global logger instance

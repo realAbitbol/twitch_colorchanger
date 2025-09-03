@@ -7,6 +7,7 @@ import time
 import aiohttp
 
 from .logger import logger
+from .utils import format_duration
 
 
 class DeviceCodeFlow:
@@ -92,6 +93,7 @@ class DeviceCodeFlow:
                                 client_id=self.client_id,
                                 elapsed=elapsed,
                                 polls=poll_count,
+                                human=f"Authorized after {format_duration(elapsed)} (polls={poll_count})",
                             )
                             return result
 
@@ -132,6 +134,7 @@ class DeviceCodeFlow:
             level=logging.ERROR,
             client_id=self.client_id,
             expires_in=expires_in,
+            human=f"Timed out after {format_duration(expires_in)}",
         )
         return None
 
@@ -161,6 +164,7 @@ class DeviceCodeFlow:
                     level=logging.INFO,
                     elapsed=elapsed,
                     polls=poll_count,
+                    human=f"Waiting for authorization {format_duration(elapsed)} elapsed",
                 )
             return None  # Continue polling
 
@@ -174,6 +178,7 @@ class DeviceCodeFlow:
                 new_interval=self.poll_interval,
                 elapsed=elapsed,
                 polls=poll_count,
+                human=f"Server requested slower polling interval={self.poll_interval}s",
             )
             return None  # Continue polling
 
@@ -184,6 +189,7 @@ class DeviceCodeFlow:
                 level=logging.ERROR,
                 elapsed=elapsed,
                 polls=poll_count,
+                human=f"Device code expired after {format_duration(elapsed)}",
             )
             return {}  # Stop polling
 
@@ -194,6 +200,7 @@ class DeviceCodeFlow:
                 level=logging.WARNING,
                 elapsed=elapsed,
                 polls=poll_count,
+                human="User denied access",
             )
             return {}  # Stop polling
 
@@ -221,9 +228,18 @@ class DeviceCodeFlow:
         Returns (access_token, refresh_token) on success, None on failure
         """
         logger.log_event(
-            "device_flow", "start", user=username, poll_interval=self.poll_interval
+            "device_flow",
+            "start",
+            user=username,
+            poll_interval=self.poll_interval,
+            human="Starting device authorization",
         )
-        logger.log_event("device_flow", "authorization_required", user=username)
+        logger.log_event(
+            "device_flow",
+            "authorization_required",
+            user=username,
+            human="Authorization required",
+        )
 
         # Step 1: Request device code
         device_data = await self.request_device_code()
@@ -243,12 +259,14 @@ class DeviceCodeFlow:
             verification_uri=verification_uri,
             code=user_code,
             expires_minutes=expires_in // 60,
+            human=f"Open {verification_uri} and enter code {user_code} (expires in {format_duration(expires_in)})",
         )
         logger.log_event(
             "device_flow",
             "waiting",
             user=username,
             interval=self.poll_interval,
+            human=f"Polling every {self.poll_interval}s for authorization",
         )
 
         # Step 3: Poll for authorization
@@ -257,5 +275,7 @@ class DeviceCodeFlow:
             return None
         access_token = token_data["access_token"]
         refresh_token = token_data.get("refresh_token", "")
-        logger.log_event("device_flow", "tokens_obtained", user=username)
+        logger.log_event(
+            "device_flow", "tokens_obtained", user=username, human="Tokens obtained"
+        )
         return access_token, refresh_token
