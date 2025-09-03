@@ -92,9 +92,7 @@ class UserConfig:
         """Return True if basic structural fields are acceptable."""
         return self.validate_basic()
 
-    def ensure_prime_flag(self) -> bool:
-        # Provide a hook for setting default if missing when created via dict
-        return True
+    # Removed ensure_prime_flag (unused).  # noqa: ERA001
 
 
 def normalize_user_list(

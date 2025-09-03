@@ -10,13 +10,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, auto
-from typing import Any
+from typing import Any, Protocol
 
 import aiohttp
 
 from .device_flow import DeviceCodeFlow
 from .logger import logger
+from .retry_policies import TOKEN_REFRESH_RETRY, run_with_retry
 from .token_client import TokenClient, TokenOutcome
+
+
+class _EnsureFreshOutcome(Protocol):  # minimal protocol for mypy
+    outcome: TokenOutcome
+    expiry: datetime | None
+    access_token: str | None
+    refresh_token: str | None
 
 
 class ProvisionStatus(Enum):
@@ -103,12 +111,18 @@ class TokenProvisioner:
         try:
             async with aiohttp.ClientSession() as session:
                 client = TokenClient(client_id, client_secret, session)
-                outcome_obj = await client.ensure_fresh(
-                    username,
-                    access_token,
-                    refresh_token,
-                    None,
-                    force_refresh=False,
+
+                async def op():
+                    return await client.ensure_fresh(
+                        username,
+                        access_token,
+                        refresh_token,
+                        None,
+                        force_refresh=False,
+                    )
+
+                outcome_obj: _EnsureFreshOutcome = await run_with_retry(  # type: ignore[assignment]
+                    op, TOKEN_REFRESH_RETRY, user=username, log_domain="retry"
                 )
         except Exception as e:  # noqa: BLE001
             logger.log_event(

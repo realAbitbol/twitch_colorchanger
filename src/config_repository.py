@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import fcntl
 import hashlib
 import json
@@ -18,16 +19,39 @@ class ConfigRepository:
     def __init__(self, path: str | os.PathLike[str]):
         self.path = str(path)
         self._last_checksum: str | None = None
+        self._file_mtime: float | None = None
+        self._file_size: int | None = None
+        self._cached_users: list[dict[str, Any]] | None = None
 
     def load_raw(self) -> list[dict[str, Any]]:
         try:
+            st = os.stat(self.path)
+            mtime = st.st_mtime
+            size = st.st_size
+            if (
+                self._cached_users is not None
+                and self._file_mtime == mtime
+                and self._file_size == size
+            ):
+                return self._cached_users
+
             with open(self.path, encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, dict) and "users" in data:
-                return data["users"]
+                users = data["users"]
+                self._cached_users = users
+                self._file_mtime = mtime
+                self._file_size = size
+                return users
             if isinstance(data, list):
+                self._cached_users = data
+                self._file_mtime = mtime
+                self._file_size = size
                 return data
             if isinstance(data, dict) and "username" in data:
+                self._cached_users = [data]
+                self._file_mtime = mtime
+                self._file_size = size
                 return [data]
             return []
         except FileNotFoundError:
@@ -77,7 +101,18 @@ class ConfigRepository:
             self._prepare_dir()
             self._atomic_write({"users": users})
             self._last_checksum = checksum
-            time.sleep(CONFIG_WRITE_DEBOUNCE)
+            # Non-blocking debounce if inside event loop; fallback to minimal sleep else
+            try:
+                loop = asyncio.get_running_loop()
+
+                # Schedule a tiny asynchronous debounce without blocking caller
+                async def _debounce():  # pragma: no cover (timing minor)
+                    await asyncio.sleep(CONFIG_WRITE_DEBOUNCE)
+
+                loop.create_task(_debounce())
+            except RuntimeError:  # no running loop
+                # Keep previous behavior but shorter to avoid blocking excessively
+                time.sleep(min(CONFIG_WRITE_DEBOUNCE, 0.05))
             return True
         except Exception as e:  # noqa: BLE001
             logger.log_event(

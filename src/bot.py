@@ -13,14 +13,12 @@ from typing import Any
 import aiohttp
 
 from .adaptive_scheduler import AdaptiveScheduler
+from .application_context import ApplicationContext
 from .async_irc import AsyncTwitchIRC
 from .color_utils import get_random_hex, get_random_preset
-from .config import disable_random_colors_for_user, update_user_in_config
-from .constants import NETWORK_PARTITION_THRESHOLD, PARTIAL_CONNECTIVITY_THRESHOLD
-from .error_handling import APIError, simple_retry
+from .config import update_user_in_config
 from .logger import logger
-from .rate_limiter import get_rate_limiter
-from .token_manager import get_token_manager
+from .retry_policies import COLOR_CHANGE_RETRY, DEFAULT_NETWORK_RETRY, run_with_retry
 from .user_config_model import normalize_channels_list
 
 # Constants
@@ -68,6 +66,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
 
     def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
+        context: ApplicationContext,
         token: str,
         refresh_token: str,
         client_id: str,
@@ -79,6 +78,8 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         config_file: str = None,
         user_id: str = None,
     ):
+        self.context = context
+
         # User credentials
         self.username = nick
         self.access_token = (
@@ -98,7 +99,8 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 "http_session is required - bots must use shared HTTP session"
             )
         self.http_session = http_session
-        # Central token manager (singleton) initialized on start()
+
+        # Token manager reference (assigned during start)
         self.token_manager = None  # Set during start()
 
         # Bot settings
@@ -106,31 +108,27 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         self.use_random_colors = is_prime_or_turbo
         self.config_file = config_file
 
-        # IRC connection
+        # IRC connection and runtime flags
         self.irc = None
         self.running = False
-
-        # Background tasks
         self.irc_task = None
 
         # Statistics
         self.messages_sent = 0
         self.colors_changed = 0
 
-        # Network partition detection / health tracking
+        # Network health tracking
         self.last_successful_connection = time.time()
         self.connection_failure_start: float | None = None
 
         # Token failure tracking
-        self.token_failure_count = 0
-        self.last_token_failure: float | None = None
-        self.consecutive_refresh_failures = 0
+        # Removed token failure tracking attributes (unused).  # noqa: ERA001
 
-        # Color tracking to avoid repeating the same color
+        # Color tracking
         self.last_color: str | None = None
 
-        # Rate limiter for API requests
-        self.rate_limiter = get_rate_limiter(self.client_id, self.username)
+        # Rate limiter via context
+        self.rate_limiter = context.get_rate_limiter(self.client_id, self.username)
 
         # Adaptive scheduler (currently mostly idle, reserved for future tasks)
         self.scheduler = AdaptiveScheduler()
@@ -141,7 +139,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         self.running = True
         # Register with centralized TokenManager
         logger.log_event("bot", "registering_token_manager", user=self.username)
-        self.token_manager = get_token_manager(self.http_session)
+        self.token_manager = self.context.token_manager
         self.token_manager.register_user(
             username=self.username,
             access_token=self.access_token,
@@ -150,7 +148,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             client_secret=self.client_secret,
             expiry=self.token_expiry,
         )
-        await self.token_manager.start()
+        # Token manager already started by context
         fresh = await self.token_manager.get_fresh_token(self.username)
         if fresh:
             self.access_token = fresh
@@ -188,7 +186,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 new_count=len(normalized_channels),
             )
             self.channels = normalized_channels
-            self._persist_normalized_channels()
+            await self._persist_normalized_channels()
         else:
             self.channels = normalized_channels
 
@@ -308,244 +306,32 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
 
     # Removed _adaptive_token_check; token freshness handled on-demand by TokenManager
 
-    async def _check_scheduler_health(self):
-        """Monitor scheduler health and restart if necessary"""
-        try:
-            health = self.scheduler.get_health_status()
+    ## Removed unused _check_scheduler_health (scheduler simplified)  # noqa: ERA001
 
-            if not health["running"]:
-                logger.log_event(
-                    "bot",
-                    "scheduler_not_running",
-                    level=logging.ERROR,
-                    user=self.username,
-                )
-                await self.scheduler.start()
-                return
+    ## Removed unused get_failure_statistics (no external callers)  # noqa: ERA001
 
-            if not health["has_scheduler_task"]:
-                logger.log_event(
-                    "bot",
-                    "scheduler_task_stopped",
-                    level=logging.ERROR,
-                    user=self.username,
-                )
-                await self.scheduler.stop()
-                await self.scheduler.start()
-                return
-
-            # Check if scheduler is stalled (next task delay is unreasonably high)
-            next_delay = health["next_task_delay"]
-            if next_delay > 3600:  # More than 1 hour
-                logger.log_event(
-                    "bot",
-                    "scheduler_stalled",
-                    level=logging.WARNING,
-                    user=self.username,
-                    next_delay=next_delay,
-                )
-
-        except Exception as e:
-            logger.log_event(
-                "bot",
-                "scheduler_check_error",
-                level=logging.ERROR,
-                user=self.username,
-                error=str(e),
-            )
-
-    def get_failure_statistics(self) -> dict:
-        """Get token failure statistics for monitoring"""
-        return {
-            "total_token_failures": self.token_failure_count,
-            "consecutive_refresh_failures": self.consecutive_refresh_failures,
-            "last_token_failure": self.last_token_failure,
-            "time_since_last_failure": (
-                time.time() - self.last_token_failure
-                if self.last_token_failure
-                else None
-            ),
-            "is_in_failure_state": self.consecutive_refresh_failures >= 3,
-        }
-
-    def _update_network_status(self, stats: dict[str, Any]) -> None:
-        """Update network partition detection status (reduced complexity)."""
-        current_time = time.time()
-
-        # Fast path: healthy connection
-        if stats.get("connected") and stats.get("is_healthy"):
-            self._handle_connection_recovered(current_time)
-            return
-
-        # Unhealthy path
-        failure_duration = self._record_or_get_failure_duration(current_time)
-        self._emit_failure_progress_events(failure_duration)
+    ## Removed _update_network_status (unused).  # noqa: ERA001
 
     # --- Helper methods for network status (extracted to lower complexity) ---
-    def _handle_connection_recovered(self, current_time: float) -> None:
-        if self.connection_failure_start is None:
-            # Nothing to recover
-            self.last_successful_connection = current_time
-            return
-        failure_duration = current_time - self.connection_failure_start
-        self.last_successful_connection = current_time
-        if failure_duration > PARTIAL_CONNECTIVITY_THRESHOLD:
-            logger.log_event(
-                "bot",
-                "connection_recovered",
-                user=self.username,
-                duration=failure_duration,
-            )
-        self.connection_failure_start = None
+    ## Removed _handle_connection_recovered (unused).  # noqa: ERA001
 
-    def _record_or_get_failure_duration(self, current_time: float) -> float:
-        if self.connection_failure_start is None:
-            self.connection_failure_start = current_time
-            logger.log_event(
-                "bot",
-                "connection_failure_detected",
-                level=logging.WARNING,
-                user=self.username,
-            )
-            return 0.0
-        return current_time - self.connection_failure_start
+    ## Removed _record_or_get_failure_duration (unused).  # noqa: ERA001
 
-    def _emit_failure_progress_events(self, failure_duration: float) -> None:
-        if failure_duration > PARTIAL_CONNECTIVITY_THRESHOLD:
-            logger.log_event(
-                "bot",
-                "partial_connectivity",
-                level=logging.WARNING,
-                user=self.username,
-                duration=failure_duration,
-            )
-        if failure_duration > NETWORK_PARTITION_THRESHOLD:
-            logger.log_event(
-                "bot",
-                "network_partition",
-                level=logging.ERROR,
-                user=self.username,
-                duration=failure_duration,
-            )
+    ## Removed _emit_failure_progress_events (unused).  # noqa: ERA001
 
-    def _check_irc_health(self):
-        """Check IRC connection health - reconnection is handled by IRC level"""
-        if not self.irc:
-            return
+    ## Removed unused _check_irc_health (IRC client owns health)  # noqa: ERA001
 
-        try:
-            # Get structured health snapshot (contains all needed data)
-            health_data = self.irc.get_health_snapshot()
+    ## Removed _check_and_refresh_token wrapper (unused).  # noqa: ERA001
 
-            # Create minimal stats object for network status compatibility
-            stats_compat = {
-                "time_since_activity": health_data.get("time_since_activity", 0.0)
-                or 0.0,
-                "is_healthy": health_data.get("healthy", False),
-                "connected": health_data.get("connected", False),
-                "running": health_data.get("running", False),
-            }
-
-            # Update network partition detection status
-            self._update_network_status(stats_compat)
-
-            # Log health status with detailed reasons
-            if health_data["healthy"]:
-                activity_time = health_data.get("time_since_activity") or 0.0
-                logger.log_event(
-                    "bot",
-                    "irc_health_ok",
-                    user=self.username,
-                    state=health_data.get("state"),
-                    activity_time=activity_time,
-                )
-            else:
-                # Show unhealthy reasons
-                reasons_str = ", ".join(health_data["reasons"])
-                logger.log_event(
-                    "bot",
-                    "irc_unhealthy",
-                    level=logging.WARNING,
-                    user=self.username,
-                    reasons=reasons_str,
-                    state=health_data.get("state"),
-                )
-
-                # Inform that IRC will handle reconnection
-                logger.log_event(
-                    "bot",
-                    "irc_reconnect_auto",
-                    user=self.username,
-                )
-
-        except Exception as e:
-            logger.log_event(
-                "bot",
-                "irc_health_check_error",
-                level=logging.WARNING,
-                user=self.username,
-                error=str(e),
-            )
-
-    async def _check_and_refresh_token(
-        self, force: bool = False
-    ):  # Backwards compatibility wrapper
-        if not hasattr(self, "token_manager"):
-            return False
-        if not self.token_manager:
-            return False
-        if force:
-            await self.token_manager.force_refresh(self.username)
-        fresh = await self.token_manager.get_fresh_token(self.username)
-        if fresh:
-            self.access_token = fresh
-            return True
-        return False
-
-    def _validate_token_prerequisites(self) -> bool:
-        return True  # TokenManager handles validation logic centrally
-
-    def _handle_token_status(self):  # Deprecated path
-        return True
-
-    def _handle_valid_token(self):  # Deprecated
-        return True
-
-    def _handle_refreshed_token(self):  # Deprecated
-        return True
-
-    def _handle_failed_token(self):  # Deprecated
-        return False
-
-    def _display_token_expiry(self):
-        """Display token expiry information"""
-        if not self.token_expiry:
-            return
-
-        time_remaining = self.token_expiry - datetime.now()
-
-        if time_remaining.total_seconds() <= 0:
-            logger.log_event(
-                "bot", "token_expired", level=logging.WARNING, user=self.username
-            )
-        else:
-            # Convert to hours and minutes for display
-            total_seconds = int(time_remaining.total_seconds())
-            hours = total_seconds // 3600
-            minutes = (total_seconds % 3600) // 60
-
-            if hours > 0:
-                time_str = f"{hours}h {minutes}m"
-            else:
-                time_str = f"{minutes}m"
-
-            logger.log_event(
-                "bot", "token_expires_in", user=self.username, time_str=time_str
-            )
+    ## Removed deprecated token helper methods (centralized in TokenManager)  # noqa: ERA001
 
     async def _get_user_info(self):
         """Retrieve user information from Twitch API"""
-        return await simple_retry(self._get_user_info_impl, user=self.username)
+
+        async def op():  # Wrap for retry policy
+            return await self._get_user_info_impl()
+
+        return await run_with_retry(op, DEFAULT_NETWORK_RETRY, user=self.username)
 
     async def _get_user_info_impl(self):
         """Implementation of user info retrieval"""
@@ -582,19 +368,6 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             )
             return None
 
-        except APIError as e:
-            if e.status_code == 401:
-                logger.log_event(
-                    "bot",
-                    "user_info_token_expired",
-                    level=logging.WARNING,
-                    user=self.username,
-                )
-                if await self._check_and_refresh_token():
-                    # Retry with new token
-                    return await self._get_user_info_impl()
-                raise APIError("Token refresh failed") from e
-            raise
         except Exception as e:
             logger.log_event(
                 "bot",
@@ -607,7 +380,11 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
 
     async def _get_current_color(self):
         """Get the user's current color from Twitch API"""
-        return await simple_retry(self._get_current_color_impl, user=self.username)
+
+        async def op() -> dict | None:
+            return await self._get_current_color_impl()
+
+        return await run_with_retry(op, DEFAULT_NETWORK_RETRY, user=self.username)
 
     async def _get_current_color_impl(self):
         """Implementation of current color retrieval"""
@@ -663,7 +440,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             )
             return None
 
-    def _persist_token_changes(self):
+    async def _persist_token_changes(self):
         """Persist token changes to configuration file with atomic updates"""
         if not self._validate_config_prerequisites():
             return
@@ -673,7 +450,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         # Attempt to save with retries
         max_retries = 3
         for attempt in range(max_retries):
-            if self._attempt_config_save(user_config, attempt, max_retries):
+            if await self._attempt_config_save(user_config, attempt, max_retries):
                 return  # Success
 
     def _validate_config_prerequisites(self) -> bool:
@@ -737,7 +514,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             "is_prime_or_turbo": self.use_random_colors,
         }
 
-    def _attempt_config_save(
+    async def _attempt_config_save(
         self, user_config: dict, attempt: int, max_retries: int
     ) -> bool:
         """Attempt to save config with error handling"""
@@ -766,9 +543,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             return True  # Don't retry for permission errors
 
         except Exception as e:
-            return self._handle_config_save_error(e, attempt, max_retries)
+            return await self._handle_config_save_error(e, attempt, max_retries)
 
-    def _handle_config_save_error(
+    async def _handle_config_save_error(
         self, error: Exception, attempt: int, max_retries: int
     ) -> bool:
         """Handle config save errors with retry logic"""
@@ -782,9 +559,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 error=str(error),
             )
             # Brief delay before retry
-            import time
+            import asyncio
 
-            time.sleep(0.1 * (attempt + 1))
+            await asyncio.sleep(0.1 * (attempt + 1))
             return False  # Continue retrying
         else:
             logger.log_event(
@@ -797,7 +574,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             )
             return True  # Stop retrying
 
-    def _persist_normalized_channels(self):
+    async def _persist_normalized_channels(self):
         """Persist normalized channels to configuration file"""
         if hasattr(self, "config_file") and self.config_file:
             user_config = {
@@ -810,7 +587,13 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 "is_prime_or_turbo": self.use_random_colors,
             }
             try:
-                update_user_in_config(user_config, self.config_file)
+                # Run potentially blocking file update in thread to avoid blocking loop
+                import asyncio
+
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None, update_user_in_config, user_config, self.config_file
+                )
                 logger.log_event("bot", "normalized_channels_saved", user=self.username)
             except Exception as e:
                 logger.log_event(
@@ -823,24 +606,23 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
 
     async def _change_color(self, hex_color=None):
         """Change the username color via Twitch API"""
-        # Wait for rate limiting before making request
-        await self.rate_limiter.wait_if_needed("change_color", is_user_request=True)
+        # Determine target color
+        color = hex_color if hex_color else self._select_color()
 
-        if hex_color:
-            # Use the provided hex color
-            color = hex_color
-        else:
-            # Select color based on user settings
-            color = self._select_color()
+        async def op() -> bool:
+            await self.rate_limiter.wait_if_needed("change_color", is_user_request=True)
+            return await self._attempt_color_change(color)
 
         try:
-            success = await self._attempt_color_change(color)
-            if not success and self.use_random_colors and not hex_color:
-                # Try fallback to preset colors if random colors failed due to
-                # Turbo/Prime requirement
-                success = await self._try_preset_color_fallback()
-            return success
-        except Exception as e:
+            result = await run_with_retry(
+                op, COLOR_CHANGE_RETRY, user=self.username, log_domain="retry"
+            )
+            if not result and self.use_random_colors and not hex_color:
+                # fallback to preset if random hex failed
+                preset_result = await self._try_preset_color_fallback()
+                return preset_result
+            return result
+        except Exception as e:  # noqa: BLE001
             logger.log_event(
                 "bot",
                 "error_changing_color_internal",
@@ -860,99 +642,35 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
 
     async def _attempt_color_change(self, color):
         """Attempt to change color and handle the response"""
-        try:
-            params = {"user_id": self.user_id, "color": color}
+        params = {"user_id": self.user_id, "color": color}
 
-            try:
-                _, status_code, headers = await asyncio.wait_for(
-                    _make_api_request(
-                        "PUT",
-                        CHAT_COLOR_ENDPOINT,
-                        self.access_token,
-                        self.client_id,
-                        params=params,
-                        session=self.http_session,
-                    ),
-                    timeout=10,
-                )
-            except TimeoutError:
+        # First attempt (with retry policy for transient errors)
+        status_code = await self._perform_color_request(params, action="change_color")
+        response = self._handle_color_change_response(status_code, color)
+        if response != "token_refresh_needed":
+            if status_code == 0:  # internal error sentinel
                 logger.log_event(
                     "bot",
-                    "color_change_timeout",
+                    "color_change_internal_error",
                     level=logging.ERROR,
                     user=self.username,
                 )
-                return False
-
-            # Update rate limiting info from response headers
-            self.rate_limiter.update_from_headers(headers, is_user_request=True)
-
-            response = self._handle_color_change_response(status_code, color)
-
-            # Handle token refresh case
-            if response == "token_refresh_needed":
-                logger.log_event(
-                    "bot", "color_change_attempt_refresh", user=self.username
-                )
-
-                # Try to refresh token
-                refresh_success = await self._check_and_refresh_token(force=True)
-                if refresh_success:
-                    logger.log_event(
-                        "bot", "color_retry_after_refresh", user=self.username
-                    )
-
-                    # Retry the color change with new token
-                    try:
-                        _, retry_status_code, retry_headers = await asyncio.wait_for(
-                            _make_api_request(
-                                "PUT",
-                                CHAT_COLOR_ENDPOINT,
-                                self.access_token,  # Now using refreshed token
-                                self.client_id,
-                                params=params,
-                                session=self.http_session,
-                            ),
-                            timeout=10,
-                        )
-
-                        # Update rate limiting info from retry headers
-                        self.rate_limiter.update_from_headers(
-                            retry_headers, is_user_request=True
-                        )
-
-                        # Handle the retry response (but don't trigger another refresh)
-                        retry_response = self._handle_color_change_response(
-                            retry_status_code, color
-                        )
-                        return (
-                            retry_response
-                            if retry_response != "token_refresh_needed"
-                            else False
-                        )
-
-                    except Exception:
-                        logger.log_event(
-                            "bot",
-                            "color_change_status_failed",
-                            level=logging.ERROR,
-                            user=self.username,
-                            status_code="retry_error",
-                        )
-                        return False
-                else:
-                    logger.log_event(
-                        "bot",
-                        "color_refresh_failed",
-                        level=logging.ERROR,
-                        user=self.username,
-                    )
-                    return False
-
             return response
 
-        except APIError as e:
-            return self._handle_api_error(e)
+        # Refresh path
+        logger.log_event("bot", "color_change_attempt_refresh", user=self.username)
+        if not await self._check_and_refresh_token(force=True):
+            logger.log_event(
+                "bot", "color_refresh_failed", level=logging.ERROR, user=self.username
+            )
+            return False
+        logger.log_event("bot", "color_retry_after_refresh", user=self.username)
+        params_refreshed = {"user_id": self.user_id, "color": color}
+        retry_status = await self._perform_color_request(
+            params_refreshed, action="change_color"
+        )
+        retry_response = self._handle_color_change_response(retry_status, color)
+        return False if retry_response == "token_refresh_needed" else retry_response
 
     def _handle_color_change_response(self, status_code, color):
         """Handle the response from color change API call"""
@@ -990,52 +708,81 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         )
         return False
 
-    def _handle_api_error(self, e):
-        """Handle API errors, specifically the Turbo/Prime requirement error"""
-        error_text = str(e)
-        if (
-            "Turbo or Prime user" in error_text or "Hex color code" in error_text
-        ) and self.use_random_colors:
-            logger.log_event(
-                "bot",
-                "turbo_required_disabling_random",
-                level=logging.WARNING,
-                user=self.username,
-            )
-
-            # Disable random colors for this user
-            self.use_random_colors = False
-
-            # Persist the change to config file
-            if self.config_file:
-                if disable_random_colors_for_user(self.username, self.config_file):
-                    logger.log_event(
-                        "bot", "random_colors_disabled_persisted", user=self.username
-                    )
-                else:
-                    logger.log_event(
-                        "bot",
-                        "random_colors_persist_failed",
-                        level=logging.WARNING,
-                        user=self.username,
-                    )
-
-            return False  # Indicate that fallback is needed
-        logger.log_event(
-            "bot",
-            "error_changing_color_internal",
-            level=logging.ERROR,
-            user=self.username,
-            error=str(e),
-        )
-        return False
+    ## Removed deprecated _handle_api_error placeholder  # noqa: ERA001
 
     async def _try_preset_color_fallback(self):
         """Try changing color with preset colors as fallback"""
-        try:
-            color = get_random_preset(exclude=self.last_color)
-            params = {"user_id": self.user_id, "color": color}
+        color = get_random_preset(exclude=self.last_color)
+        params = {"user_id": self.user_id, "color": color}
+        status_code = await self._perform_color_request(params, action="preset_color")
+        if status_code == 204:
+            self.colors_changed += 1
+            self.last_color = color
+            logger.log_event(
+                "bot", "preset_color_changed", user=self.username, color=color
+            )
+            return True
+        if status_code == 0:
+            logger.log_event(
+                "bot",
+                "preset_color_internal_error",
+                level=logging.ERROR,
+                user=self.username,
+            )
+            return False
+        if status_code == 401:
+            logger.log_event(
+                "bot", "preset_color_401", level=logging.WARNING, user=self.username
+            )
+            if await self._check_and_refresh_token(force=True):
+                logger.log_event("bot", "preset_color_retry", user=self.username)
+                # retry once after refresh
+                retry_status = await self._perform_color_request(
+                    params, action="preset_color"
+                )
+                if retry_status == 204:
+                    self.colors_changed += 1
+                    self.last_color = color
+                    logger.log_event(
+                        "bot",
+                        "preset_color_changed",
+                        user=self.username,
+                        color=color,
+                    )
+                    return True
+                logger.log_event(
+                    "bot",
+                    "preset_color_retry_failed_status",
+                    level=logging.ERROR,
+                    user=self.username,
+                    status_code=retry_status,
+                )
+                return False
+            logger.log_event(
+                "bot",
+                "preset_color_refresh_failed",
+                level=logging.ERROR,
+                user=self.username,
+            )
+            return False
+        logger.log_event(
+            "bot",
+            "preset_color_failed_status",
+            level=logging.ERROR,
+            user=self.username,
+            status_code=status_code,
+        )
+        return False
 
+    async def _perform_color_request(self, params: dict, action: str) -> int:
+        """Perform the color change HTTP PUT with retry and rate limiting.
+
+        Returns status_code (int). Headers automatically update rate limiter.
+        action distinguishes between change_color and preset_color for delay separation.
+        """
+
+        async def op() -> int:
+            await self.rate_limiter.wait_if_needed(action, is_user_request=True)
             _, status_code, headers = await asyncio.wait_for(
                 _make_api_request(
                     "PUT",
@@ -1047,102 +794,30 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 ),
                 timeout=10,
             )
-
-            # Update rate limiting info from response headers
             self.rate_limiter.update_from_headers(headers, is_user_request=True)
+            return status_code
 
-            if status_code == 204:
-                self.colors_changed += 1
-                self.last_color = color
-                logger.log_event(
-                    "bot", "preset_color_changed", user=self.username, color=color
-                )
-                return True
-            elif status_code == 401:
-                # Token expired/invalid - try to refresh and retry
-                logger.log_event(
-                    "bot", "preset_color_401", level=logging.WARNING, user=self.username
-                )
-
-                refresh_success = await self._check_and_refresh_token(force=True)
-                if refresh_success:
-                    logger.log_event("bot", "preset_color_retry", user=self.username)
-
-                    # Retry with refreshed token
-                    try:
-                        _, retry_status_code, retry_headers = await asyncio.wait_for(
-                            _make_api_request(
-                                "PUT",
-                                CHAT_COLOR_ENDPOINT,
-                                self.access_token,  # Now using refreshed token
-                                self.client_id,
-                                params=params,
-                                session=self.http_session,
-                            ),
-                            timeout=10,
-                        )
-
-                        self.rate_limiter.update_from_headers(
-                            retry_headers, is_user_request=True
-                        )
-
-                        if retry_status_code == 204:
-                            self.colors_changed += 1
-                            self.last_color = color
-                            self._get_rate_limit_display(debug_only=True)
-                            logger.log_event(
-                                "bot",
-                                "preset_color_changed",
-                                user=self.username,
-                                color=color,
-                            )
-                            return True
-                        else:
-                            logger.log_event(
-                                "bot",
-                                "preset_color_retry_failed_status",
-                                level=logging.ERROR,
-                                user=self.username,
-                                status_code=retry_status_code,
-                            )
-                            return False
-
-                    except Exception as retry_e:
-                        logger.log_event(
-                            "bot",
-                            "preset_color_retry_error",
-                            level=logging.ERROR,
-                            user=self.username,
-                            error=str(retry_e),
-                        )
-                        return False
-                else:
-                    logger.log_event(
-                        "bot",
-                        "preset_color_refresh_failed",
-                        level=logging.ERROR,
-                        user=self.username,
-                    )
-                    return False
-            else:
-                logger.log_event(
-                    "bot",
-                    "preset_color_failed_status",
-                    level=logging.ERROR,
-                    user=self.username,
-                    status_code=status_code,
-                )
-                return False
-
-        except Exception as fallback_e:
+        try:
+            return await run_with_retry(
+                op, COLOR_CHANGE_RETRY, user=self.username, log_domain="retry"
+            )
+        except TimeoutError:
+            logger.log_event(
+                "bot", "color_change_timeout", level=logging.ERROR, user=self.username
+            )
+            return 0  # distinguishable non-HTTP code
+        except Exception as e:  # noqa: BLE001
+            # Generic network/other error already logged via retry attempts; final log
             logger.log_event(
                 "bot",
-                "preset_color_error",
+                "preset_color_error"
+                if action == "preset_color"
+                else "error_changing_color_internal",
                 level=logging.ERROR,
                 user=self.username,
-                error=str(fallback_e),
+                error=str(e),
             )
-            return False
+            return 0
 
     def _get_rate_limit_display(self, debug_only=False):
         """Get rate limit information for display in messages"""

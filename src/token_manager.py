@@ -324,21 +324,4 @@ class TokenManager:
     # Removed direct _call_refresh_api; TokenClient handles network operations
 
 
-# Global instance management
-_token_manager_instance: TokenManager | None = None
-
-
-def get_token_manager(http_session: aiohttp.ClientSession) -> TokenManager:
-    """Get or create the global token manager instance"""
-    global _token_manager_instance
-    if _token_manager_instance is None:
-        _token_manager_instance = TokenManager(http_session)
-    return _token_manager_instance
-
-
-async def shutdown_token_manager():
-    """Shutdown the global token manager"""
-    global _token_manager_instance
-    if _token_manager_instance:
-        await _token_manager_instance.stop()
-        _token_manager_instance = None
+# Global factory removed: TokenManager lifecycle handled by ApplicationContext

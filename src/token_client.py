@@ -25,6 +25,7 @@ from .constants import (
     TOKEN_REFRESH_SAFETY_BUFFER_SECONDS,
     TOKEN_REFRESH_THRESHOLD_SECONDS,
 )
+from .internal_errors import NetworkError, OAuthError, ParsingError, RateLimitError
 from .logger import logger
 
 
@@ -116,14 +117,7 @@ class TokenClient:
                     new_refresh = js.get("refresh_token", refresh_token)
                     expires_in = js.get("expires_in")
                     if not new_access:
-                        logger.log_event(
-                            "token",
-                            "refresh_invalid_response",
-                            level=logging.ERROR,
-                            missing_field="access_token",
-                            user=username,
-                        )
-                        return TokenResult(TokenOutcome.FAILED, None, None, None)
+                        raise ParsingError("Missing access_token in refresh response")
                     expiry = None
                     if expires_in:
                         safe_expires = max(
@@ -140,26 +134,45 @@ class TokenClient:
                     return TokenResult(
                         TokenOutcome.REFRESHED, new_access, new_refresh, expiry
                     )
-                # Non-200
-                await resp.text()  # consume for context (unused)
-                logger.log_event(
-                    "token",
-                    "refresh_failed_status",
-                    level=logging.ERROR,
-                    status=resp.status,
-                    user=username,
-                )
-                return TokenResult(TokenOutcome.FAILED, None, None, None)
-        except TimeoutError:
+                if resp.status == 401:
+                    raise OAuthError("Unauthorized during token refresh")
+                if resp.status == 429:
+                    raise RateLimitError("Rate limited during refresh")
+                # Other HTTP error
+                raise NetworkError(f"HTTP {resp.status} during token refresh")
+        except TimeoutError as e:
+            raise NetworkError("Token refresh timeout") from e
+        except aiohttp.ClientError as e:  # type: ignore[name-defined]
+            raise NetworkError(f"Network error during token refresh: {e}") from e
+        except ParsingError:
             logger.log_event(
                 "token",
-                "refresh_timeout",
-                level=logging.WARNING,
+                "refresh_invalid_response",
+                level=logging.ERROR,
+                missing_field="access_token",
                 user=username,
-                attempt=1,
             )
             return TokenResult(TokenOutcome.FAILED, None, None, None)
-        except aiohttp.ClientError as e:  # type: ignore[name-defined]
+        except OAuthError:
+            logger.log_event(
+                "token",
+                "refresh_unauthorized",
+                level=logging.ERROR,
+                user=username,
+                status=401,
+                error_type="OAuthError",
+            )
+            return TokenResult(TokenOutcome.FAILED, None, None, None)
+        except RateLimitError:
+            logger.log_event(
+                "token",
+                "refresh_rate_limited",
+                level=logging.WARNING,
+                user=username,
+                status=429,
+            )
+            return TokenResult(TokenOutcome.FAILED, None, None, None)
+        except NetworkError as e:
             logger.log_event(
                 "token",
                 "refresh_network_error",
@@ -221,11 +234,20 @@ class TokenClient:
                         status=resp.status,
                     )
                 return False, None
-        except TimeoutError:
+        except TimeoutError as e:
             logger.log_event(
                 "token", "validation_timeout", level=logging.WARNING, user=username
             )
-            return False, None
+            raise NetworkError("Token validation timeout") from e
+        except aiohttp.ClientError as e:  # type: ignore[name-defined]
+            logger.log_event(
+                "token",
+                "validation_network_error",
+                level=logging.WARNING,
+                user=username,
+                error_type=type(e).__name__,
+            )
+            raise NetworkError(f"Network error during validation: {e}") from e
         except Exception as e:  # noqa: BLE001
             logger.log_event(
                 "token",

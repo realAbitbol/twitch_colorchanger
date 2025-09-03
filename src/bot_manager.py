@@ -11,6 +11,7 @@ from typing import Any
 
 import aiohttp
 
+from .application_context import ApplicationContext
 from .bot import TwitchColorBot
 from .config_watcher import create_config_watcher
 from .constants import HEALTH_MONITOR_INTERVAL, TASK_WATCHDOG_INTERVAL
@@ -24,7 +25,10 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
     """Manages multiple Twitch bots (start/stop/health/restart)."""
 
     def __init__(
-        self, users_config: list[dict[str, Any]], config_file: str | None = None
+        self,
+        users_config: list[dict[str, Any]],
+        config_file: str | None = None,
+        context: ApplicationContext | None = None,
     ):
         self.users_config = users_config
         self.config_file = config_file
@@ -35,13 +39,15 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         self.restart_requested = False
         self.new_config: list[dict[str, Any]] | None = None
         self._health_check_in_progress = False
+        self.context = context
         self.http_session: aiohttp.ClientSession | None = None
 
     # ---------------- Lifecycle -----------------
     async def _start_all_bots(self) -> bool:
         logger.log_event("manager", "start_all", count=len(self.users_config))
-        logger.log_event("manager", "http_session_create")
-        self.http_session = aiohttp.ClientSession()
+        if not self.context:
+            raise RuntimeError("ApplicationContext required")
+        self.http_session = self.context.session
         for user_config in self.users_config:
             try:
                 bot = self._create_bot(user_config)
@@ -69,17 +75,18 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         return True
 
     def _create_bot(self, user_config: dict[str, Any]) -> TwitchColorBot:
-        if not self.http_session:
-            raise RuntimeError("HTTP session not initialized")
+        if not self.context or not self.context.session:
+            raise RuntimeError("Context/session not initialized")
         username = user_config["username"]
         bot = TwitchColorBot(
+            context=self.context,
             token=user_config["access_token"],
             refresh_token=user_config.get("refresh_token", ""),
             client_id=user_config.get("client_id", ""),
             client_secret=user_config.get("client_secret", ""),
             nick=username,
             channels=user_config["channels"],
-            http_session=self.http_session,
+            http_session=self.context.session,
             is_prime_or_turbo=user_config.get("is_prime_or_turbo", True),
             config_file=self.config_file,
             user_id=None,
@@ -93,11 +100,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         logger.log_event("manager", "stopping_all", level=logging.WARNING)
         self._cancel_all_tasks()
         self._close_all_bots()
-        if self.http_session:
-            try:
-                await self.http_session.close()
-            finally:
-                self.http_session = None
+        # Session closed by ApplicationContext during global shutdown
         await self._wait_for_task_completion()
         self.running = False
         logger.log_event("manager", "all_stopped")
@@ -609,7 +612,11 @@ def _cleanup_watcher(watcher):  # pragma: no cover
 
 
 async def run_bots(users_config: list[dict[str, Any]], config_file: str | None = None):
-    manager = BotManager(users_config, config_file)
+    from .application_context import ApplicationContext  # local import to avoid cycles
+
+    context = await ApplicationContext.create()
+    await context.start()
+    manager = BotManager(users_config, config_file, context=context)
     manager.setup_signal_handlers()
     watcher = await _setup_config_watcher(manager, config_file)
     try:
@@ -625,5 +632,15 @@ async def run_bots(users_config: list[dict[str, Any]], config_file: str | None =
     finally:
         _cleanup_watcher(watcher)
         await manager._stop_all_bots()
+        from .logger import logger as _logger  # local import safe here
+
+        _logger.log_event("app", "context_shutdown_begin")
+        try:
+            await context.shutdown()
+        except Exception as e:  # noqa: BLE001
+            _logger.log_event(
+                "context", "shutdown_error", level=logging.WARNING, error=str(e)
+            )
+        _logger.log_event("app", "context_shutdown_complete")
         manager.print_statistics()
         logger.log_event("manager", "goodbye")

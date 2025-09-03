@@ -5,10 +5,8 @@ Configuration management for the Twitch Color Changer bot
 import logging
 import os
 import sys
-import time
 
 from .config_repository import ConfigRepository
-from .constants import CONFIG_WRITE_DEBOUNCE
 from .logger import logger
 from .user_config_model import UserConfig, normalize_user_list
 
@@ -38,7 +36,7 @@ def save_users_to_config(users, config_file):
             repo._last_checksum = None  # reset checksum
             repo.save_users(normalized_users)
             repo.verify_readback()
-    time.sleep(CONFIG_WRITE_DEBOUNCE)
+    # Removed blocking sleep debounce (handled internally or not required for async responsiveness)
 
 
 def update_user_in_config(user_config_dict, config_file):
@@ -116,42 +114,7 @@ def _log_update_failed(e: Exception, user_config_dict):
     )
 
 
-def disable_random_colors_for_user(username, config_file):
-    """Disable random colors for a specific user due to Turbo/Prime requirement"""
-    try:
-        users = load_users_from_config(config_file)
-        user_found = False
-        for user in users:
-            if user.get("username") == username:
-                user_found = True
-                if user.get("is_prime_or_turbo") is not False:
-                    user["is_prime_or_turbo"] = False
-                    logger.log_event(
-                        "config",
-                        "random_colors_disabled",
-                        username=username,
-                    )
-                break
-        if not user_found:
-            logger.log_event(
-                "config",
-                "random_colors_user_not_found",
-                level=logging.WARNING,
-                username=username,
-            )
-            return False
-        save_users_to_config(users, config_file)
-        return True
-    except Exception as e:
-        logger.log_event(
-            "config",
-            "disable_random_colors_failed",
-            level=logging.ERROR,
-            username=username,
-            error=str(e),
-            error_type=type(e).__name__,
-        )
-        return False
+## Removed legacy function disable_random_colors_for_user (unused)  # noqa: ERA001
 
 
 def _validate_and_filter_users(raw_users):

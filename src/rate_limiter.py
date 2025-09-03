@@ -535,24 +535,4 @@ class TwitchRateLimiter:
         )
 
 
-# Global rate limiter instances (one per client_id/username combination)
-_rate_limiters: dict[str, TwitchRateLimiter] = {}
-
-
-def get_rate_limiter(client_id: str, username: str = None) -> TwitchRateLimiter:
-    """
-    Get or create a rate limiter for a specific client_id/username combination
-
-    Args:
-        client_id: Twitch application client ID
-        username: Username for user-specific rate limiting (optional)
-
-    Returns:
-        TwitchRateLimiter instance
-    """
-    key = f"{client_id}:{username or 'app'}"
-
-    if key not in _rate_limiters:
-        _rate_limiters[key] = TwitchRateLimiter(client_id, username)
-
-    return _rate_limiters[key]
+# Legacy global registry removed: rate limiters are now provided by ApplicationContext
