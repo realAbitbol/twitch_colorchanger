@@ -15,7 +15,7 @@ from random import SystemRandom
 from typing import TypeVar
 
 from errors.internal import InternalError
-from project_logging.logger import logger
+from logs.logger import logger
 
 _rand = SystemRandom()
 

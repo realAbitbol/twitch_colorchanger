@@ -6,7 +6,7 @@ import time
 
 import aiohttp
 
-from project_logging.logger import logger
+from logs.logger import logger
 from utils import format_duration
 
 
@@ -17,9 +17,11 @@ class DeviceCodeFlow:
         """Initialize device flow state."""
         self.client_id = client_id
         self.client_secret = client_secret
-        # OAuth endpoints (constant URLs, not secrets). # nosec B105
+        # Public OAuth endpoint constants (well-known; not secrets or passwords)
+        # These are standard Twitch OAuth endpoints, not credentials or secrets.
         self.device_code_url = "https://id.twitch.tv/oauth2/device"
-        self.token_url = "https://id.twitch.tv/oauth2/token"  # nosec B105
+        # Standard public Twitch OAuth token endpoint (not a secret or credential)
+        self.token_url = "https://id.twitch.tv/oauth2/token"  # noqa: S105  # nosec B105
         self.poll_interval = 5  # seconds
 
     async def request_device_code(self) -> dict | None:

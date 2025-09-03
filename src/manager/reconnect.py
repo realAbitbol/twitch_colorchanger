@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from project_logging.logger import logger
+from logs.logger import logger
 
 if TYPE_CHECKING:  # pragma: no cover
     from bot import TwitchColorBot

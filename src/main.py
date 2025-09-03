@@ -16,7 +16,7 @@ from config import (
     setup_missing_tokens,
 )
 from errors.handling import log_error
-from project_logging.logger import logger
+from logs.logger import logger
 from utils import emit_startup_instructions
 
 

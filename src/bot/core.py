@@ -15,7 +15,7 @@ from application_context import ApplicationContext
 from config import update_user_in_config
 from config.model import normalize_channels_list
 from irc.async_irc import AsyncTwitchIRC
-from project_logging.logger import logger
+from logs.logger import logger
 from rate.retry_policies import (
     COLOR_CHANGE_RETRY,
     DEFAULT_NETWORK_RETRY,

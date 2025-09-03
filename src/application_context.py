@@ -11,11 +11,11 @@ Provides unified startup/shutdown semantics.
 from __future__ import annotations
 
 import asyncio
+from token.manager import TokenManager
 
 import aiohttp
 
-from auth_token.manager import TokenManager
-from project_logging.logger import logger
+from logs.logger import logger
 from rate.rate_limiter import TwitchRateLimiter
 
 

@@ -6,7 +6,7 @@ import logging
 import time
 from random import SystemRandom
 
-from project_logging.logger import logger
+from logs.logger import logger
 
 
 class AdaptiveBackoff:

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from project_logging.logger import logger
+from logs.logger import logger
 from rate.retry_policies import COLOR_CHANGE_RETRY, run_with_retry
 
 from .utils import get_random_hex, get_random_preset

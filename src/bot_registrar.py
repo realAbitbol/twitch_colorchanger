@@ -9,12 +9,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from logs.logger import logger
+from .logging.logger import logger
 
 if TYPE_CHECKING:  # pragma: no cover
-    from token.manager import TokenManager
-
-    from .core import TwitchColorBot
+    from .bot import TwitchColorBot
+    from .token.manager import TokenManager
 
 
 class BotRegistrar:

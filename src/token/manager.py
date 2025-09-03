@@ -17,7 +17,7 @@ from constants import (
     TOKEN_MANAGER_VALIDATION_MIN_INTERVAL,
     TOKEN_REFRESH_THRESHOLD_SECONDS,
 )
-from project_logging.logger import logger
+from logs.logger import logger
 
 from .client import TokenClient, TokenOutcome
 

@@ -10,7 +10,7 @@ from constants import (
     RATE_LIMIT_SAFETY_BUFFER,
     STALE_BUCKET_AGE,
 )
-from project_logging.logger import logger
+from logs.logger import logger
 
 from .backoff_strategy import AdaptiveBackoff
 from .rate_limit_headers import parse_rate_limit_headers

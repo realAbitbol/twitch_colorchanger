@@ -12,7 +12,7 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from constants import RELOAD_WATCH_DELAY
-from project_logging.logger import logger
+from logs.logger import logger
 
 from .core import (
     _validate_and_filter_users,  # reuse core validation helper
