@@ -147,9 +147,12 @@ class TokenManager:
         token_info.state = self._determine_token_state(token_info)
 
         self.tokens[username] = token_info
-        self.logger.debug(
-            f"Registered with token manager (state: {token_info.state.value})",
+        self.logger.log_event(
+            "token_manager",
+            "user_registered",
+            level=logging.DEBUG,
             username=username,
+            state=token_info.state.value,
         )
 
     async def get_fresh_token(self, username: str) -> str | None:
@@ -308,9 +311,12 @@ class TokenManager:
                         # Only consider valid if above threshold
                         if token_info.state == TokenState.FRESH:
                             # Validated and still above freshness threshold
-                            self.logger.debug(
-                                f"Token validated, {expires_in}s remaining",
+                            self.logger.log_event(
+                                "token_manager",
+                                "token_validated",
+                                level=logging.DEBUG,
                                 username=token_info.username,
+                                expires_in=expires_in,
                             )
                             return True
 
@@ -333,7 +339,12 @@ class TokenManager:
 
         # Check if we should delay due to recent failures
         if time.time() < token_info.cooldown_until:
-            self.logger.debug("Token refresh in cooldown", username=token_info.username)
+            self.logger.log_event(
+                "token_manager",
+                "refresh_in_cooldown",
+                level=logging.DEBUG,
+                username=token_info.username,
+            )
             return False
 
         token_info.state = TokenState.REFRESHING

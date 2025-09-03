@@ -33,10 +33,12 @@ class BotLogger:
     """Project logger with lightweight structured event support.
 
     Conventions:
-      * Prefer logger.log_event(domain="token", action="refresh_success", user=username, latency_ms=123)
-      * Falls back to level methods (info/debug/...) for free-form messages.
-      * log_event builds a canonical event name '<domain>_<action>' and attaches any extra
-        kwargs as key=value pairs appended to the message (until a JSON formatter is added).
+            * Use logger.log_event(domain="token", action="refresh_success", user=username, latency_ms=123)
+            * Direct level methods (debug/info/warning/...) were removed; all application code should
+                emit structured events via log_event. Free-form messages can still be passed by setting
+                domain/action and providing a 'human' override or letting the fallback generate text.
+            * log_event builds a canonical event name '<domain>_<action>' and attaches any extra
+                kwargs as key=value pairs appended to the message (until a JSON formatter is added).
     """
 
     def __init__(self, name: str = "twitch_colorchanger", log_file: str | None = None):

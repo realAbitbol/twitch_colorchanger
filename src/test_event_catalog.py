@@ -36,11 +36,17 @@ def extract_events(path: Path):
 
 
 def test_event_templates_complete():  # pragma: no cover - optional quality gate
+    """Scan all Python source files (recursively) for logger.log_event usages.
+
+    Excludes test_*.py and __pycache__ directories. This future‑proofs the
+    check if we later introduce packages/subdirectories.
+    """
     all_events: set[tuple[str, str]] = set()
-    for py in SRC_DIR.glob("*.py"):
-        if py.name.startswith("test_"):
+    for py in SRC_DIR.rglob("*.py"):
+        # Skip tests and cached bytecode dirs
+        if py.name.startswith("test_") or "__pycache__" in py.parts:
             continue
-        all_events |= extract_events(py)
+        all_events.update(extract_events(py))
 
     missing = [
         ea

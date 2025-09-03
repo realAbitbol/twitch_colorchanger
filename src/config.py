@@ -92,13 +92,19 @@ def _set_file_permissions(config_file):
 
 
 def _log_save_operation(users, config_file):
-    """Log the save operation details"""
-    logger.debug(
-        "config_save_operation_start", user_count=len(users), config_file=config_file
+    """Log the save operation details (debug level)."""
+    logger.log_event(
+        "config",
+        "save_operation_start",
+        level=logging.DEBUG,
+        user_count=len(users),
+        config_file=config_file,
     )
     for i, user in enumerate(users, 1):
-        logger.debug(
-            "config_save_user_detail",
+        logger.log_event(
+            "config",
+            "save_user_detail",
+            level=logging.DEBUG,
             index=i,
             username=user.get("username"),
             is_prime_or_turbo=user.get("is_prime_or_turbo", "MISSING_FIELD"),
@@ -106,24 +112,36 @@ def _log_save_operation(users, config_file):
 
 
 def _log_debug_data(save_data):
-    """Log debug information about the data being saved"""
-    logger.debug(
-        "config_save_json_preview", data=json.dumps(save_data, separators=(",", ":"))
+    """Log debug information about the data being saved."""
+    preview = json.dumps(save_data, separators=(",", ":"))
+    if len(preview) > 500:
+        preview = preview[:497] + "..."
+    logger.log_event(
+        "config",
+        "save_json_preview",
+        level=logging.DEBUG,
+        length=len(preview),
+        data=preview,
     )
 
 
 def _verify_saved_data(config_file):
-    """Verify that the data was saved correctly"""
+    """Verify that the data was saved correctly (debug events)."""
     try:
         with open(config_file, encoding="utf-8") as f:
             verification_data = json.load(f)
-        logger.debug(
-            "config_save_verification",
-            user_count=len(verification_data.get("users", [])),
+        users_list = verification_data.get("users", [])
+        logger.log_event(
+            "config",
+            "save_verification",
+            level=logging.DEBUG,
+            user_count=len(users_list),
         )
-        for i, user in enumerate(verification_data.get("users", []), 1):
-            logger.debug(
-                "config_save_verification_user",
+        for i, user in enumerate(users_list, 1):
+            logger.log_event(
+                "config",
+                "save_verification_user",
+                level=logging.DEBUG,
                 index=i,
                 username=user.get("username", "NO_USERNAME"),
                 is_prime_or_turbo=user.get("is_prime_or_turbo", "MISSING_FIELD"),
@@ -131,7 +149,7 @@ def _verify_saved_data(config_file):
     except Exception as verify_error:
         logger.log_event(
             "config",
-            "save_atomic_failed",  # reuse existing template for atomic save failure
+            "save_atomic_failed",
             level=logging.ERROR,
             error_type=type(verify_error).__name__,
             error=str(verify_error),
@@ -151,8 +169,10 @@ def save_users_to_config(users, config_file):
         for user in users:
             if "is_prime_or_turbo" not in user:
                 user["is_prime_or_turbo"] = True  # Default value
-                logger.debug(
-                    "config_added_missing_is_prime_or_turbo",
+                logger.log_event(
+                    "config",
+                    "added_missing_is_prime_or_turbo",
+                    level=logging.DEBUG,
                     username=user.get("username", "Unknown"),
                     value=user["is_prime_or_turbo"],
                 )
@@ -259,8 +279,10 @@ def update_user_in_config(user_config, config_file):
         # Ensure the user_config has is_prime_or_turbo field
         if "is_prime_or_turbo" not in user_config:
             user_config["is_prime_or_turbo"] = True  # Default value
-            logger.debug(
-                "config_added_missing_is_prime_or_turbo",
+            logger.log_event(
+                "config",
+                "added_missing_is_prime_or_turbo",
+                level=logging.DEBUG,
                 username=user_config.get("username", "Unknown"),
                 value=user_config["is_prime_or_turbo"],
             )
