@@ -15,7 +15,6 @@ import aiohttp
 from .adaptive_scheduler import AdaptiveScheduler
 from .application_context import ApplicationContext
 from .async_irc import AsyncTwitchIRC
-from .color_utils import get_random_hex, get_random_preset
 from .config import update_user_in_config
 from .logger import logger
 from .retry_policies import COLOR_CHANGE_RETRY, DEFAULT_NETWORK_RETRY, run_with_retry
@@ -689,174 +688,22 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 )
 
     async def _change_color(self, hex_color=None):
-        """Change the username color via Twitch API"""
-        # Determine target color
-        color = hex_color if hex_color else self._select_color()
+        """Delegate color change to service."""
+        from .color_change_service import ColorChangeService  # local import
 
-        async def op() -> bool:
-            await self.rate_limiter.wait_if_needed("change_color", is_user_request=True)
-            return await self._attempt_color_change(color)
+        if not hasattr(self, "_color_service"):
+            self._color_service = ColorChangeService(self)  # type: ignore[attr-defined]
+        return await self._color_service.change_color(hex_color)  # type: ignore[attr-defined]
 
-        try:
-            result = await run_with_retry(
-                op, COLOR_CHANGE_RETRY, user=self.username, log_domain="retry"
-            )
-            if not result and self.use_random_colors and not hex_color:
-                # fallback to preset if random hex failed
-                preset_result = await self._try_preset_color_fallback()
-                return preset_result
-            return result
-        except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "bot",
-                "error_changing_color_internal",
-                level=logging.ERROR,
-                user=self.username,
-                error=str(e),
-            )
-            return False
+    # Color selection moved to ColorChangeService
 
-    def _select_color(self):
-        """Select the appropriate color based on user settings"""
-        if self.use_random_colors:
-            # Use hex colors for Prime/Turbo users
-            return get_random_hex(exclude=self.last_color)
-        # Use static Twitch preset colors for regular users
-        return get_random_preset(exclude=self.last_color)
+    # _attempt_color_change removed – unified in ColorChangeService
 
-    async def _attempt_color_change(self, color):
-        """Attempt to change color and handle the response"""
-        params = {"user_id": self.user_id, "color": color}
-
-        # First attempt (with retry policy for transient errors)
-        status_code = await self._perform_color_request(params, action="change_color")
-        response = self._handle_color_change_response(status_code, color)
-        if response != "token_refresh_needed":
-            if status_code == 0:  # internal error sentinel
-                logger.log_event(
-                    "bot",
-                    "color_change_internal_error",
-                    level=logging.ERROR,
-                    user=self.username,
-                )
-            return response
-
-        # Refresh path
-        logger.log_event("bot", "color_change_attempt_refresh", user=self.username)
-        if not await self._check_and_refresh_token(force=True):
-            logger.log_event(
-                "bot", "color_refresh_failed", level=logging.ERROR, user=self.username
-            )
-            return False
-        logger.log_event("bot", "color_retry_after_refresh", user=self.username)
-        params_refreshed = {"user_id": self.user_id, "color": color}
-        retry_status = await self._perform_color_request(
-            params_refreshed, action="change_color"
-        )
-        retry_response = self._handle_color_change_response(retry_status, color)
-        return False if retry_response == "token_refresh_needed" else retry_response
-
-    def _handle_color_change_response(self, status_code, color):
-        """Handle the response from color change API call"""
-        if status_code == 204:
-            self.colors_changed += 1
-            self.last_color = color  # Store the successfully applied color
-            logger.log_event("bot", "color_changed", user=self.username, color=color)
-            return True
-        if status_code == 429:
-            self.rate_limiter.handle_429_error(
-                {}, is_user_request=True
-            )  # headers were already processed
-            logger.log_event(
-                "bot",
-                "rate_limited_color_change",
-                level=logging.WARNING,
-                user=self.username,
-            )
-            return False
-        if status_code == 401:
-            # Token expired/invalid - trigger immediate refresh
-            logger.log_event(
-                "bot",
-                "token_refresh_for_color",
-                level=logging.WARNING,
-                user=self.username,
-            )
-            return "token_refresh_needed"  # Special return value to trigger refresh
-        logger.log_event(
-            "bot",
-            "color_change_status_failed",
-            level=logging.ERROR,
-            user=self.username,
-            status_code=status_code,
-        )
-        return False
+    # _handle_color_change_response removed – logic in ColorChangeService
 
     ## Removed deprecated _handle_api_error placeholder  # noqa: ERA001
 
-    async def _try_preset_color_fallback(self):
-        """Try changing color with preset colors as fallback"""
-        color = get_random_preset(exclude=self.last_color)
-        params = {"user_id": self.user_id, "color": color}
-        status_code = await self._perform_color_request(params, action="preset_color")
-        if status_code == 204:
-            self.colors_changed += 1
-            self.last_color = color
-            logger.log_event(
-                "bot", "preset_color_changed", user=self.username, color=color
-            )
-            return True
-        if status_code == 0:
-            logger.log_event(
-                "bot",
-                "preset_color_internal_error",
-                level=logging.ERROR,
-                user=self.username,
-            )
-            return False
-        if status_code == 401:
-            logger.log_event(
-                "bot", "preset_color_401", level=logging.WARNING, user=self.username
-            )
-            if await self._check_and_refresh_token(force=True):
-                logger.log_event("bot", "preset_color_retry", user=self.username)
-                # retry once after refresh
-                retry_status = await self._perform_color_request(
-                    params, action="preset_color"
-                )
-                if retry_status == 204:
-                    self.colors_changed += 1
-                    self.last_color = color
-                    logger.log_event(
-                        "bot",
-                        "preset_color_changed",
-                        user=self.username,
-                        color=color,
-                    )
-                    return True
-                logger.log_event(
-                    "bot",
-                    "preset_color_retry_failed_status",
-                    level=logging.ERROR,
-                    user=self.username,
-                    status_code=retry_status,
-                )
-                return False
-            logger.log_event(
-                "bot",
-                "preset_color_refresh_failed",
-                level=logging.ERROR,
-                user=self.username,
-            )
-            return False
-        logger.log_event(
-            "bot",
-            "preset_color_failed_status",
-            level=logging.ERROR,
-            user=self.username,
-            status_code=status_code,
-        )
-        return False
+    # _try_preset_color_fallback removed – handled via fallback logic
 
     async def _perform_color_request(self, params: dict, action: str) -> int:
         """Perform the color change HTTP PUT with retry and rate limiting.
