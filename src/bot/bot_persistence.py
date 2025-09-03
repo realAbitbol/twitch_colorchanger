@@ -10,7 +10,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from config.core import update_user_in_config
-from project_logging.logger import logger
+from logs.logger import logger
 
 if TYPE_CHECKING:  # pragma: no cover
     pass

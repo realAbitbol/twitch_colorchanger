@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from project_logging.logger import logger
+from logs.logger import logger
 
 
 class ManagerStatistics:

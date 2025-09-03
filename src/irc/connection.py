@@ -16,7 +16,7 @@ from constants import (
     BACKOFF_MULTIPLIER,
     RECONNECT_DELAY,
 )
-from project_logging.logger import logger
+from logs.logger import logger
 
 if TYPE_CHECKING:  # pragma: no cover
     from .async_irc import AsyncTwitchIRC

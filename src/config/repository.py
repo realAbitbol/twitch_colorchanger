@@ -5,13 +5,14 @@ import fcntl
 import hashlib
 import json
 import os
+import stat
 import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
 from constants import CONFIG_WRITE_DEBOUNCE
-from project_logging.logger import logger
+from logs.logger import logger
 
 from . import globals as watcher_globals  # type: ignore
 
@@ -140,9 +141,15 @@ class ConfigRepository:
         config_dir = os.path.dirname(self.path)
         if config_dir and not os.path.exists(config_dir):
             os.makedirs(config_dir, exist_ok=True)
+            # Ensure directory is at most rwx for owner and rx for group/others (not world-writable)
             try:
-                os.chmod(config_dir, 0o755)  # nosec B103
+                current_mode = stat.S_IMODE(os.lstat(config_dir).st_mode)
+                desired_mode = 0o755
+                if current_mode != desired_mode:
+                    os.chmod(config_dir, desired_mode)
             except PermissionError:
+                pass
+            except FileNotFoundError:
                 pass
 
     def _atomic_write(self, data: dict[str, Any]) -> None:

@@ -6,7 +6,7 @@ import inspect
 import logging
 from typing import TYPE_CHECKING
 
-from project_logging.logger import logger
+from logs.logger import logger
 
 from .parser import build_privmsg, parse_irc_message
 

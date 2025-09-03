@@ -14,7 +14,7 @@ from constants import (
     TOKEN_REFRESH_THRESHOLD_SECONDS,
 )
 from errors.internal import NetworkError, OAuthError, ParsingError, RateLimitError
-from project_logging.logger import logger
+from logs.logger import logger
 from utils import format_duration
 
 

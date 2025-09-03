@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from project_logging.logger import logger
+from logs.logger import logger
 
 
 @dataclass

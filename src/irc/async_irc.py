@@ -16,7 +16,7 @@ from constants import (
     PING_EXPECTED_INTERVAL,
     SERVER_ACTIVITY_TIMEOUT,
 )
-from project_logging.logger import logger
+from logs.logger import logger
 
 from . import (
     ConnectionState,

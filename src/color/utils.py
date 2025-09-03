@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-import random  # nosec B311
 from collections.abc import Iterable, Sequence
+from secrets import SystemRandom
 
 __all__ = ["get_random_preset", "get_random_hex", "TWITCH_PRESET_COLORS"]
+
+_RNG = SystemRandom()
 
 TWITCH_PRESET_COLORS: Sequence[str] = (
     "blue",
@@ -46,7 +48,8 @@ def get_random_preset(exclude: str | Iterable[str] | None = None) -> str:
     candidates = _filter_exclude(TWITCH_PRESET_COLORS, excl_iter)
     if not candidates:
         candidates = list(TWITCH_PRESET_COLORS)
-    return random.choice(candidates)  # nosec B311
+    # Non-cryptographic selection acceptable; using SystemRandom for clarity.
+    return _RNG.choice(candidates)
 
 
 def get_random_hex(exclude: str | Iterable[str] | None = None) -> str:
@@ -59,9 +62,9 @@ def get_random_hex(exclude: str | Iterable[str] | None = None) -> str:
         exclude_set = set()
 
     for _ in range(10):
-        hue = random.randint(0, 359)  # nosec B311
-        saturation = random.randint(60, 100)  # nosec B311
-        lightness = random.randint(35, 75)  # nosec B311
+        hue = _RNG.randint(0, 359)
+        saturation = _RNG.randint(60, 100)
+        lightness = _RNG.randint(35, 75)
         c = (1 - abs(2 * lightness / 100 - 1)) * saturation / 100
         x = c * (1 - abs((hue / 60) % 2 - 1))
         m = lightness / 100 - c / 2

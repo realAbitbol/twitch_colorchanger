@@ -7,7 +7,7 @@ from secrets import SystemRandom
 from typing import TYPE_CHECKING
 
 from constants import TASK_WATCHDOG_INTERVAL
-from project_logging.logger import logger
+from logs.logger import logger
 
 if TYPE_CHECKING:  # pragma: no cover
     from bot.manager import BotManager

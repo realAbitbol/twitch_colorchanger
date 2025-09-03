@@ -7,7 +7,7 @@ from secrets import SystemRandom
 from typing import TYPE_CHECKING
 
 from constants import HEALTH_MONITOR_INTERVAL
-from project_logging.logger import logger
+from logs.logger import logger
 
 if TYPE_CHECKING:  # pragma: no cover
     from bot import TwitchColorBot

@@ -15,9 +15,9 @@ from application_context import ApplicationContext
 from config.globals import set_global_watcher
 from config.watcher import create_config_watcher
 from constants import HEALTH_MONITOR_INTERVAL, TASK_WATCHDOG_INTERVAL
+from logs.logger import logger
 from manager import HealthMonitor, ManagerStatistics
 from manager.task_watchdog import TaskWatchdog
-from project_logging.logger import logger
 
 from .core import TwitchColorBot
 
@@ -357,7 +357,7 @@ async def run_bots(users_config: list[dict[str, Any]], config_file: str | None =
     finally:
         _cleanup_watcher(watcher)
         await manager._stop_all_bots()
-        from project_logging.logger import logger as _logger  # local to avoid cycles
+        from logs.logger import logger as _logger  # local to avoid cycles
 
         _logger.log_event("app", "context_shutdown_begin")
         try:

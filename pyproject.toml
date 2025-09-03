@@ -65,6 +65,9 @@ lint.select = [
     "C4",     # flake8-comprehensions
     "SIM",    # flake8-simplify
     "UP",     # pyupgrade
+    "S",      # security
+    "PERF",   # performance
+    "ASYNC",  # async best practices
 ]
 
 # Ignore specific rules that are too strict for this project
