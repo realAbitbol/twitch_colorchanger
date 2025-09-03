@@ -14,9 +14,9 @@ import asyncio
 
 import aiohttp
 
-from .logger import logger
-from .rate_limiter import TwitchRateLimiter
-from .token_manager import TokenManager
+from auth_token.manager import TokenManager
+from project_logging.logger import logger
+from rate.rate_limiter import TwitchRateLimiter
 
 
 class ApplicationContext:
