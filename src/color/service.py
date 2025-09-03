@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from logs.logger import logger
 from rate.retry_policies import COLOR_CHANGE_RETRY, run_with_retry
 
+from .models import ColorRequestResult, ColorRequestStatus
 from .utils import TWITCH_PRESET_COLORS, get_random_hex, get_random_preset
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -73,15 +74,18 @@ class ColorChangeService:
         is_preset = lowered in {c.lower() for c in TWITCH_PRESET_COLORS}
         action = "preset_color" if is_preset else "change_color"
 
-        status_code = await self._issue_request(color, action)
+        result = await self._issue_request(color, action)
 
-        if status_code == 204:
+        if result.status == ColorRequestStatus.SUCCESS:
             return self._on_success(color, is_preset)
-        if status_code == 0:
+        if result.status in (
+            ColorRequestStatus.TIMEOUT,
+            ColorRequestStatus.INTERNAL_ERROR,
+        ):
             return self._on_internal_error(is_preset)
-        if status_code == 429:
-            return self._on_rate_limited(is_preset, status_code)
-        if status_code == 401:
+        if result.status == ColorRequestStatus.RATE_LIMIT:
+            return self._on_rate_limited(is_preset, result.http_status or 429)
+        if result.status == ColorRequestStatus.UNAUTHORIZED:
             return await self._on_unauthorized(
                 color,
                 allow_refresh=allow_refresh,
@@ -90,11 +94,11 @@ class ColorChangeService:
             )
         return await self._on_generic_failure(
             is_preset=is_preset,
-            status_code=status_code,
+            status_code=result.http_status or 0,
             fallback_to_preset=fallback_to_preset,
         )
 
-    async def _issue_request(self, color: str, action: str) -> int:
+    async def _issue_request(self, color: str, action: str) -> ColorRequestResult:
         params = {"user_id": self.bot.user_id, "color": color}
         return await self.bot._perform_color_request(params, action=action)
 

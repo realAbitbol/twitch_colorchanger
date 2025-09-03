@@ -21,6 +21,7 @@ from utils import format_duration
 class TokenOutcome(str, Enum):
     VALID = "valid"
     REFRESHED = "refreshed"
+    SKIPPED = "skipped"  # no action needed; still within safe threshold
     FAILED = "failed"
 
 
@@ -60,7 +61,9 @@ class TokenClient:
             and (expiry - datetime.now()).total_seconds()
             > TOKEN_REFRESH_THRESHOLD_SECONDS
         ):
-            return TokenResult(TokenOutcome.VALID, access_token, refresh_token, expiry)
+            return TokenResult(
+                TokenOutcome.SKIPPED, access_token, refresh_token, expiry
+            )
 
         if not force_refresh:
             is_valid, remote_expiry = await self._validate_remote(
@@ -74,7 +77,10 @@ class TokenClient:
                     > TOKEN_REFRESH_THRESHOLD_SECONDS
                 ):
                     return TokenResult(
-                        TokenOutcome.VALID, access_token, refresh_token, final_expiry
+                        TokenOutcome.SKIPPED,
+                        access_token,
+                        refresh_token,
+                        final_expiry,
                     )
                 logger.log_event(
                     "token", "valid_but_expiring", level=logging.WARNING, user=username

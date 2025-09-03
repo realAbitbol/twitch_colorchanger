@@ -12,6 +12,7 @@ import aiohttp
 
 from api.twitch import TwitchAPI
 from application_context import ApplicationContext
+from color.models import ColorRequestResult, ColorRequestStatus
 from config.async_persistence import (
     flush_pending_updates,
     queue_user_update,
@@ -89,54 +90,35 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         self.token_manager = self.context.token_manager
         self._registrar = BotRegistrar(self.token_manager)
         await self._registrar.register(self)
-        if not self.user_id:
-            user_info = await self._get_user_info()
-            if user_info and "id" in user_info:
-                self.user_id = user_info["id"]
-                logger.log_event(
-                    "bot", "user_id_retrieved", user=self.username, user_id=self.user_id
-                )
-            else:
-                logger.log_event(
-                    "bot", "user_id_failed", level=logging.ERROR, user=self.username
-                )
-                return
-        current_color = await self._get_current_color()
-        if current_color:
-            self.last_color = current_color
-            logger.log_event(
-                "bot", "initialized_color", user=self.username, color=current_color
-            )
-        logger.log_event("bot", "using_async_irc", user=self.username)
-        self.irc = AsyncTwitchIRC()
-        normalized_channels, was_changed = normalize_channels_list(self.channels)
-        if was_changed:
-            logger.log_event(
-                "bot",
-                "normalized_channels",
-                user=self.username,
-                old_count=len(self.channels),
-                new_count=len(normalized_channels),
-            )
-            self.channels = normalized_channels
-            await self._persist_normalized_channels()
-        else:
-            self.channels = normalized_channels
-        self.irc.channels = normalized_channels.copy()
-        self.irc.set_message_handler(self.handle_irc_message)
-        try:
-            self.irc.set_auth_failure_callback(self._on_irc_auth_failure)  # type: ignore[attr-defined]
-        except AttributeError:
-            pass
-        if not await self.irc.connect(
-            self.access_token, self.username, normalized_channels[0]
-        ):
-            logger.log_event(
-                "bot", "connect_failed", level=logging.ERROR, user=self.username
-            )
+        if not await self._initialize_connection():
             return
-        logger.log_event("bot", "listener_start", user=self.username)
         self.irc_task = asyncio.create_task(self.irc.listen())
+
+        def _irc_task_done(task: asyncio.Task):  # local callback
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc:
+                try:
+                    logger.log_event(
+                        "bot",
+                        "irc_listener_task_error",
+                        level=logging.ERROR,
+                        user=self.username,
+                        error=str(exc),
+                        error_type=type(exc).__name__,
+                    )
+                except Exception as cb_e:  # noqa: BLE001
+                    logger.log_event(
+                        "bot",
+                        "irc_listener_task_log_fail",
+                        level=logging.DEBUG,
+                        user=self.username,
+                        error=str(cb_e),
+                    )
+
+        self.irc_task.add_done_callback(_irc_task_done)
+        normalized_channels = getattr(self, "_normalized_channels_cache", self.channels)  # type: ignore[attr-defined]
         for channel in normalized_channels[1:]:
             await self.irc.join_channel(channel)
         await self.scheduler.start()
@@ -171,6 +153,59 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                 )
         self.running = False
         await asyncio.sleep(0.1)
+
+    async def _initialize_connection(self) -> bool:
+        """Prepare user id, color state, IRC client and connect. Returns success."""
+        if not self.user_id:
+            user_info = await self._get_user_info()
+            if user_info and "id" in user_info:
+                self.user_id = user_info["id"]
+                logger.log_event(
+                    "bot", "user_id_retrieved", user=self.username, user_id=self.user_id
+                )
+            else:
+                logger.log_event(
+                    "bot", "user_id_failed", level=logging.ERROR, user=self.username
+                )
+                return False
+        current_color = await self._get_current_color()
+        if current_color:
+            self.last_color = current_color
+            logger.log_event(
+                "bot", "initialized_color", user=self.username, color=current_color
+            )
+        logger.log_event("bot", "using_async_irc", user=self.username)
+        self.irc = AsyncTwitchIRC()
+        normalized_channels, was_changed = normalize_channels_list(self.channels)
+        if was_changed:
+            logger.log_event(
+                "bot",
+                "normalized_channels",
+                user=self.username,
+                old_count=len(self.channels),
+                new_count=len(normalized_channels),
+            )
+            self.channels = normalized_channels
+            await self._persist_normalized_channels()
+        else:
+            self.channels = normalized_channels
+        self.irc.channels = normalized_channels.copy()
+        self.irc.set_message_handler(self.handle_irc_message)
+        try:
+            self.irc.set_auth_failure_callback(self._on_irc_auth_failure)  # type: ignore[attr-defined]
+        except AttributeError:
+            pass
+        if not await self.irc.connect(
+            self.access_token, self.username, normalized_channels[0]
+        ):
+            logger.log_event(
+                "bot", "connect_failed", level=logging.ERROR, user=self.username
+            )
+            return False
+        logger.log_event("bot", "listener_start", user=self.username)
+        # Provide normalized channels list to caller context (start method) via return attribute
+        self._normalized_channels_cache = normalized_channels  # type: ignore[attr-defined]
+        return True
 
     async def _cancel_token_task(self):  # compatibility no-op
         pass
@@ -396,7 +431,9 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             self._color_service = ColorChangeService(self)  # type: ignore[attr-defined]
         return await self._color_service.change_color(hex_color)  # type: ignore[attr-defined]
 
-    async def _perform_color_request(self, params: dict, action: str) -> int:
+    async def _perform_color_request(
+        self, params: dict, action: str
+    ) -> ColorRequestResult:
         async def op() -> int:
             await self.rate_limiter.wait_if_needed(action, is_user_request=True)
             _, status_code, headers = await asyncio.wait_for(
@@ -413,14 +450,14 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             return status_code
 
         try:
-            return await run_with_retry(
+            status_code = await run_with_retry(
                 op, COLOR_CHANGE_RETRY, user=self.username, log_domain="retry"
             )
         except TimeoutError:
             logger.log_event(
                 "bot", "color_change_timeout", level=logging.ERROR, user=self.username
             )
-            return 0
+            return ColorRequestResult(ColorRequestStatus.TIMEOUT)
         except Exception as e:  # noqa: BLE001
             logger.log_event(
                 "bot",
@@ -431,7 +468,21 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                 user=self.username,
                 error=str(e),
             )
-            return 0
+            return ColorRequestResult(ColorRequestStatus.INTERNAL_ERROR, error=str(e))
+
+        if status_code == 204:
+            return ColorRequestResult(ColorRequestStatus.SUCCESS, http_status=204)
+        if status_code == 429:
+            return ColorRequestResult(ColorRequestStatus.RATE_LIMIT, http_status=429)
+        if status_code == 401:
+            return ColorRequestResult(ColorRequestStatus.UNAUTHORIZED, http_status=401)
+        if 200 <= status_code < 300:
+            return ColorRequestResult(
+                ColorRequestStatus.SUCCESS, http_status=status_code
+            )
+        return ColorRequestResult(
+            ColorRequestStatus.HTTP_ERROR, http_status=status_code
+        )
 
     def _get_rate_limit_display(self, debug_only=False):
         debug_enabled = os.environ.get("DEBUG", "false").lower() in ("true", "1", "yes")

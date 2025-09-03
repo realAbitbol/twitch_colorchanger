@@ -4,40 +4,74 @@
       "username": "your_username_1",
       "client_id": "your_client_id_1",
       "client_secret": "your_client_secret_1",
+      // Optional if letting the device auth flow populate tokens automatically:
+      // "access_token": "<access_token>",
+      // "refresh_token": "<refresh_token>",
       "channels": ["channel1", "channel2"],
-      "is_prime_or_turbo": true
+      "is_prime_or_turbo": true,
+      "enabled": true
     },
     {
       "username": "your_username_2",
       "client_id": "your_client_id_2",
       "client_secret": "your_client_secret_2",
       "channels": ["channel3", "channel4"],
-      "is_prime_or_turbo": false
+      "is_prime_or_turbo": false,
+      "enabled": true
     }
   ]
 }
 
 // ====================================================================
+// OVERVIEW
+// ====================================================================
+// This file defines one or more Twitch bot users. At startup the bot:
+//   1. Loads this file (path override via $TWITCH_CONF_FILE)
+//   2. Normalizes channel names (lowercases, removes duplicates, strips '#')
+//   3. Prompts for device authorization if access/refresh tokens missing
+//   4. Persists newly obtained tokens back into this file
+//   5. Launches one color-change bot per user
+//
+// Restart safe: writes are debounced/batched to minimize churn.
+
+// ====================================================================
 // AUTOMATIC TOKEN SETUP (RECOMMENDED)
 // ====================================================================
-// Just provide your client_id and client_secret above.
-// The bot will automatically guide you through token authorization!
-//
-// When you run the bot, it will:
-// 1. Check if you have valid tokens
-// 2. If not, display an authorization URL and code
-// 3. You visit the URL, enter the code, and authorize
-// 4. Bot automatically receives tokens and saves them to this file
-// 5. Bot continues running normally
-//
-// No manual token generation needed!
+// Provide: username, client_id, client_secret, channels.
+// Leave access_token / refresh_token absent and the bot will guide you via a
+// short-lived device code flow, then write tokens here automatically.
 
 // ====================================================================
 // MANUAL TOKEN SETUP (ALTERNATIVE)
 // ====================================================================
-// If you prefer to generate tokens manually, add these fields:
+// If you manually provision tokens (e.g., https://twitchtokengenerator.com)
+// add:
 //   "access_token": "your_access_token",
 //   "refresh_token": "your_refresh_token",
-//
-// Generate tokens at: https://twitchtokengenerator.com
 // Required scopes: chat:read, user:manage:chat_color
+
+// ====================================================================
+// FIELD NOTES
+// ====================================================================
+// username            Twitch username (lowercased internally)
+// client_id/secret    Required for device auth & token refresh (keep secret!)
+// access_token        (Optional initially) created automatically if absent
+// refresh_token       (Optional initially) created automatically if absent
+// channels            Array of channel names (no '#', duplicates removed)
+// is_prime_or_turbo   true if account has Prime/Turbo (color palette impact)
+// enabled             Toggle to temporarily disable a user without removal
+
+// ====================================================================
+// SECURITY
+// ====================================================================
+// Treat this file as sensitive (contains secrets once populated). Avoid
+// committing real values—use the .sample as a template.
+// Back up only to secure locations; consider file permissions (chmod 600).
+
+// ====================================================================
+// EXTENDING
+// ====================================================================
+// Add more users by appending objects to the "users" list. Ensure each
+// username is unique. The application ignores invalid / duplicate entries.
+
+// End of sample

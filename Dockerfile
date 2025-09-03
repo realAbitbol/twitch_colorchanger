@@ -1,47 +1,50 @@
-FROM python:3.13-alpine
+ARG PYTHON_VERSION=3.13-alpine
+FROM python:${PYTHON_VERSION} AS runtime
 
-LABEL maintainer="Twitch ColorChanger Bot"
-LABEL description="Multi-user Twitch chat color changer bot"
-LABEL version="2.2"
+LABEL org.opencontainers.image.title="twitch-colorchanger" \
+      org.opencontainers.image.description="Multi-user Twitch chat color changer bot" \
+      org.opencontainers.image.version="2.3" \
+      org.opencontainers.image.source="https://github.com/realAbitbol/twitch_colorchanger" \
+      maintainer="Twitch ColorChanger Bot"
 
-# Create non-root user for security
-RUN addgroup -g 1000 -S appgroup && \
-    adduser -u 1000 -S appuser -G appgroup
+# Create non-root user (explicit IDs for reproducibility)
+RUN addgroup -g 1000 -S appgroup \
+ && adduser -u 1000 -S appuser -G appgroup
 
 WORKDIR /app
 
-# Install dependencies and handle RISCV64 build requirements
+# System deps only when needed (riscv64 edge case). Keep layer small.
 RUN pip install --no-cache-dir --upgrade pip && \
     if [ "$(uname -m)" = "riscv64" ]; then \
         apk add --no-cache --virtual .build-deps gcc musl-dev python3-dev; \
     fi
 
-# Copy and install Python requirements (separate layer for better caching)
+# Copy dependency spec first for better build caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && \
     if [ "$(uname -m)" = "riscv64" ]; then \
         apk del .build-deps; \
     fi
 
-# Copy application files
+# Copy source
 COPY src/ ./src/
 
-# Create config directory and set permissions
-RUN mkdir -p /app/config && \
-    chown -R appuser:appgroup /app
+# Prepare config directory and adjust ownership
+RUN mkdir -p /app/config && chown -R appuser:appgroup /app
 
-# Switch to non-root user
 USER appuser
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
     TWITCH_CONF_FILE=/app/config/twitch_colorchanger.conf
 
 VOLUME ["/app/config"]
 
-# Optimized healthcheck
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD python -c "import os,json,subprocess,sys; cf=os.environ.get('TWITCH_CONF_FILE','/app/config/twitch_colorchanger.conf'); f=open(cf); c=json.load(f); f.close(); sys.exit(0 if c.get('users') and subprocess.run(['pgrep','-f','python.*src/main.py'],capture_output=True).returncode==0 else 1)" || exit 1
+# Lean healthcheck uses built-in mode; avoids long inline Python one-liner.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD python -m src.main --health-check || exit 1
 
+# Default command
 CMD ["python", "-m", "src.main"]

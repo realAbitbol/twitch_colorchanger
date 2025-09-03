@@ -3,13 +3,13 @@
 .gitignore
 .github/
 
-# Documentation (keep README.md and LICENSE for image documentation)
-FUNCTIONAL_DOCUMENTATION.md
+# Documentation (keep README.md, LICENSE, and functional docs for labels)
+# (No exclusion so they can be used in image labels/build metadata)
 
-# Configuration files
-docker-compose.yml
-docker-compose.yml-sample
+# Configuration & runtime secrets (exclude real config, keep sample)
 twitch_colorchanger.conf
+*.conf.local
+!twitch_colorchanger.conf.sample
 
 # Python
 __pycache__/
