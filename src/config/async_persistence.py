@@ -10,6 +10,7 @@ changing call sites.
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 from logs.logger import logger
@@ -32,8 +33,9 @@ _DEBOUNCE_SECONDS = 0.25  # adjustable small delay to coalesce bursts
 # Per-user write locks so a direct immediate write and a batched flush do not
 # interleave for the same username (e.g., rapid toggle paths mixing queue and
 # explicit persistence). These are created lazily to avoid unbounded growth.
-_USER_LOCKS: dict[str, asyncio.Lock] = {}
+_USER_LOCKS: dict[str, tuple[asyncio.Lock, float]] = {}
 _USER_LOCKS_LOCK = asyncio.Lock()
+_LOCK_TTL_SECONDS = 24 * 3600  # prune inactive user locks after 24h
 
 
 async def _get_user_lock(username: str) -> asyncio.Lock:
@@ -46,12 +48,38 @@ async def _get_user_lock(username: str) -> asyncio.Lock:
     """
     # Normalize once to lower; callers already lowercase but be defensive.
     uname = username.lower()
+    now = time.time()
     async with _USER_LOCKS_LOCK:
-        lock = _USER_LOCKS.get(uname)
-        if lock is None:
+        entry = _USER_LOCKS.get(uname)
+        if entry is None:
             lock = asyncio.Lock()
-            _USER_LOCKS[uname] = lock
+            _USER_LOCKS[uname] = (lock, now)
+            return lock
+        lock, _ts = entry
+        _USER_LOCKS[uname] = (lock, now)
         return lock
+
+
+async def _prune_user_locks() -> None:
+    now = time.time()
+    async with _USER_LOCKS_LOCK:
+        stale = [
+            u for u, (_l, ts) in _USER_LOCKS.items() if now - ts > _LOCK_TTL_SECONDS
+        ]
+        for u in stale:
+            _USER_LOCKS.pop(u, None)
+        if stale:
+            try:
+                logger.log_event(
+                    "config",
+                    "user_lock_prune",
+                    pruned=len(stale),
+                    remaining=len(_USER_LOCKS),
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.log_event(
+                    "config", "user_lock_prune_log_error", level=10, error=str(e)
+                )
 
 
 async def _flush(config_file: str) -> None:
@@ -62,12 +90,22 @@ async def _flush(config_file: str) -> None:
         _FLUSH_TASK = None
     if not pending:
         return
-    # Log batch meta; ignore only logger internal failures.
+    _log_batch_start(len(pending))
+    failures = await _persist_batch(pending, config_file)
+    _log_batch_result(failures, len(pending))
+    # Opportunistically prune inactive locks after a batch flush
+    try:
+        await _prune_user_locks()
+    except Exception as e:  # noqa: BLE001
+        logger.log_event("config", "batch_flush_prune_error", level=10, error=str(e))
+
+
+def _log_batch_start(count: int) -> None:
     try:  # noqa: SIM105
         logger.log_event(
             "config",
             "batch_flush",
-            count=len(pending),
+            count=count,
             debounce_seconds=_DEBOUNCE_SECONDS,
         )
     except Exception as e:  # noqa: BLE001
@@ -77,28 +115,38 @@ async def _flush(config_file: str) -> None:
             level=30,
             error=str(e),
         )
-    # Sequentially persist each aggregated user config. We intentionally do
-    # not parallelize to avoid interleaving writes to the same file.
+
+
+def _log_batch_result(failures: int, attempted: int) -> None:
+    if failures:
+        logger.log_event(
+            "config",
+            "batch_flush_partial_failures",
+            level=30,
+            failures=failures,
+            attempted=attempted,
+        )
+
+
+async def _persist_batch(pending: list[dict[str, Any]], config_file: str) -> int:
     failures = 0
     for uc in pending:
         uname = str(uc.get("username", "")).lower()
-        # Acquire per-user lock if username present; skip if missing.
         per_user_lock: asyncio.Lock | None = None
         if uname:
             per_user_lock = await _get_user_lock(uname)
         try:
+            loop = asyncio.get_event_loop()
             if per_user_lock:
                 async with per_user_lock:
-                    loop = asyncio.get_event_loop()
                     await loop.run_in_executor(
                         None, update_user_in_config, uc, config_file
                     )
             else:
-                loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, update_user_in_config, uc, config_file)
         except Exception as e:  # noqa: BLE001
             failures += 1
-            if failures <= 3:  # cap detailed logs to avoid spam
+            if failures <= 3:
                 logger.log_event(
                     "config",
                     "batch_item_write_error",
@@ -106,14 +154,7 @@ async def _flush(config_file: str) -> None:
                     username=uname or uc.get("username"),
                     error=str(e),
                 )
-    if failures:
-        logger.log_event(
-            "config",
-            "batch_flush_partial_failures",
-            level=30,
-            failures=failures,
-            attempted=len(pending),
-        )
+    return failures
 
 
 async def _schedule_flush(config_file: str) -> None:

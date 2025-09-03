@@ -92,6 +92,15 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         await self._registrar.register(self)
         if not await self._initialize_connection():
             return
+        await self._run_irc_loop()
+
+    async def _run_irc_loop(self):
+        """Run primary IRC listen task with limited auto-reconnect attempts."""
+        if not self.irc:
+            logger.log_event(
+                "bot", "irc_not_initialized", level=logging.ERROR, user=self.username
+            )
+            return
         self.irc_task = asyncio.create_task(self.irc.listen())
 
         def _irc_task_done(task: asyncio.Task):  # local callback
@@ -122,14 +131,49 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         for channel in normalized_channels[1:]:
             await self.irc.join_channel(channel)
         await self.scheduler.start()
+
         try:
             await self.irc_task
         except KeyboardInterrupt:
             logger.log_event(
                 "bot", "shutdown_initiated", level=logging.WARNING, user=self.username
             )
+        except Exception as e:  # noqa: BLE001
+            await self._attempt_reconnect(e, _irc_task_done)
         finally:
             await self.stop()
+
+    async def _attempt_reconnect(self, error: Exception, cb):  # type: ignore[no-untyped-def]
+        backoff = 1.0
+        attempts = 0
+        max_attempts = 5
+        current_error = error
+        while attempts < max_attempts and self.running:
+            attempts += 1
+            logger.log_event(
+                "bot",
+                "irc_listener_crash_reconnect_attempt",
+                level=logging.WARNING,
+                user=self.username,
+                attempt=attempts,
+                error=str(current_error),
+                backoff=round(backoff, 2),
+            )
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 60)
+            try:
+                if not await self._initialize_connection():
+                    continue
+                if not self.irc:
+                    current_error = RuntimeError("IRC not initialized for reconnect")
+                    continue
+                self.irc_task = asyncio.create_task(self.irc.listen())
+                self.irc_task.add_done_callback(cb)
+                await self.irc_task
+                return
+            except Exception as e2:  # noqa: BLE001
+                current_error = e2
+                continue
 
     async def stop(self):
         logger.log_event("bot", "stopping", level=logging.WARNING, user=self.username)

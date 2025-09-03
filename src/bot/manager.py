@@ -189,6 +189,15 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         success = await self._start_all_bots()
         if success:
             self._restore_statistics(saved)
+            try:
+                # Prune tokens for users no longer present
+                if self.context and self.context.token_manager:
+                    active = {u.get("username", "").lower() for u in self.users_config}
+                    self.context.token_manager.prune(active)  # type: ignore[attr-defined]
+            except Exception as e:  # noqa: BLE001
+                logger.log_event(
+                    "manager", "token_prune_failed", level=logging.DEBUG, error=str(e)
+                )
         self.restart_requested = False
         self.new_config = None
         return success

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
+import glob
 import hashlib
 import json
 import os
+import shutil
 import stat
 import tempfile
 import time
@@ -159,6 +161,8 @@ class ConfigRepository:
         try:
             with open(lock_path, "w", encoding="utf-8") as lock_file:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                # Rotating backup (extracted to helper to reduce complexity)
+                self._create_backup(config_path)
                 with tempfile.NamedTemporaryFile(
                     mode="w",
                     dir=config_path.parent,
@@ -193,6 +197,36 @@ class ConfigRepository:
                 os.unlink(lock_path)
             except OSError:
                 pass
+
+    def _create_backup(self, config_path: Path) -> None:
+        if not (config_path.exists() and config_path.is_file()):
+            return
+        try:  # pragma: no cover - filesystem timing nuances
+            backup_dir = config_path.parent
+            timestamp = int(time.time())
+            backup_name = backup_dir / f"{config_path.name}.bak.{timestamp}"
+            shutil.copy2(config_path, backup_name)
+            logger.log_event(
+                "config",
+                "backup_created",
+                backup=str(backup_name.name),
+            )
+            backups = sorted(
+                glob.glob(str(backup_dir / f"{config_path.name}.bak.*")),
+                reverse=True,
+            )
+            for old in backups[3:]:
+                try:
+                    os.unlink(old)
+                except OSError:
+                    pass
+        except Exception as e:  # noqa: BLE001
+            logger.log_event(
+                "config",
+                "backup_failed",
+                level=10,
+                error=str(e),
+            )
 
     def verify_readback(self) -> None:
         try:
