@@ -12,7 +12,10 @@ import aiohttp
 
 from api.twitch import TwitchAPI
 from application_context import ApplicationContext
-from config import update_user_in_config
+from config.async_persistence import (
+    flush_pending_updates,
+    queue_user_update,
+)
 from config.model import normalize_channels_list
 from irc.async_irc import AsyncTwitchIRC
 from logs.logger import logger
@@ -153,6 +156,19 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         await self._cancel_token_task()
         await self._disconnect_irc()
         await self._wait_for_irc_task()
+        # Flush any pending debounced config writes before final shutdown.
+        if getattr(self, "config_file", None):
+            try:
+                await flush_pending_updates(self.config_file)  # type: ignore[attr-defined]
+            except Exception as e:  # noqa: BLE001
+                # Log at debug to avoid noisy shutdown warnings; still visible for diagnostics.
+                logger.log_event(
+                    "bot",
+                    "flush_pending_updates_error",
+                    level=logging.DEBUG,
+                    user=self.username,
+                    error=str(e),
+                )
         self.running = False
         await asyncio.sleep(0.1)
 
@@ -208,10 +224,8 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             user_config = self._build_user_config()
             user_config["enabled"] = flag
             try:
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(
-                    None, update_user_in_config, user_config, self.config_file
-                )
+                # Use debounced queue for rapid toggle spam.
+                await queue_user_update(user_config, self.config_file)
             except Exception as e:  # noqa: BLE001
                 logger.log_event(
                     "bot",

@@ -19,6 +19,9 @@ LEGACY_FILES=(
   "src/bot.py"                    # replaced by bot/core.py (exported via bot/__init__.py)
   "src/config.py"                 # superseded by config/ package (core.py + __init__ exports)
   "src/bot_manager.py"            # replaced by bot/manager.py (shim removable)
+  "src/bot_registrar.py"          # replaced by bot/bot_registrar.py
+  "src/token_manager.py"          # shim -> token/manager.py
+  "src/token_provisioner.py"      # shim -> token/provisioner.py
 )
 
 deleted=0

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from logs.logger import logger
 from rate.retry_policies import COLOR_CHANGE_RETRY, run_with_retry
 
-from .utils import get_random_hex, get_random_preset
+from .utils import TWITCH_PRESET_COLORS, get_random_hex, get_random_preset
 
 if TYPE_CHECKING:  # pragma: no cover
     from bot import TwitchColorBot
@@ -36,11 +36,7 @@ class ColorChangeService:
                     "change_color", is_user_request=True
                 )
                 return await self._perform_color_change(
-                    color,
-                    allow_refresh=True,
-                    fallback_to_preset=allow_fallback,
-                    action="change_color",
-                    is_preset=False,
+                    color, allow_refresh=True, fallback_to_preset=allow_fallback
                 )
 
             return await run_with_retry(
@@ -60,11 +56,23 @@ class ColorChangeService:
         self,
         color: str,
         *,
-        allow_refresh: bool,
-        fallback_to_preset: bool,
-        action: str,
-        is_preset: bool,
+        allow_refresh: bool = True,
+        fallback_to_preset: bool = True,
     ) -> bool:
+        """Core color change operation with unified retry/status handling.
+
+        Parameters
+        ----------
+        color: Target color (hex like #aabbcc or preset name).
+        allow_refresh: Whether a 401 triggers a token refresh attempt.
+        fallback_to_preset: Whether a failure on a non-preset color should fall back
+            to a random preset color.
+        """
+        # Determine if this is a preset color (case-insensitive lookup)
+        lowered = color.lower()
+        is_preset = lowered in {c.lower() for c in TWITCH_PRESET_COLORS}
+        action = "preset_color" if is_preset else "change_color"
+
         status_code = await self._issue_request(color, action)
 
         if status_code == 204:
@@ -78,7 +86,6 @@ class ColorChangeService:
                 color,
                 allow_refresh=allow_refresh,
                 fallback_to_preset=fallback_to_preset,
-                action=action,
                 is_preset=is_preset,
             )
         return await self._on_generic_failure(
@@ -125,7 +132,6 @@ class ColorChangeService:
         *,
         allow_refresh: bool,
         fallback_to_preset: bool,
-        action: str,
         is_preset: bool,
     ) -> bool:
         if not allow_refresh:
@@ -145,8 +151,6 @@ class ColorChangeService:
                 color,
                 allow_refresh=False,
                 fallback_to_preset=fallback_to_preset,
-                action=action,
-                is_preset=is_preset,
             )
         logger.log_event(
             "bot",
@@ -178,8 +182,6 @@ class ColorChangeService:
                 preset,
                 allow_refresh=True,
                 fallback_to_preset=False,
-                action="preset_color",
-                is_preset=True,
             )
         return False
 
