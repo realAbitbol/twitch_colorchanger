@@ -27,6 +27,7 @@ from .constants import (
 )
 from .internal_errors import NetworkError, OAuthError, ParsingError, RateLimitError
 from .logger import logger
+from .utils import format_duration
 
 
 class TokenOutcome(str, Enum):
@@ -124,12 +125,14 @@ class TokenClient:
                             expires_in - TOKEN_REFRESH_SAFETY_BUFFER_SECONDS, 0
                         )
                         expiry = datetime.now() + timedelta(seconds=safe_expires)
+                    human_expires = format_duration(expires_in)
                     logger.log_event(
                         "token",
                         "refresh_success",
                         user=username,
                         attempt=1,
                         expires_in=expires_in,
+                        human=f"Token refreshed (lifetime {human_expires})",
                     )
                     return TokenResult(
                         TokenOutcome.REFRESHED, new_access, new_refresh, expiry
@@ -208,6 +211,14 @@ class TokenClient:
                     expiry = None
                     if expires_in:
                         expiry = datetime.now() + timedelta(seconds=expires_in)
+                        logger.log_event(
+                            "token",
+                            "validated",
+                            level=logging.DEBUG,
+                            user=username,
+                            expires_in=expires_in,
+                            human=f"Token valid (remaining {format_duration(expires_in)})",
+                        )
                     return True, expiry
                 if resp.status == 401:
                     logger.log_event(

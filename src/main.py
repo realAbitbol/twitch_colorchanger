@@ -31,6 +31,11 @@ async def main():
         users_config = await setup_missing_tokens(loaded_config, config_file)
         print_config_summary(users_config)
         await run_bots(users_config, config_file)
+    except asyncio.CancelledError:
+        logger.log_event(
+            "app", "cancelled", level=logging.WARNING, human="Cancelled (Ctrl+C)"
+        )
+        raise
     except KeyboardInterrupt:
         logger.log_event("app", "interrupted", level=logging.WARNING)
     except Exception as e:  # noqa: BLE001
@@ -63,6 +68,9 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:  # pragma: no cover - signal handling
         logger.log_event("app", "terminated_by_user")
+        sys.exit(0)
+    except asyncio.CancelledError:
+        logger.log_event("app", "terminated_by_cancellation")
         sys.exit(0)
     except Exception as e:  # noqa: BLE001
         log_error("Top-level error", e)
