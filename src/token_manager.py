@@ -4,6 +4,7 @@ Replaces per-bot TokenService instances with a singleton manager
 """
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -103,10 +104,9 @@ class TokenManager:
         """Start the background token refresh loop"""
         if self.running:
             return
-
         self.running = True
         self.background_task = asyncio.create_task(self._background_refresh_loop())
-        self.logger.info("Started centralized token manager")
+        self.logger.log_event("token_manager", "start")
         await asyncio.sleep(0)  # Make function truly async
 
     async def stop(self):
@@ -122,7 +122,7 @@ class TokenManager:
                 raise
             finally:
                 self.background_task = None
-        self.logger.warn("Stopped token manager")
+        self.logger.log_event("token_manager", "stop", level=logging.WARNING)
 
     def register_user(
         self,
@@ -155,7 +155,12 @@ class TokenManager:
     async def get_fresh_token(self, username: str) -> str | None:
         """Get a fresh token for the user, refreshing if needed"""
         if username not in self.tokens:
-            self.logger.error("Not registered with token manager", username=username)
+            self.logger.log_event(
+                "token_manager",
+                "not_registered",
+                level=logging.ERROR,
+                username=username,
+            )
             return None
 
         token_info = self.tokens[username]
@@ -204,10 +209,17 @@ class TokenManager:
                 await asyncio.sleep(base_sleep * jitter)
 
             except asyncio.CancelledError:
-                self.logger.warn("Token refresh loop cancelled")
+                self.logger.log_event(
+                    "token_manager", "loop_cancelled", level=logging.WARNING
+                )
                 raise
             except Exception as e:
-                self.logger.error(f"Error in token refresh loop: {e}")
+                self.logger.log_event(
+                    "token_manager",
+                    "loop_error",
+                    level=logging.ERROR,
+                    error=str(e),
+                )
                 await asyncio.sleep(30)  # Error recovery delay
 
     def _determine_token_state(self, token_info: TokenInfo) -> TokenState:
@@ -306,8 +318,11 @@ class TokenManager:
                 return False
 
         except Exception as e:
-            self.logger.warn(
-                f"Token validation error: {e}", username=token_info.username
+            self.logger.log_event(
+                "token_manager",
+                "loop_error",
+                level=logging.WARNING,
+                error=str(e),
             )
             return False
 
@@ -326,8 +341,10 @@ class TokenManager:
         token_info.last_refresh_attempt = time.time()
 
         try:
-            self.logger.info(
-                f"Refreshing token (attempt {token_info.refresh_attempts})",
+            self.logger.log_event(
+                "token_manager",
+                "refresh_start",
+                attempt=token_info.refresh_attempts,
                 username=token_info.username,
             )
 
@@ -355,16 +372,20 @@ class TokenManager:
                 token_info.consecutive_failures = 0
                 token_info.cooldown_until = 0
 
-                self.logger.info(
-                    "Token refreshed successfully", username=token_info.username
+                self.logger.log_event(
+                    "token_manager", "refresh_success", username=token_info.username
                 )
                 return True
             else:
                 raise TokenRefreshError("Refresh API returned no token")
 
         except Exception as e:
-            self.logger.error(
-                f"Token refresh failed: {e}", username=token_info.username
+            self.logger.log_event(
+                "token_manager",
+                "refresh_failed",
+                level=logging.ERROR,
+                username=token_info.username,
+                error=str(e),
             )
 
             # Handle failure
@@ -379,8 +400,12 @@ class TokenManager:
             cooldown = backoff_delay * jitter
             token_info.cooldown_until = time.time() + cooldown
 
-            self.logger.warn(
-                f"Refresh cooldown for {token_info.username}: {cooldown:.1f}s"
+            self.logger.log_event(
+                "token_manager",
+                "refresh_cooldown",
+                level=logging.WARNING,
+                username=token_info.username,
+                cooldown=round(cooldown, 1),
             )
 
             return False

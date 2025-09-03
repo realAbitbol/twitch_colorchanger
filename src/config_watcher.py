@@ -3,6 +3,7 @@ Configuration file watcher for runtime config changes
 """
 
 import asyncio
+import logging
 import os
 import threading
 import time
@@ -36,7 +37,9 @@ class ConfigFileHandler(FileSystemEventHandler):
             # Check if watcher is paused (bot-initiated change)
             with self.watcher._pause_lock:
                 if self.watcher.paused:
-                    logger.debug("📝 Config change ignored (bot-initiated)")
+                    logger.log_event(
+                        "config_watch", "change_ignored", level=logging.DEBUG
+                    )
                     return
 
             # Debounce rapid fire events (some editors trigger multiple events)
@@ -45,7 +48,7 @@ class ConfigFileHandler(FileSystemEventHandler):
                 return
             self.last_modified = current_time
 
-            logger.info(f"📁 Config file changed: {event.src_path}")
+            logger.log_event("config_watch", "file_changed", path=event.src_path)
 
             # Run callback in a thread to avoid blocking the file watcher
             threading.Thread(
@@ -68,7 +71,7 @@ class ConfigWatcher:
         """Temporarily pause watching (for bot-initiated changes)"""
         with self._pause_lock:
             self.paused = True
-            logger.debug("⏸️ Config watcher paused (bot update in progress)")
+            logger.log_event("config_watch", "paused", level=logging.DEBUG)
 
     def resume_watching(self):
         """Resume watching after bot-initiated changes"""
@@ -78,7 +81,7 @@ class ConfigWatcher:
 
             time.sleep(RELOAD_WATCH_DELAY)
             self.paused = False
-            logger.debug("▶️ Config watcher resumed")
+            logger.log_event("config_watch", "resumed", level=logging.DEBUG)
 
     def start(self):
         """Start watching the config file"""
@@ -87,7 +90,12 @@ class ConfigWatcher:
 
         config_dir = os.path.dirname(os.path.abspath(self.config_file))
         if not os.path.exists(config_dir):
-            logger.warning(f"Config directory does not exist: {config_dir}")
+            logger.log_event(
+                "config_watch",
+                "dir_missing",
+                level=logging.WARNING,
+                path=config_dir,
+            )
             return
 
         self.observer = Observer()
@@ -97,9 +105,14 @@ class ConfigWatcher:
             self.observer.schedule(event_handler, config_dir, recursive=False)
             self.observer.start()
             self.running = True
-            logger.info(f"👀 Started watching config file: {self.config_file}")
+            logger.log_event("config_watch", "start", path=self.config_file)
         except Exception as e:
-            logger.error(f"Failed to start config watcher: {e}")
+            logger.log_event(
+                "config_watch",
+                "start_failed",
+                level=logging.ERROR,
+                error=str(e),
+            )
 
     def stop(self):
         """Stop watching the config file"""
@@ -107,7 +120,7 @@ class ConfigWatcher:
             self.observer.stop()
             self.observer.join()
             self.running = False
-            logger.info("👁️ Stopped config file watcher")
+            logger.log_event("config_watch", "stopped")
 
     def _on_config_changed(self):
         """Handle config file changes"""
@@ -116,7 +129,11 @@ class ConfigWatcher:
             new_users_config = load_users_from_config(self.config_file)
 
             if not new_users_config:
-                logger.warning("⚠️ Config file is empty or invalid, ignoring changes")
+                logger.log_event(
+                    "config_watch",
+                    "empty_or_invalid",
+                    level=logging.WARNING,
+                )
                 return
 
             # Normalize channels for all users
@@ -128,18 +145,29 @@ class ConfigWatcher:
             valid_users = get_valid_users(new_users_config)
 
             if not valid_users:
-                logger.error("❌ New config contains no valid users, ignoring changes")
+                logger.log_event(
+                    "config_watch",
+                    "no_valid_users",
+                    level=logging.ERROR,
+                )
                 return
 
-            logger.info(
-                f"✅ Config validation passed - {len(valid_users)} valid user(s)"
+            logger.log_event(
+                "config_watch",
+                "validation_passed",
+                user_count=len(valid_users),
             )
 
             # Trigger bot restart with new config
             self.restart_callback(valid_users)
 
         except Exception as e:
-            logger.error(f"Error processing config change: {e}")
+            logger.log_event(
+                "config_watch",
+                "processing_error",
+                level=logging.ERROR,
+                error=str(e),
+            )
 
 
 async def create_config_watcher(

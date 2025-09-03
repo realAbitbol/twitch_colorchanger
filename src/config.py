@@ -4,6 +4,7 @@ Configuration management for the Twitch Color Changer bot
 
 import fcntl
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -42,7 +43,13 @@ def load_users_from_config(config_file):
     except FileNotFoundError:
         return []
     except Exception as e:
-        logger.error("config_load_error", error=str(e), error_type=type(e).__name__)
+        logger.log_event(
+            "config",
+            "load_error",
+            level=logging.ERROR,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
         return []
 
 
@@ -122,10 +129,12 @@ def _verify_saved_data(config_file):
                 is_prime_or_turbo=user.get("is_prime_or_turbo", "MISSING_FIELD"),
             )
     except Exception as verify_error:
-        logger.error(
-            "config_save_verification_failed",
-            error=str(verify_error),
+        logger.log_event(
+            "config",
+            "save_atomic_failed",  # reuse existing template for atomic save failure
+            level=logging.ERROR,
             error_type=type(verify_error).__name__,
+            error=str(verify_error),
         )
 
 
@@ -192,14 +201,20 @@ def save_users_to_config(users, config_file):
                 # 4. Atomic rename (the critical moment)
                 os.rename(temp_path, config_file)
 
-                logger.info("config_save_atomic_success", config_file=config_file)
+                logger.log_event(
+                    "config",
+                    "save_atomic_success",
+                    config_file=config_file,
+                )
 
         except Exception as save_error:
             # Cleanup temp file on error
             if temp_path and os.path.exists(temp_path):
                 os.unlink(temp_path)
-            logger.error(
-                "config_save_atomic_failed",
+            logger.log_event(
+                "config",
+                "save_atomic_failed",
+                level=logging.ERROR,
                 error=str(save_error),
                 error_type=type(save_error).__name__,
             )
@@ -219,7 +234,13 @@ def save_users_to_config(users, config_file):
         time.sleep(CONFIG_WRITE_DEBOUNCE)
 
     except Exception as e:
-        logger.error("config_save_failed", error=str(e), error_type=type(e).__name__)
+        logger.log_event(
+            "config",
+            "save_failed",
+            level=logging.ERROR,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
         raise
     finally:
         # Always resume watcher
@@ -280,8 +301,10 @@ def update_user_in_config(user_config, config_file):
         save_users_to_config(users, config_file)
         return True
     except Exception as e:
-        logger.error(
-            "config_update_user_failed",
+        logger.log_event(
+            "config",
+            "update_user_failed",
+            level=logging.ERROR,
             error=str(e),
             error_type=type(e).__name__,
             username=user_config.get("username"),
@@ -299,22 +322,27 @@ def disable_random_colors_for_user(username, config_file):
                 user_found = True
                 if user.get("is_prime_or_turbo") is not False:
                     user["is_prime_or_turbo"] = False
-                    logger.info(
-                        "config_random_colors_disabled",
+                    logger.log_event(
+                        "config",
+                        "random_colors_disabled",
                         username=username,
                     )
                 break
         if not user_found:
-            logger.warning(
-                "config_random_colors_user_not_found",
+            logger.log_event(
+                "config",
+                "random_colors_user_not_found",
+                level=logging.WARNING,
                 username=username,
             )
             return False
         save_users_to_config(users, config_file)
         return True
     except Exception as e:
-        logger.error(
-            "config_disable_random_colors_failed",
+        logger.log_event(
+            "config",
+            "disable_random_colors_failed",
+            level=logging.ERROR,
             username=username,
             error=str(e),
             error_type=type(e).__name__,
@@ -335,9 +363,13 @@ def get_configuration():
     users = load_users_from_config(config_file)
 
     if not users:
-        logger.error("config_no_config_file", config_file=config_file)
-        logger.error(
-            "config_no_config_file_instruction",
+        logger.log_event(
+            "config", "no_config_file", level=logging.ERROR, config_file=config_file
+        )
+        logger.log_event(
+            "config",
+            "no_config_file_instruction",
+            level=logging.ERROR,
             sample="twitch_colorchanger.conf.sample",
         )
         sys.exit(1)
@@ -346,22 +378,26 @@ def get_configuration():
     valid_users = get_valid_users(users)
 
     if not valid_users:
-        logger.error("No valid user configurations found!")
+        logger.log_event(
+            "config", "no_valid_users", level=logging.ERROR, config_file=config_file
+        )
         sys.exit(1)
 
-    logger.info(f"✅ Found {len(valid_users)} valid user configuration(s)")
+    logger.log_event(
+        "config",
+        "valid_users_found",
+        user_count=len(valid_users),
+    )
     return valid_users
 
 
 def print_config_summary(users):
     """Log a summary of the loaded configuration"""
-    logger.info(
-        "config_summary",
-        user_count=len(users),
-    )
+    logger.log_event("config", "summary", user_count=len(users))
     for i, user in enumerate(users, 1):
-        logger.info(
-            "config_summary_user",
+        logger.log_event(
+            "config",
+            "summary_user",
             index=i,
             username=user.get("username"),
             channel_count=len(user.get("channels", [])),
@@ -420,8 +456,9 @@ def normalize_user_channels(users, config_file):
 
         if was_changed:
             any_changes = True
-            logger.info(
-                "config_channel_normalization_change",
+            logger.log_event(
+                "config",
+                "channel_normalization_change",
                 username=user_copy.get("username"),
                 original_count=len(original_channels),
                 new_count=len(normalized_channels),
@@ -435,13 +472,16 @@ def normalize_user_channels(users, config_file):
     if any_changes:
         try:
             save_users_to_config(updated_users, config_file)
-            logger.info(
-                "config_channel_normalization_saved",
+            logger.log_event(
+                "config",
+                "channel_normalization_saved",
                 user_count=len(updated_users),
             )
         except Exception as e:
-            logger.error(
-                "config_channel_normalization_save_failed",
+            logger.log_event(
+                "config",
+                "channel_normalization_save_failed",
+                level=logging.ERROR,
                 error=str(e),
                 error_type=type(e).__name__,
             )
@@ -478,11 +518,11 @@ async def _setup_user_tokens(user):
 
     # Check if user has basic credentials
     if not client_id or not client_secret:
-        logger.error(
-            "config_user_missing_basic_credentials",
+        logger.log_event(
+            "config",
+            "token_setup_validation_failed",  # reuse existing token setup validation failed template
+            level=logging.ERROR,
             username=username,
-            has_client_id=bool(client_id),
-            has_client_secret=bool(client_secret),
         )
         return {"user": user, "tokens_updated": False}
 
@@ -512,7 +552,7 @@ async def _validate_or_refresh_tokens(user):
 async def _get_new_tokens_via_device_flow(user, client_id, client_secret):
     """Get new tokens using device flow and ensure they're saved to config."""
     username = user.get("username", "Unknown")
-    logger.info("config_token_setup_start", username=username)
+    logger.log_event("config", "token_setup_start", username=username)
 
     device_flow = DeviceCodeFlow(client_id, client_secret)
     try:
@@ -526,16 +566,25 @@ async def _get_new_tokens_via_device_flow(user, client_id, client_secret):
             # and get expiry information for proactive refresh
             validation_result = await _validate_new_tokens(user)
             if validation_result["valid"]:
-                logger.info("config_token_setup_success", username=username)
+                logger.log_event("config", "token_setup_success", username=username)
                 return {"user": validation_result["user"], "tokens_updated": True}
-            logger.warning("config_token_setup_validation_failed", username=username)
+            logger.log_event(
+                "config",
+                "token_setup_validation_failed",
+                level=logging.WARNING,
+                username=username,
+            )
             # Still save them, might work later
             return {"user": user, "tokens_updated": True}
-        logger.error("config_token_setup_failed", username=username)
+        logger.log_event(
+            "config", "token_setup_failed", level=logging.ERROR, username=username
+        )
         return {"user": user, "tokens_updated": False}
     except Exception as e:
-        logger.error(
-            "config_token_setup_exception",
+        logger.log_event(
+            "config",
+            "token_setup_exception",
+            level=logging.ERROR,
             username=username,
             error=str(e),
             error_type=type(e).__name__,
@@ -555,10 +604,12 @@ def _save_updated_config(updated_users, config_file):
     """Save updated configuration to file."""
     try:
         save_users_to_config(updated_users, config_file)
-        logger.info("config_tokens_update_saved", user_count=len(updated_users))
+        logger.log_event("config", "tokens_update_saved", user_count=len(updated_users))
     except Exception as e:
-        logger.error(
-            "config_tokens_update_save_failed",
+        logger.log_event(
+            "config",
+            "tokens_update_save_failed",
+            level=logging.ERROR,
             error=str(e),
             error_type=type(e).__name__,
         )
