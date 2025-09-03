@@ -2,6 +2,8 @@
 Simple configuration validation for the Twitch Color Changer bot
 """
 
+import logging
+
 from .logger import logger
 
 
@@ -10,7 +12,12 @@ def _validate_username(user_config):
     username_raw = user_config.get("username", "")
     username = str(username_raw).strip() if username_raw is not None else ""
     if not username or len(username) < 3 or len(username) > 25:
-        logger.error(f"Username must be 3-25 characters: '{username}'")
+        logger.log_event(
+            "validation",
+            "username_invalid",
+            level=logging.ERROR,
+            username=username,
+        )
         return False, username
     return True, username
 
@@ -40,7 +47,12 @@ def _validate_token_credentials(user_config, username):
     ]
 
     if has_token_with_length and access_token.lower() in placeholder_tokens:
-        logger.error(f"Please use a real token for {username}")
+        logger.log_event(
+            "validation",
+            "placeholder_token",
+            level=logging.ERROR,
+            username=username,
+        )
         return False
 
     # Valid access token is one that meets length and is not a placeholder
@@ -49,9 +61,11 @@ def _validate_token_credentials(user_config, username):
     )
 
     if not has_access_token and not has_client_credentials:
-        logger.error(
-            f"User {username} needs either access_token OR "
-            f"(client_id + client_secret) for automatic setup"
+        logger.log_event(
+            "validation",
+            "missing_auth",
+            level=logging.ERROR,
+            username=username,
         )
         return False
 
@@ -62,12 +76,23 @@ def _validate_channels(user_config, username):
     """Validate channels list"""
     channels = user_config.get("channels", [])
     if not channels or not isinstance(channels, list):
-        logger.error(f"Channels list required for {username}")
+        logger.log_event(
+            "validation",
+            "channels_missing",
+            level=logging.ERROR,
+            username=username,
+        )
         return False
 
     for channel in channels:
         if not isinstance(channel, str) or len(channel.strip()) < 3:
-            logger.error(f"Invalid channel name for {username}: '{channel}'")
+            logger.log_event(
+                "validation",
+                "channel_invalid",
+                level=logging.ERROR,
+                username=username,
+                channel=channel,
+            )
             return False
 
     return True
@@ -78,7 +103,12 @@ def validate_user_config(user_config):
 
     # Type check
     if not isinstance(user_config, dict):
-        logger.error(f"User config must be a dict, got {type(user_config)}")
+        logger.log_event(
+            "validation",
+            "user_config_not_dict",
+            level=logging.ERROR,
+            type=str(type(user_config)),
+        )
         return False
 
     # Validate username
@@ -100,21 +130,31 @@ def validate_user_config(user_config):
 def validate_all_users(users_config):
     """Validate all users - returns True if ALL users are valid, False otherwise"""
     if not isinstance(users_config, list):
-        logger.error("Users config must be a list")
+        logger.log_event("validation", "users_not_list", level=logging.ERROR)
         return False
 
     if not users_config:
-        logger.error("No users configured")
+        logger.log_event("validation", "no_users", level=logging.ERROR)
         return False
 
     for user_config in users_config:
         if not isinstance(user_config, dict):
-            logger.error(f"User config must be a dict, got {type(user_config)}")
+            logger.log_event(
+                "validation",
+                "user_config_not_dict",
+                level=logging.ERROR,
+                type=str(type(user_config)),
+            )
             return False
 
         if not validate_user_config(user_config):
             username = user_config.get("username", "Unknown")
-            logger.warning(f"Skipping invalid config for {username}")
+            logger.log_event(
+                "validation",
+                "user_invalid_skipped",
+                level=logging.WARNING,
+                username=username,
+            )
             return False
 
     return True
@@ -133,7 +173,12 @@ def get_valid_users(users_config):
 
     for user_config in users_config:
         if not isinstance(user_config, dict):
-            logger.error(f"User config must be a dict, got {type(user_config)}")
+            logger.log_event(
+                "validation",
+                "user_config_not_dict",
+                level=logging.ERROR,
+                type=str(type(user_config)),
+            )
             continue
 
         if validate_user_config(user_config):
@@ -141,13 +186,23 @@ def get_valid_users(users_config):
 
             # Check for duplicates
             if username in usernames_seen:
-                logger.warning(f"Duplicate username '{username}' - skipping")
+                logger.log_event(
+                    "validation",
+                    "duplicate_username",
+                    level=logging.WARNING,
+                    username=username,
+                )
                 continue
 
             usernames_seen.add(username)
             valid_users.append(user_config)
         else:
             username = user_config.get("username", "Unknown")
-            logger.warning(f"Skipping invalid config for {username}")
+            logger.log_event(
+                "validation",
+                "user_invalid_skipped",
+                level=logging.WARNING,
+                username=username,
+            )
 
     return valid_users

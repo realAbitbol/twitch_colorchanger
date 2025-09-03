@@ -3,6 +3,7 @@ Simple error handling for the Twitch Color Changer bot
 """
 
 import asyncio
+import logging
 
 from .logger import logger
 
@@ -20,20 +21,31 @@ async def simple_retry(func, max_retries=3, delay=1, user=None):
     for attempt in range(max_retries + 1):
         try:
             return await func()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             if attempt == max_retries:
                 log_error("Max retries exceeded", e, user)
                 raise
-
             wait_time = delay * (2**attempt)
-            user_context = f" [user={user}]" if user else ""
-            logger.warning(
-                f"Retry {attempt + 1}/{max_retries} in {wait_time}s{user_context}: {e}"
+            logger.log_event(
+                "retry",
+                "attempt",
+                level=logging.WARNING,
+                attempt=attempt + 1,
+                max_retries=max_retries,
+                wait_time=wait_time,
+                user=user,
+                error=str(e),
             )
             await asyncio.sleep(wait_time)
 
 
 def log_error(message: str, error: Exception, user: str = None):
-    """Log error with optional user context"""
-    user_context = f" [user={user}]" if user else ""
-    logger.error(f"{message}{user_context}: {error}")
+    """Log error with optional user context via structured event"""
+    logger.log_event(
+        "error",
+        "logged",
+        level=logging.ERROR,
+        message=message,
+        user=user,
+        error=str(error),
+    )

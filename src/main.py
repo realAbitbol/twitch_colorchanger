@@ -4,6 +4,7 @@ Main entry point for the Twitch Color Changer Bot
 """
 
 import asyncio
+import logging
 import os
 import sys
 
@@ -16,66 +17,60 @@ from .config import (
 )
 from .error_handling import log_error
 from .logger import logger
-from .utils import print_instructions
+from .utils import emit_startup_instructions
 
 
 async def main():
     """Main function"""
     try:
-        logger.info("🚀 Starting Twitch Color Changer Bot")
-
-        # Print welcome message and instructions
-        print_instructions()
-
-        # Get config file path for token saving
+        logger.log_event("app", "start")
+        emit_startup_instructions()
         config_file = os.environ.get("TWITCH_CONF_FILE", "twitch_colorchanger.conf")
-
-        # Get configuration from config file
         loaded_config = get_configuration()
-
-        # Normalize channels for all users (lowercase, no #, sorted, deduplicated)
         loaded_config, _ = normalize_user_channels(loaded_config, config_file)
-
-        # Setup missing tokens automatically (device flow fallback)
         users_config = await setup_missing_tokens(loaded_config, config_file)
-
-        # Print configuration summary
         print_config_summary(users_config)
-
-        # Run all bots (signal handlers are set up in bot_manager)
         await run_bots(users_config, config_file)
     except KeyboardInterrupt:
-        logger.warning("⌨️ Interrupted by user")
-    except Exception as e:
+        logger.log_event("app", "interrupted", level=logging.WARNING)
+    except Exception as e:  # noqa: BLE001
         log_error("Main application error", e)
-        logger.critical(f"Critical error occurred: {e}", exc_info=True)
+        logger.log_event(
+            "app",
+            "critical_error",
+            level=logging.CRITICAL,
+            error=str(e),
+            exc_info=True,
+        )
         sys.exit(1)
     finally:
-        # Cleanup resources
-        logger.info("🏁 Application shutdown complete")
+        logger.log_event("app", "shutdown_complete")
 
 
 if __name__ == "__main__":
     # Simple health check mode
     if len(sys.argv) > 1 and sys.argv[1] == "--health-check":
-        logger.info("🏥 Health check mode")
+        logger.log_event("app", "health_mode")
         try:
             health_config = get_configuration()
-            logger.info(
-                f"✅ Health check passed - {len(health_config)} user(s) configured"
-            )
+            logger.log_event("app", "health_pass", user_count=len(health_config))
             sys.exit(0)
-        except Exception as e:
-            logger.error(f"❌ Health check failed: {e}")
+        except Exception as e:  # noqa: BLE001
+            logger.log_event("app", "health_fail", level=logging.ERROR, error=str(e))
             sys.exit(1)
 
     try:
         asyncio.run(main())
-    except KeyboardInterrupt:
-        # Handle KeyboardInterrupt at the top level
-        logger.info("Application terminated by user")
+    except KeyboardInterrupt:  # pragma: no cover - signal handling
+        logger.log_event("app", "terminated_by_user")
         sys.exit(0)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         log_error("Top-level error", e)
-        logger.critical(f"Critical error occurred: {e}", exc_info=True)
+        logger.log_event(
+            "app",
+            "top_level_error",
+            level=logging.CRITICAL,
+            error=str(e),
+            exc_info=True,
+        )
         sys.exit(1)

@@ -4,6 +4,7 @@ Adaptive scheduler for managing periodic tasks with priority-based timing
 
 import asyncio
 import heapq
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -73,7 +74,7 @@ class AdaptiveScheduler:
         async with self._lock:
             self.scheduler_task = asyncio.create_task(self._run_scheduler())
 
-    logger.info("Adaptive scheduler started")
+    logger.log_event("scheduler", "started")
 
     async def stop(self):
         """Stop the scheduler and cancel all tasks"""
@@ -96,7 +97,7 @@ class AdaptiveScheduler:
         async with self._lock:
             self.tasks.clear()
 
-    logger.warning("Adaptive scheduler stopped")
+    logger.log_event("scheduler", "stopped", level=logging.WARNING)
 
     async def schedule_recurring(
         self,
@@ -139,8 +140,10 @@ class AdaptiveScheduler:
         async with self._lock:
             heapq.heappush(self.tasks, task)
 
-        logger.debug(
-            f"Scheduled recurring task '{name}' (interval: {interval}s)",
+        logger.log_event(
+            "scheduler",
+            "scheduled_recurring",
+            level=logging.DEBUG,
             task=name,
             interval=interval,
         )
@@ -185,10 +188,8 @@ class AdaptiveScheduler:
         async with self._lock:
             heapq.heappush(self.tasks, task)
 
-        logger.debug(
-            f"Scheduled one-time task '{name}' (delay: {delay}s)",
-            task=name,
-            delay=delay,
+        logger.log_event(
+            "scheduler", "scheduled_once", level=logging.DEBUG, task=name, delay=delay
         )
         return True
 
@@ -202,7 +203,7 @@ class AdaptiveScheduler:
             self.tasks = [task for task in self.tasks if task.name != name]
             heapq.heapify(self.tasks)  # Rebuild heap
 
-        logger.info(f"Cancelled tasks named '{name}'", task=name)
+        logger.log_event("scheduler", "cancelled_tasks_named", task=name)
         return True
 
     async def reschedule_task(self, name: str, new_interval: float) -> bool:
@@ -218,8 +219,10 @@ class AdaptiveScheduler:
                     current_time = time.monotonic()
                     task.next_run = current_time + new_interval
                     heapq.heapify(self.tasks)  # Rebuild heap
-                    logger.debug(
-                        f"Rescheduled task '{name}' (new interval: {new_interval}s)",
+                    logger.log_event(
+                        "scheduler",
+                        "rescheduled_task",
+                        level=logging.DEBUG,
                         task=name,
                         interval=new_interval,
                     )
@@ -257,11 +260,15 @@ class AdaptiveScheduler:
                 await self._process_next_batch()
 
             except asyncio.CancelledError:
-                logger.debug("Scheduler cancelled")
+                logger.log_event(
+                    "scheduler", "scheduler_cancelled", level=logging.DEBUG
+                )
                 raise
 
             except Exception as e:
-                logger.error(f"Scheduler error: {e}")
+                logger.log_event(
+                    "scheduler", "scheduler_error", level=logging.ERROR, error=str(e)
+                )
                 # Wait a bit before retrying to avoid tight error loops
                 await asyncio.sleep(1.0)
 
@@ -309,11 +316,17 @@ class AdaptiveScheduler:
 
         except asyncio.CancelledError:
             # Don't log cancelled tasks as errors
-            logger.debug(f"Task '{task.name}' cancelled", task=task.name)
+            logger.log_event(
+                "scheduler", "task_cancelled", level=logging.DEBUG, task=task.name
+            )
             # Re-raise as per asyncio best practices
             raise
 
         except Exception as e:
-            logger.error(
-                f"Task '{task.name}' failed: {e}", task=task.name, error=str(e)
+            logger.log_event(
+                "scheduler",
+                "task_failed",
+                level=logging.ERROR,
+                task=task.name,
+                error=str(e),
             )

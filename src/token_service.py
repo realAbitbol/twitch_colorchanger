@@ -3,6 +3,7 @@ Token service for unified token validation and refresh logic
 """
 
 import asyncio
+import logging
 import random
 from datetime import datetime, timedelta
 from enum import Enum
@@ -103,10 +104,11 @@ class TokenService:
                 return TokenStatus.VALID, access_token, refresh_token, final_expiry
             else:
                 # Token is valid but expires soon, should be refreshed
-                logger.warning(
-                    "token_valid_but_expiring",
+                logger.log_event(
+                    "token",
+                    "valid_but_expiring",
+                    level=logging.WARNING,
                     user=username,
-                    action="refresh",
                 )
                 return None
         return None
@@ -117,14 +119,16 @@ class TokenService:
         """Perform token refresh with retry logic"""
         # Check if we're rate limited for this user
         if self._should_delay_refresh(username):
-            logger.warning(
-                "token_refresh_delayed",
+            logger.log_event(
+                "token",
+                "refresh_delayed",
+                level=logging.WARNING,
                 user=username,
                 reason="recent_failures",
                 retry_count=self._refresh_retry_count.get(username, 0),
             )
             return TokenStatus.FAILED, None, None, None
-        logger.info("token_refresh_needed", user=username)
+        logger.log_event("token", "refresh_needed", user=username)
 
         # Try refresh with retries
         for attempt in range(3):  # Max 3 attempts
@@ -135,8 +139,9 @@ class TokenService:
             # Wait before retry (except after last attempt)
             if attempt < 2:
                 delay = (2**attempt) + random.uniform(0, 1)  # nosec B311 - non-cryptographic jitter for retry delays
-                logger.warning(
-                    "token_refresh_retry_scheduled",
+                logger.log_event(
+                    "token",
+                    "refresh_retry_scheduled",
                     user=username,
                     attempt=attempt + 1,
                     delay=delay,
@@ -164,8 +169,9 @@ class TokenService:
                     if expires_in
                     else None
                 )
-                logger.info(
-                    "token_refresh_success",
+                logger.log_event(
+                    "token",
+                    "refresh_success",
                     user=username,
                     attempt=attempt + 1,
                     expires_in=expires_in,
@@ -181,8 +187,10 @@ class TokenService:
                 )
 
         except Exception as e:
-            logger.error(
-                "token_refresh_attempt_error",
+            logger.log_event(
+                "token",
+                "refresh_attempt_error",
+                level=logging.ERROR,
                 user=username,
                 attempt=attempt + 1,
                 error=str(e),
@@ -199,8 +207,10 @@ class TokenService:
             self._refresh_retry_count.get(username, 0) + 1
         )
         self._last_refresh_attempt[username] = datetime.now().timestamp()
-        logger.error(
-            "token_refresh_failed",
+        logger.log_event(
+            "token",
+            "refresh_failed",
+            level=logging.ERROR,
             user=username,
             attempts=3,
             retry_count=self._refresh_retry_count[username],
@@ -230,15 +240,19 @@ class TokenService:
         try:
             return await self._refresh_token(refresh_token, username)
         except TimeoutError:
-            logger.warning(
-                "token_refresh_timeout",
+            logger.log_event(
+                "token",
+                "refresh_timeout",
+                level=logging.WARNING,
                 user=username,
                 attempt=attempt + 1,
             )
             return None, None, None
         except aiohttp.ClientError as e:
-            logger.warning(
-                "token_refresh_network_error",
+            logger.log_event(
+                "token",
+                "refresh_network_error",
+                level=logging.WARNING,
                 user=username,
                 attempt=attempt + 1,
                 error=str(e),
@@ -286,39 +300,51 @@ class TokenService:
 
                 # Log specific error codes
                 if response.status == 401:
-                    logger.warning(
-                        "token_validation_invalid",
+                    logger.log_event(
+                        "token",
+                        "validation_invalid",
+                        level=logging.WARNING,
                         user=username,
                         status=response.status,
                     )
                 elif response.status == 429:
-                    logger.warning(
-                        "token_validation_rate_limited",
+                    logger.log_event(
+                        "token",
+                        "validation_rate_limited",
+                        level=logging.WARNING,
                         user=username,
                         status=response.status,
                     )
                 else:
-                    logger.warning(
-                        "token_validation_failed_status",
+                    logger.log_event(
+                        "token",
+                        "validation_failed_status",
+                        level=logging.WARNING,
                         user=username,
                         status=response.status,
                     )
                 return False, None
 
         except TimeoutError:
-            logger.warning("token_validation_timeout", user=username)
+            logger.log_event(
+                "token", "validation_timeout", level=logging.WARNING, user=username
+            )
             return False, None
         except aiohttp.ClientError as e:
-            logger.warning(
-                "token_validation_network_error",
+            logger.log_event(
+                "token",
+                "validation_network_error",
+                level=logging.WARNING,
                 user=username,
                 error=str(e),
                 error_type=type(e).__name__,
             )
             return False, None
         except Exception as e:
-            logger.error(
-                "token_validation_error",
+            logger.log_event(
+                "token",
+                "validation_error",
+                level=logging.ERROR,
                 user=username,
                 error=str(e),
                 error_type=type(e).__name__,
@@ -354,8 +380,10 @@ class TokenService:
 
                     # Validate that we got required fields
                     if not new_access_token:
-                        logger.error(
-                            "token_refresh_invalid_response",
+                        logger.log_event(
+                            "token",
+                            "refresh_invalid_response",
+                            level=logging.ERROR,
                             user=username,
                             missing_field="access_token",
                         )
@@ -373,30 +401,38 @@ class TokenService:
                     error_type = "parse_error"
 
                 if response.status == 400:
-                    logger.error(
-                        "token_refresh_invalid_token",
+                    logger.log_event(
+                        "token",
+                        "refresh_invalid_token",
+                        level=logging.ERROR,
                         user=username,
                         status=response.status,
                         error_type=error_type,
                         error_message=error_msg,
                     )
                 elif response.status == 401:
-                    logger.error(
-                        "token_refresh_unauthorized",
+                    logger.log_event(
+                        "token",
+                        "refresh_unauthorized",
+                        level=logging.ERROR,
                         user=username,
                         status=response.status,
                         error_type=error_type,
                         error_message=error_msg,
                     )
                 elif response.status == 429:
-                    logger.warning(
-                        "token_refresh_rate_limited",
+                    logger.log_event(
+                        "token",
+                        "refresh_rate_limited",
+                        level=logging.WARNING,
                         user=username,
                         status=response.status,
                     )
                 else:
-                    logger.error(
-                        "token_refresh_http_error",
+                    logger.log_event(
+                        "token",
+                        "refresh_http_error",
+                        level=logging.ERROR,
                         user=username,
                         status=response.status,
                         error_type=error_type,
@@ -405,19 +441,25 @@ class TokenService:
                 return None, None, None
 
         except TimeoutError:
-            logger.error("token_refresh_timeout", user=username)
+            logger.log_event(
+                "token", "refresh_timeout", level=logging.ERROR, user=username
+            )
             return None, None, None
         except aiohttp.ClientError as e:
-            logger.error(
-                "token_refresh_network_error",
+            logger.log_event(
+                "token",
+                "refresh_network_error",
+                level=logging.ERROR,
                 user=username,
                 error=str(e),
                 error_type=type(e).__name__,
             )
             return None, None, None
         except Exception as e:
-            logger.error(
-                "token_refresh_error",
+            logger.log_event(
+                "token",
+                "refresh_error",
+                level=logging.ERROR,
                 user=username,
                 error=str(e),
                 error_type=type(e).__name__,
@@ -433,8 +475,10 @@ class TokenService:
         time_until_expiry = (token_expiry - now).total_seconds()
 
         # Debug logging to understand scheduling decisions
-        logger.debug(
-            "token_schedule_debug",
+        logger.log_event(
+            "token",
+            "schedule_debug",
+            level=logging.DEBUG,
             seconds_remaining=time_until_expiry,
         )
 

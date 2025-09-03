@@ -5,6 +5,7 @@ This module provides token validation functionality without depending on the bot
 helping to avoid circular imports between config.py and bot.py.
 """
 
+import logging
 from typing import Any
 
 import httpx
@@ -49,8 +50,10 @@ class TokenValidator:
             return True, expires_in
 
         except Exception as e:
-            logger.error(
-                "token_validation_exception",
+            logger.log_event(
+                "token",
+                "validation_exception",
+                level=logging.ERROR,
                 error=str(e),
                 error_type=type(e).__name__,
             )
@@ -119,21 +122,26 @@ class TokenValidator:
                     data = response.json()
                     self.access_token = data["access_token"]
                     self.refresh_token = data.get("refresh_token", self.refresh_token)
-                    logger.info(
-                        "token_refresh_success",
+                    logger.log_event(
+                        "token",
+                        "refresh_success",
                         has_new_refresh_token=self.refresh_token
                         != data.get("refresh_token", self.refresh_token),
                     )
                     return True
-                logger.error(
-                    "token_refresh_failed_status",
+                logger.log_event(
+                    "token",
+                    "refresh_failed_status",
+                    level=logging.ERROR,
                     status=response.status_code,
                 )
                 return False
 
         except Exception as e:
-            logger.error(
-                "token_refresh_exception",
+            logger.log_event(
+                "token",
+                "refresh_exception",
+                level=logging.ERROR,
                 error=str(e),
                 error_type=type(e).__name__,
             )
@@ -171,15 +179,19 @@ async def validate_user_tokens(user: dict[str, Any]) -> dict[str, Any]:
     client_secret = user.get("client_secret")
 
     if not access_token:
-        logger.warning(
-            "token_validation_missing_access_token",
+        logger.log_event(
+            "token",
+            "validation_missing_access_token",
+            level=logging.WARNING,
             user=username,
         )
         return {"valid": False, "user": user, "updated": False}
 
     if not client_id or not client_secret:
-        logger.warning(
-            "token_validation_missing_client_credentials",
+        logger.log_event(
+            "token",
+            "validation_missing_client_credentials",
+            level=logging.WARNING,
             user=username,
             has_client_id=bool(client_id),
             has_client_secret=bool(client_secret),
@@ -207,10 +219,7 @@ async def validate_user_tokens(user: dict[str, Any]) -> dict[str, Any]:
                 # Update user config with refreshed tokens
                 user["access_token"] = validator.access_token
                 user["refresh_token"] = validator.refresh_token
-                logger.info(
-                    "token_validation_refreshed",
-                    user=username,
-                )
+                logger.log_event("token", "validation_refreshed", user=username)
             else:
                 # Token was valid without refresh, show remaining duration
                 hours = expires_in // 3600
@@ -219,23 +228,25 @@ async def validate_user_tokens(user: dict[str, Any]) -> dict[str, Any]:
                     duration_str = f"{hours}h {minutes}m"
                 else:
                     duration_str = f"{minutes}m"
-                logger.info(
-                    "token_validation_valid",
+                logger.log_event(
+                    "token",
+                    "validation_valid",
                     user=username,
                     expires_in_seconds=expires_in,
                     human_remaining=duration_str,
                 )
 
             return {"valid": True, "user": user, "updated": updated}
-        logger.error(
-            "token_validation_failed",
-            user=username,
+        logger.log_event(
+            "token", "validation_failed", level=logging.ERROR, user=username
         )
         return {"valid": False, "user": user, "updated": False}
 
     except Exception as e:
-        logger.error(
-            "token_validation_error",
+        logger.log_event(
+            "token",
+            "validation_error",
+            level=logging.ERROR,
             user=username,
             error=str(e),
             error_type=type(e).__name__,
@@ -258,8 +269,10 @@ async def validate_new_tokens(user: dict[str, Any]) -> dict[str, Any]:
     required_keys = ["client_id", "client_secret", "access_token", "refresh_token"]
     for key in required_keys:
         if key not in user:
-            logger.error(
+            logger.log_event(
+                "token",
                 "new_token_validation_missing_field",
+                level=logging.ERROR,
                 user=username,
                 field=key,
             )
@@ -280,21 +293,19 @@ async def validate_new_tokens(user: dict[str, Any]) -> dict[str, Any]:
             # Update user with any refreshed token information
             user["access_token"] = validator.access_token
             user["refresh_token"] = validator.refresh_token
-            logger.info(
-                "new_token_validation_success",
-                user=username,
-            )
+            logger.log_event("token", "new_validation_success", user=username)
             return {"valid": True, "user": user}
 
-        logger.warning(
-            "new_token_validation_failed",
-            user=username,
+        logger.log_event(
+            "token", "new_validation_failed", level=logging.WARNING, user=username
         )
         return {"valid": False, "user": user}
 
     except Exception as e:
-        logger.error(
-            "new_token_validation_exception",
+        logger.log_event(
+            "token",
+            "new_validation_exception",
+            level=logging.ERROR,
             user=username,
             error=str(e),
             error_type=type(e).__name__,

@@ -6,6 +6,11 @@ import logging
 import os
 import sys
 
+try:  # Local import; keep optional so logger works even if catalog missing early
+    from .event_catalog import EVENT_TEMPLATES  # type: ignore
+except Exception:  # pragma: no cover - fallback when catalog absent
+    EVENT_TEMPLATES = {}
+
 
 class SimpleFormatter(logging.Formatter):
     """Formatter without color codes (colors removed after migration)."""
@@ -57,28 +62,51 @@ class BotLogger:
     def set_level(self, level: int):
         self.logger.setLevel(level)
 
-    def debug(self, message: str, **kwargs):
-        self._log(logging.DEBUG, message, **kwargs)
+    # Removed legacy direct level methods (debug/info/warning/error/critical/exception)
+    # to enforce structured logging via log_event exclusively.
 
-    def info(self, message: str, **kwargs):
-        self._log(logging.INFO, message, **kwargs)
+    def log_event(
+        self,
+        domain: str,
+        action: str,
+        level: int = logging.INFO,
+        human: str | None = None,
+        exc_info: bool = False,
+        **kwargs,
+    ):
+        """Log a structured event.
 
-    def warning(self, message: str, **kwargs):
-        self._log(logging.WARNING, message, **kwargs)
-
-    def error(self, message: str, exc_info: bool = False, **kwargs):
-        self._log(logging.ERROR, message, exc_info=exc_info, **kwargs)
-
-    def critical(self, message: str, exc_info: bool = False, **kwargs):
-        self._log(logging.CRITICAL, message, exc_info=exc_info, **kwargs)
-
-    def exception(self, message: str, **kwargs):
-        """Log an exception with traceback (compat shim for std logging API)."""
-        self._log(logging.ERROR, message, exc_info=True, **kwargs)
-
-    def log_event(self, domain: str, action: str, level: int = logging.INFO, **kwargs):
+        Args:
+            domain: Logical subsystem (e.g. 'token', 'irc').
+            action: Specific action or outcome (e.g. 'refresh_success').
+            level: Logging level (default INFO) if no heuristic mapping.
+            human: Optional explicit human-readable message/template override.
+            **kwargs: Structured context fields.
+        """
         event_name = f"{domain}_{action}".lower()
-        self._log(level, event_name, **kwargs)
+
+        # Determine human-readable text
+        human_text = human
+        derived = False
+        if human_text is None:
+            template = EVENT_TEMPLATES.get((domain, action))
+            if template:
+                try:
+                    human_text = template.format(**kwargs)
+                except Exception:  # formatting failure fallback
+                    human_text = template
+            else:
+                # Auto-generate readable fallback
+                human_text = f"{domain.replace('_', ' ')}: {action.replace('_', ' ')}"
+                derived = True
+
+        # Attach human text into kwargs; mark if derived
+        if human_text is not None:
+            kwargs.setdefault("human", human_text)
+        if derived:
+            kwargs.setdefault("derived", True)
+
+        self._log(level, event_name, exc_info=exc_info, **kwargs)
 
     def _log(self, level: int, message: str, exc_info: bool = False, **kwargs):
         extra: dict[str, str] = {}
@@ -96,13 +124,4 @@ class BotLogger:
 logger = BotLogger()
 
 
-# Backward compatibility functions
-def print_log(
-    message: str, color: str = "", debug_only: bool = False
-):  # pragma: no cover
-    """Legacy stub retained temporarily (stdout banner still uses utils)."""
-    del color
-    if debug_only:
-        logger.debug(message)
-    else:
-        logger.info(message)
+# Legacy print_log removed after structured logging migration.

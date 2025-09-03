@@ -1,61 +1,91 @@
-"""
-Utility functions for logging, user input, and common operations
-"""
+"""Utility helpers for user guidance (legacy colored prints removed)."""
 
-import os
-
-# Minimal ANSI escape codes (kept local for banner only)
-_PURPLE = "\033[95m"
-_RESET = "\033[0m"
-
-# Global debug flag
-DEBUG = os.environ.get("DEBUG", "false").lower() in ("true", "1", "yes")
+from .logger import logger
 
 
-def print_log(message, color="", debug_only=False):
-    """Print log with ANSI colors. If debug_only=True, only print when DEBUG=True"""
-    if debug_only:
-        # Check DEBUG environment variable dynamically
-        debug_enabled = os.environ.get("DEBUG", "false").lower() in ("true", "1", "yes")
-        if not debug_enabled:
-            return
+def emit_startup_instructions():
+    """Emit structured log events with startup guidance.
 
-    if color:
-        print(f"{color}{message}{_RESET}")
-    else:
-        print(message)
+    Kept concise; rich banner removed to avoid stdout noise in non-interactive
+    environments. A future TUI can render something fancier.
+    """
+    logger.log_event("startup", "instructions_header")
+    logger.log_event(
+        "startup",
+        "instructions_setup_step",
+        step=1,
+        text="Create a Twitch application: https://dev.twitch.tv/console/apps",
+    )
+    logger.log_event(
+        "startup",
+        "instructions_setup_step",
+        step=2,
+        text="Set OAuth Redirect URL to: https://twitchtokengenerator.com",
+    )
+    logger.log_event(
+        "startup",
+        "instructions_setup_step",
+        step=3,
+        text="Copy your Client ID and Client Secret",
+    )
 
+    logger.log_event("startup", "instructions_auto_section")
+    logger.log_event(
+        "startup",
+        "instructions_point",
+        text="Copy twitch_colorchanger.conf.sample to twitch_colorchanger.conf",
+    )
+    logger.log_event(
+        "startup", "instructions_point", text="Add username, client_id, client_secret"
+    )
+    logger.log_event(
+        "startup",
+        "instructions_point",
+        text="Run the bot; it handles token authorization automatically",
+    )
+    logger.log_event(
+        "startup",
+        "instructions_point",
+        text="Follow displayed URL and enter the code when prompted",
+    )
 
-def print_instructions():
-    """Display essential setup instructions"""
-    print_log("=" * 60, _PURPLE)
-    print_log("🎨 TWITCH COLORCHANGER BOT - Multi-User Support", _PURPLE)
-    print_log("=" * 60, _PURPLE)
+    logger.log_event("startup", "instructions_manual_section")
+    logger.log_event(
+        "startup",
+        "instructions_point",
+        text="Generate tokens: https://twitchtokengenerator.com",
+    )
+    logger.log_event(
+        "startup",
+        "instructions_point",
+        text="Select scopes: chat:read, user:manage:chat_color",
+    )
+    logger.log_event(
+        "startup",
+        "instructions_point",
+        text="Save Access & Refresh Tokens in config file",
+    )
 
-    print_log("\n🔧 Setup Instructions:")
-    print_log("1. Create a Twitch application at: https://dev.twitch.tv/console/apps")
-    print_log("2. Set OAuth Redirect URL to: https://twitchtokengenerator.com")
-    print_log("3. Copy your Client ID and Client Secret")
-
-    print_log("\n📁 Configuration (Automatic Setup - Recommended):")
-    print_log("• Copy twitch_colorchanger.conf.sample to twitch_colorchanger.conf")
-    print_log("• Add your username, client_id, and client_secret")
-    print_log("• Run the bot - it will automatically handle token authorization!")
-    print_log("• Follow the displayed URL and enter the code when prompted")
-    print_log("• Bot continues automatically once authorized")
-
-    print_log("\n📁 Configuration (Manual Setup - Alternative):")
-    print_log("• Generate tokens at: https://twitchtokengenerator.com")
-    print_log("  - Enter your Client ID and Client Secret")
-    print_log("  - Select scopes: chat:read, user:manage:chat_color")
-    print_log("  - Save the Access Token and Refresh Token")
-    print_log("• Add all credentials to the config file")
-
-    print_log("\n🎯 How it works:")
-    print_log("• The bot monitors your chat messages")
-    print_log("• After each message you send, it changes your username color")
-    print_log("• Supports both preset Twitch colors and random hex colors")
-    print_log("• Can run multiple users simultaneously")
-    print_log("• Automatically refreshes tokens to minimize re-authorization")
-
-    print_log("\n⚠️ IMPORTANT: Keep your Client ID and Client Secret secure!")
+    logger.log_event("startup", "instructions_how_it_works")
+    logger.log_event(
+        "startup", "instructions_point", text="Monitors your chat messages"
+    )
+    logger.log_event(
+        "startup",
+        "instructions_point",
+        text="Changes username color after each message",
+    )
+    logger.log_event(
+        "startup",
+        "instructions_point",
+        text="Supports preset Twitch and random hex colors",
+    )
+    logger.log_event(
+        "startup", "instructions_point", text="Handles multiple users simultaneously"
+    )
+    logger.log_event(
+        "startup",
+        "instructions_point",
+        text="Auto-refreshes tokens to minimize re-authorization",
+    )
+    logger.log_event("startup", "instructions_security_notice")

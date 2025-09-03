@@ -1,8 +1,7 @@
-"""
-Advanced rate limiter that uses Twitch Helix API rate limiting headers
-"""
+"""Advanced rate limiter that uses Twitch Helix API rate limiting headers"""
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass
 
@@ -108,8 +107,10 @@ class TwitchRateLimiter:
 
         except (ValueError, TypeError) as e:
             bucket_key = self._get_bucket_key(is_user_request)
-            logger.warning(
-                "rate_limit_parse_headers_failed",
+            logger.log_event(
+                "rate_limit",
+                "parse_headers_failed",
+                level=logging.WARNING,
                 bucket=bucket_key,
                 error=str(e),
                 error_type=type(e).__name__,
@@ -122,14 +123,18 @@ class TwitchRateLimiter:
         bucket_key = self._get_bucket_key(is_user_request)
         rate_headers = {k: v for k, v in headers.items() if "ratelimit" in k.lower()}
         if rate_headers:
-            logger.debug(
-                "rate_limit_headers",
+            logger.log_event(
+                "rate_limit",
+                "headers",
+                level=logging.DEBUG,
                 bucket=bucket_key,
                 headers=str(rate_headers),
             )
         else:
-            logger.debug(
-                "rate_limit_headers_missing",
+            logger.log_event(
+                "rate_limit",
+                "headers_missing",
+                level=logging.DEBUG,
                 bucket=bucket_key,
             )
 
@@ -169,8 +174,10 @@ class TwitchRateLimiter:
         """Log successful rate limit update"""
         bucket_key = self._get_bucket_key(is_user_request)
         reset_in = max(0, rate_info.reset_timestamp - time.time())
-        logger.debug(
-            "rate_limit_update",
+        logger.log_event(
+            "rate_limit",
+            "update",
+            level=logging.DEBUG,
             bucket=bucket_key,
             remaining=rate_info.remaining,
             limit=rate_info.limit,
@@ -234,7 +241,7 @@ class TwitchRateLimiter:
             elapsed_monotonic = time.time() - bucket.last_updated
 
         if elapsed_monotonic > STALE_BUCKET_AGE:
-            logger.debug("rate_limit_bucket_stale")
+            logger.log_event("rate_limit", "bucket_stale", level=logging.DEBUG)
             return True
         return False
 
@@ -277,8 +284,10 @@ class TwitchRateLimiter:
         # If we're completely out of points, wait until reset
         if bucket.remaining < points_needed:
             reset_delay = max(0, adjusted_reset - current_time)
-            logger.warning(
-                "rate_limit_wait_until_reset",
+            logger.log_event(
+                "rate_limit",
+                "wait_until_reset",
+                level=logging.WARNING,
                 wait_seconds=round(reset_delay, 1),
             )
             return reset_delay + 0.1  # Add small buffer
@@ -323,7 +332,12 @@ class TwitchRateLimiter:
 
             # If we don't have rate limit info yet, use minimal delay
             if bucket is None:
-                logger.debug("rate_limit_no_bucket_min_delay", endpoint=endpoint)
+                logger.log_event(
+                    "rate_limit",
+                    "no_bucket_min_delay",
+                    level=logging.DEBUG,
+                    endpoint=endpoint,
+                )
                 await asyncio.sleep(self.min_delay)
                 return
 
@@ -333,16 +347,20 @@ class TwitchRateLimiter:
             if delay > 0:
                 bucket_key = self._get_bucket_key(is_user_request)
                 if delay > 1:
-                    logger.warning(
-                        "rate_limit_waiting",
+                    logger.log_event(
+                        "rate_limit",
+                        "waiting",
+                        level=logging.WARNING,
                         bucket=bucket_key,
                         delay_seconds=round(delay, 1),
                         remaining=bucket.remaining,
                         endpoint=endpoint,
                     )
                 else:
-                    logger.debug(
-                        "rate_limit_brief_delay",
+                    logger.log_event(
+                        "rate_limit",
+                        "brief_delay",
+                        level=logging.DEBUG,
                         bucket=bucket_key,
                         delay_seconds=round(delay, 1),
                         endpoint=endpoint,
@@ -371,8 +389,10 @@ class TwitchRateLimiter:
             for k, v in headers.items()
             if "ratelimit" in k.lower() or k.lower() in ["retry-after"]
         }
-        logger.error(
-            "rate_limit_429_headers",
+        logger.log_event(
+            "rate_limit",
+            "429_headers",
+            level=logging.ERROR,
             bucket=bucket_key,
             headers=str(rate_headers),
         )
@@ -382,8 +402,10 @@ class TwitchRateLimiter:
         if reset_header:
             reset_time = float(reset_header)
             wait_time = max(0, reset_time - time.time())
-            logger.error(
-                "rate_limit_429_reset_known",
+            logger.log_event(
+                "rate_limit",
+                "429_reset_known",
+                level=logging.ERROR,
                 bucket=bucket_key,
                 wait_seconds=round(wait_time, 1),
             )
@@ -406,8 +428,10 @@ class TwitchRateLimiter:
                     monotonic_last_updated=time.monotonic(),
                 )
         else:
-            logger.error(
-                "rate_limit_429_reset_unknown",
+            logger.log_event(
+                "rate_limit",
+                "429_reset_unknown",
+                level=logging.ERROR,
                 bucket=bucket_key,
             )
 

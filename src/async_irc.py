@@ -4,6 +4,7 @@ Async IRC client for Twitch - Pure async implementation
 
 import asyncio
 import inspect
+import logging
 import secrets
 import time
 from collections.abc import Callable
@@ -95,8 +96,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             old_state = (
                 self.state.name if hasattr(self.state, "name") else str(self.state)
             )
-            logger.debug(
-                "irc_state_change",
+            logger.log_event(
+                "irc",
+                "state_change",
+                level=logging.DEBUG,
                 user=self.username,
                 old_state=old_state,
                 new_state=new_state.name,
@@ -112,14 +115,17 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
 
         try:
             self._set_state(ConnectionState.CONNECTING)
-            logger.info(
-                "irc_connect_start",
+            logger.log_event(
+                "irc",
+                "connect_start",
                 user=self.username,
                 server=self.server,
                 port=self.port,
             )
-            logger.debug(
-                "irc_open_connection",
+            logger.log_event(
+                "irc",
+                "open_connection",
+                level=logging.DEBUG,
                 user=self.username,
                 timeout=ASYNC_IRC_CONNECT_TIMEOUT,
             )
@@ -127,8 +133,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                 asyncio.open_connection(self.server, self.port),
                 timeout=ASYNC_IRC_CONNECT_TIMEOUT,
             )
-            logger.debug(
-                "irc_connection_established",
+            logger.log_event(
+                "irc",
+                "connection_established",
+                level=logging.DEBUG,
                 user=self.username,
             )
 
@@ -142,16 +150,20 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             await self._send_line("CAP REQ :twitch.tv/tags")
             await self._send_line("CAP REQ :twitch.tv/commands")
 
-            logger.debug(
-                "irc_auth_sent",
+            logger.log_event(
+                "irc",
+                "auth_sent",
+                level=logging.DEBUG,
                 user=self.username,
                 wait_seconds=2,
             )
             # Wait for connection confirmation
             await asyncio.sleep(2)  # Give server time to process
 
-            logger.debug(
-                "irc_join_begin",
+            logger.log_event(
+                "irc",
+                "join_begin",
+                level=logging.DEBUG,
                 user=self.username,
                 channel=channel.lower(),
             )
@@ -163,15 +175,18 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                 self._reset_connection_timer()  # Reset timer after successful connection
                 self._set_state(ConnectionState.READY)
                 self._join_grace_deadline = time.time() + 30  # 30s grace for joins
-                logger.info(
-                    "irc_connect_success",
+                logger.log_event(
+                    "irc",
+                    "connect_success",
                     user=self.username,
                     channel=channel.lower(),
                 )
                 return True
 
-            logger.error(
-                "irc_connect_join_failed",
+            logger.log_event(
+                "irc",
+                "connect_join_failed",
+                level=logging.ERROR,
                 user=self.username,
                 channel=channel.lower(),
             )
@@ -179,8 +194,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             return False
 
         except TimeoutError:
-            logger.error(
-                "irc_connect_timeout",
+            logger.log_event(
+                "irc",
+                "connect_timeout",
+                level=logging.ERROR,
                 user=self.username,
                 timeout=ASYNC_IRC_CONNECT_TIMEOUT,
             )
@@ -188,20 +205,29 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             return False
         except OSError as e:
             if "Connection reset by peer" in str(e):
-                logger.error("irc_connect_reset", user=self.username, error=str(e))
+                logger.log_event(
+                    "irc",
+                    "connect_reset",
+                    level=logging.ERROR,
+                    user=self.username,
+                    error=str(e),
+                )
             else:
-                logger.error(
-                    "irc_connect_network_error",
+                logger.log_event(
+                    "irc",
+                    "connect_network_error",
+                    level=logging.ERROR,
                     user=self.username,
                     error=str(e),
                 )
             await self.disconnect()
             return False
         except Exception as e:
-            logger.exception(
-                "irc_connect_exception",
+            logger.log_event(
+                "irc",
+                "connect_network_error",
+                level=logging.ERROR,
                 user=self.username,
-                error_type=type(e).__name__,
                 error=str(e),
             )
             await self.disconnect()
@@ -212,11 +238,15 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         channel = channel.lower()
 
         if channel in self.confirmed_channels:
-            logger.debug(
-                "irc_join_already_confirmed", user=self.username, channel=channel
+            logger.log_event(
+                "irc",
+                "join_already_confirmed",
+                level=logging.DEBUG,
+                user=self.username,
+                channel=channel,
             )
             return True
-        logger.info("irc_join_start", user=self.username, channel=channel)
+        logger.log_event("irc", "join_start", user=self.username, channel=channel)
 
         try:
             # Send JOIN command
@@ -226,8 +256,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             return await self._wait_for_join_confirmation(channel)
 
         except Exception as e:
-            logger.error(
-                "irc_join_error",
+            logger.log_event(
+                "irc",
+                "join_error",
+                level=logging.ERROR,
                 user=self.username,
                 channel=channel,
                 error=str(e),
@@ -264,8 +296,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                 self._log_connection_reset_error()
                 return False
             except Exception as e:
-                logger.error(
-                    "irc_join_processing_error",
+                logger.log_event(
+                    "irc",
+                    "join_processing_error",
+                    level=logging.ERROR,
                     user=self.username,
                     channel=channel,
                     error=str(e),
@@ -281,14 +315,21 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         """Read data during join process, return None if connection lost"""
         # Check if reader is available
         if not self.reader:
-            logger.error("irc_join_no_reader", user=self.username)
+            logger.log_event(
+                "irc", "join_no_reader", level=logging.ERROR, user=self.username
+            )
             return None
 
         # Read with short timeout to allow checking for join confirmation
         data = await asyncio.wait_for(self.reader.read(4096), timeout=0.5)
 
         if not data:
-            logger.error("irc_join_connection_lost", user=self.username)
+            logger.log_event(
+                "irc",
+                "join_connection_lost",
+                level=logging.ERROR,
+                user=self.username,
+            )
             return None
 
         return data
@@ -297,7 +338,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         """Finalize channel join after confirmation"""
         if channel not in self.channels:
             self.channels.append(channel)
-        logger.info("irc_join_success", user=self.username, channel=channel)
+        logger.log_event("irc", "join_success", user=self.username, channel=channel)
         return True
 
     def _log_connection_reset_error(self):
@@ -306,16 +347,20 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             f"❌ {self.username}: Connection reset by server - "
             "likely authentication failure"
         )
-        logger.error(
-            "irc_connection_reset",
+        logger.log_event(
+            "irc",
+            "connection_reset",
+            level=logging.ERROR,
             user=self.username,
             message=reset_msg,
         )
 
     def _log_join_timeout(self, channel: str):
         """Log join timeout error"""
-        logger.error(
-            "irc_join_timeout",
+        logger.log_event(
+            "irc",
+            "join_timeout",
+            level=logging.ERROR,
             user=self.username,
             channel=channel,
         )
@@ -332,8 +377,12 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         channel = channel.lower()
 
         if channel in self.confirmed_channels:
-            logger.debug(
-                "irc_join_already_confirmed", user=self.username, channel=channel
+            logger.log_event(
+                "irc",
+                "join_already_confirmed",
+                level=logging.DEBUG,
+                user=self.username,
+                channel=channel,
             )
             return True
 
@@ -345,11 +394,17 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
 
         attempts = self.pending_joins[channel]["attempts"]
         if attempts > self.max_join_attempts:
-            logger.error("irc_join_max_attempts", user=self.username, channel=channel)
+            logger.log_event(
+                "irc",
+                "join_max_attempts",
+                level=logging.ERROR,
+                user=self.username,
+                channel=channel,
+            )
             return False
 
-        logger.info(
-            "irc_join_attempt", user=self.username, channel=channel, attempt=attempts
+        logger.log_event(
+            "irc", "join_attempt", user=self.username, channel=channel, attempt=attempts
         )
 
         try:
@@ -362,18 +417,28 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                     self.pending_joins.pop(channel, None)
                     if channel not in self.channels:
                         self.channels.append(channel)
-                    logger.info("irc_join_success", user=self.username, channel=channel)
+                    logger.log_event(
+                        "irc", "join_success", user=self.username, channel=channel
+                    )
                     return True
                 await asyncio.sleep(0.1)  # Non-blocking sleep
 
             # Join timeout
-            logger.warning("irc_join_timeout", user=self.username, channel=channel)
+            logger.log_event(
+                "irc",
+                "join_timeout",
+                level=logging.WARNING,
+                user=self.username,
+                channel=channel,
+            )
             self.pending_joins.pop(channel, None)
             return False
 
         except Exception as e:
-            logger.error(
-                "irc_join_error",
+            logger.log_event(
+                "irc",
+                "join_error",
+                level=logging.ERROR,
                 user=self.username,
                 channel=channel,
                 error=str(e),
@@ -400,13 +465,15 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
     def _can_start_listening(self) -> bool:
         """Check if we can start listening"""
         if not self.connected or not self.reader:
-            logger.error("irc_listen_start_failed", user=self.username)
+            logger.log_event(
+                "irc", "listen_start_failed", level=logging.ERROR, user=self.username
+            )
             return False
         return True
 
     def _initialize_listening(self):
         """Initialize the listening state"""
-        logger.info("irc_listener_start", user=self.username)
+        logger.log_event("irc", "listener_start", user=self.username)
         self.running = True
         self.last_server_activity = time.time()
 
@@ -417,18 +484,21 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         except TimeoutError:
             return self._handle_read_timeout()
         except Exception as e:
-            logger.exception(
-                "irc_listen_error",
+            logger.log_event(
+                "irc",
+                "connection_reset",
+                level=logging.ERROR,
                 user=self.username,
                 error=str(e),
-                error_type=type(e).__name__,
             )
             return True
 
     async def _handle_data_read(self) -> bool:
         """Handle reading data from the connection. Returns True if should break."""
         if not self.reader:
-            logger.error("irc_no_reader", user=self.username)
+            logger.log_event(
+                "irc", "no_reader", level=logging.ERROR, user=self.username
+            )
             return True
 
         data = await asyncio.wait_for(
@@ -437,7 +507,9 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         )
 
         if not data:
-            logger.error("irc_connection_lost", user=self.username)
+            logger.log_event(
+                "irc", "connection_lost", level=logging.ERROR, user=self.username
+            )
             self.connected = False
             return True
 
@@ -453,7 +525,9 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
     def _handle_read_timeout(self) -> bool:
         """Handle read timeout. Returns True if should break."""
         if self._is_connection_stale():
-            logger.warning("irc_connection_stale", user=self.username)
+            logger.log_event(
+                "irc", "connection_stale", level=logging.WARNING, user=self.username
+            )
             self.connected = False
             return True
         return False
@@ -461,7 +535,9 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
     def _finalize_listening(self):
         """Finalize the listening state"""
         self.running = False
-        logger.warning("irc_listener_stopped", user=self.username)
+        logger.log_event(
+            "irc", "listener_stopped", level=logging.WARNING, user=self.username
+        )
         if not self.writer or not self.reader:
             self.connected = False
 
@@ -484,7 +560,13 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         """Handle individual IRC messages"""
         # Debug: Log all incoming messages
         if not raw_message.startswith("PING"):
-            logger.debug("irc_raw", user=self.username, raw=raw_message)
+            logger.log_event(
+                "irc",
+                "raw",
+                level=logging.DEBUG,
+                user=self.username,
+                raw=raw_message,
+            )
 
         # Handle PINGs immediately
         if raw_message.startswith("PING"):
@@ -557,8 +639,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
     ) -> tuple[str | None, str | None, str | None]:
         """Parse PRIVMSG components and return channel, message, username"""
         if not prefix or " :" not in params:
-            logger.warning(
-                "irc_privmsg_invalid_format",
+            logger.log_event(
+                "irc",
+                "privmsg_invalid_format",
+                level=logging.WARNING,
                 user=self.username,
                 prefix=prefix,
                 params=params,
@@ -568,8 +652,12 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         # Parse channel and message
         channel_msg = params.split(" :", 1)
         if len(channel_msg) < 2:
-            logger.warning(
-                "irc_privmsg_parse_failed", user=self.username, params=params
+            logger.log_event(
+                "irc",
+                "privmsg_parse_failed",
+                level=logging.WARNING,
+                user=self.username,
+                params=params,
             )
             return None, None, None
 
@@ -587,8 +675,9 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             username.lower() == self.username.lower() if self.username else False
         )
         if is_bot_message:
-            logger.info(
-                "irc_privmsg",
+            logger.log_event(
+                "irc",
+                "privmsg",
                 user=self.username,
                 author=username,
                 channel=channel,
@@ -596,8 +685,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                 self_message=True,
             )
         else:
-            logger.debug(
-                "irc_privmsg",
+            logger.log_event(
+                "irc",
+                "privmsg",
+                level=logging.DEBUG,
                 user=self.username,
                 author=username,
                 channel=channel,
@@ -610,11 +701,18 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
     ):
         """Process message through registered handlers"""
         if not self.message_handler:
-            logger.warning("irc_no_message_handler", user=self.username)
+            logger.log_event(
+                "irc",
+                "no_message_handler",
+                level=logging.WARNING,
+                user=self.username,
+            )
             return
 
-        logger.debug(
-            "irc_dispatch_message_handler",
+        logger.log_event(
+            "irc",
+            "dispatch_message_handler",
+            level=logging.DEBUG,
             user=self.username,
             channel=channel,
             author=username,
@@ -631,18 +729,21 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                 )
                 await task
 
-            logger.debug(
-                "irc_message_handler_complete",
+            logger.log_event(
+                "irc",
+                "message_handler_complete",
+                level=logging.DEBUG,
                 user=self.username,
                 channel=channel,
                 author=username,
             )
         except Exception as e:
-            logger.exception(
-                "irc_message_handler_error",
+            logger.log_event(
+                "irc",
+                "connect_network_error",
+                level=logging.ERROR,
                 user=self.username,
                 channel=channel,
-                author=username,
                 error=str(e),
             )
 
@@ -659,11 +760,12 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             )
             await task
         except Exception as e:
-            logger.exception(
-                "irc_color_change_handler_error",
+            logger.log_event(
+                "irc",
+                "connect_network_error",
+                level=logging.ERROR,
                 user=self.username,
                 channel=channel,
-                author=username,
                 error=str(e),
             )
 
@@ -677,8 +779,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         # Check for server activity timeout
         activity_timeout = self.server_activity_timeout
         if current_time - self.last_server_activity > activity_timeout:
-            logger.warning(
-                "irc_no_server_activity",
+            logger.log_event(
+                "irc",
+                "no_server_activity",
+                level=logging.WARNING,
                 user=self.username,
                 timeout=self.server_activity_timeout,
             )
@@ -691,8 +795,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             and current_time - self.last_ping_from_server > ping_timeout
         ):
             time_since_ping = current_time - self.last_ping_from_server
-            logger.warning(
-                "irc_ping_timeout",
+            logger.log_event(
+                "irc",
+                "ping_timeout",
+                level=logging.WARNING,
                 user=self.username,
                 time_since_ping=time_since_ping,
             )
@@ -710,8 +816,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
 
         if time_since_activity > early_stale_threshold:
             # Log early warning for observability
-            logger.debug(
-                "irc_stale_early_warning",
+            logger.log_event(
+                "irc",
+                "stale_early_warning",
+                level=logging.DEBUG,
                 user=self.username,
                 time_since_activity=time_since_activity,
             )
@@ -724,7 +832,9 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         self.token = (
             new_token if new_token.startswith("oauth:") else f"oauth:{new_token}"
         )
-        logger.debug("irc_token_updated", user=self.username)
+        logger.log_event(
+            "irc", "token_updated", level=logging.DEBUG, user=self.username
+        )
 
     async def disconnect(self):
         """Disconnect from IRC server"""
@@ -736,8 +846,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                 self.writer.close()
                 await self.writer.wait_closed()
             except Exception as e:
-                logger.exception(
-                    "irc_disconnect_error",
+                logger.log_event(
+                    "irc",
+                    "connect_network_error",
+                    level=logging.ERROR,
                     user=self.username,
                     error=str(e),
                 )
@@ -751,17 +863,26 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         self.pending_joins.clear()
         self.message_buffer = ""
         self._set_state(ConnectionState.DISCONNECTED)
-        logger.warning("irc_disconnected", user=self.username)
+        logger.log_event(
+            "irc", "disconnected", level=logging.WARNING, user=self.username
+        )
 
     async def force_reconnect(self) -> bool:
         """Force a reconnection (for external health checks) with race protection"""
         async with self._reconnect_lock:
             if not self.username or not self.token or not self.channels:
-                logger.error("irc_reconnect_missing_details", user=self.username)
+                logger.log_event(
+                    "irc",
+                    "reconnect_missing_details",
+                    level=logging.ERROR,
+                    user=self.username,
+                )
                 return False
 
             self._set_state(ConnectionState.RECONNECTING)
-            logger.warning("irc_force_reconnect", user=self.username)
+            logger.log_event(
+                "irc", "force_reconnect", level=logging.WARNING, user=self.username
+            )
 
             # Check if we need to wait due to exponential backoff
             now = time.time()
@@ -770,8 +891,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
 
             if time_since_last_attempt < backoff_delay:
                 remaining_wait = backoff_delay - time_since_last_attempt
-                logger.warning(
-                    "irc_reconnect_backoff_wait",
+                logger.log_event(
+                    "irc",
+                    "reconnect_backoff_wait",
+                    level=logging.WARNING,
                     user=self.username,
                     remaining_wait=remaining_wait,
                     attempt=self.consecutive_failures + 1,
@@ -799,8 +922,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                     timeout=ASYNC_IRC_RECONNECT_TIMEOUT,
                 )
             except TimeoutError:
-                logger.error(
-                    "irc_reconnect_timeout",
+                logger.log_event(
+                    "irc",
+                    "reconnect_timeout",
+                    level=logging.ERROR,
                     user=self.username,
                     timeout=ASYNC_IRC_RECONNECT_TIMEOUT,
                 )
@@ -820,14 +945,17 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                 self._join_grace_deadline = time.time() + 30
 
                 num_channels = len(self.channels)
-                logger.info(
-                    "irc_reconnect_success",
+                logger.log_event(
+                    "irc",
+                    "reconnect_success",
                     user=self.username,
                     extra_channels=num_channels - 1,
                 )
             else:
-                logger.error(
-                    "irc_reconnect_failed",
+                logger.log_event(
+                    "irc",
+                    "reconnect_failed",
+                    level=logging.ERROR,
                     user=self.username,
                     attempt=self.consecutive_failures,
                 )
@@ -990,8 +1118,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
 
         elapsed = time.time() - self.connection_start_time
         if elapsed > CONNECTION_RETRY_TIMEOUT:
-            logger.warning(
-                "irc_connection_retry_timeout",
+            logger.log_event(
+                "irc",
+                "connection_retry_timeout",
+                level=logging.WARNING,
                 user=self.username,
                 timeout=CONNECTION_RETRY_TIMEOUT,
             )
