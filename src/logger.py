@@ -13,20 +13,26 @@ except Exception:  # pragma: no cover - fallback when catalog absent
 
 
 class SimpleFormatter(logging.Formatter):
-    """Formatter without color codes (colors removed after migration)."""
+    """Minimal colored formatter showing human text and context."""
+
+    LEVEL_COLORS = {
+        logging.DEBUG: "\x1b[36m",
+        logging.INFO: "\x1b[32m",
+        logging.WARNING: "\x1b[33m",
+        logging.ERROR: "\x1b[31m",
+        logging.CRITICAL: "\x1b[35m",
+    }
+    RESET = "\x1b[0m"
+
+    def __init__(self):
+        super().__init__()
+        self.enable_color = sys.stdout.isatty()
 
     def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
-        message = record.getMessage()
-        context_parts = []
-        if hasattr(record, "user"):
-            context_parts.append(f"user={record.user}")
-        if hasattr(record, "channel"):
-            context_parts.append(f"channel={record.channel}")
-        if context_parts:
-            message = f"{message} [{', '.join(context_parts)}]"
-        if record.exc_info:
-            message += f"\n{self.formatException(record.exc_info)}"
-        return message
+        msg = record.getMessage()
+        color = self.LEVEL_COLORS.get(record.levelno, "") if self.enable_color else ""
+        reset = self.RESET if self.enable_color else ""
+        return f"{color}{record.levelname}{reset} {msg}"
 
 
 class BotLogger:
@@ -107,7 +113,6 @@ class BotLogger:
             kwargs.setdefault("human", human_text)
         if derived:
             kwargs.setdefault("derived", True)
-
         self._log(level, event_name, exc_info=exc_info, **kwargs)
 
     def _log(self, level: int, message: str, exc_info: bool = False, **kwargs):
