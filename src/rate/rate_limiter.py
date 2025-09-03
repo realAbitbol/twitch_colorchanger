@@ -74,32 +74,8 @@ class TwitchRateLimiter:
             "backoff": self._backoff.snapshot(),
         }
 
-    def get_delay(self, is_user_request: bool = True, points_needed: int = 1) -> float:
-        """Return the optimal delay before the next request."""
-        bucket = self.user_bucket if is_user_request else self.app_bucket
-        if bucket is None:
-            return self.min_delay
-        return max(self.min_delay, self._calculate_delay(bucket, points_needed))
-
-    def is_rate_limited(
-        self, is_user_request: bool = True, points_needed: int = 1
-    ) -> bool:
-        """Return True if rate limited (not enough points for request)."""
-        bucket = self.user_bucket if is_user_request else self.app_bucket
-        if bucket is None:
-            return False
-        return bucket.remaining < points_needed + self.safety_buffer
-
-    def get_rate_limit_display(self, is_user_request: bool = True) -> str:
-        """Return a string describing the current rate limit status."""
-        bucket = self.user_bucket if is_user_request else self.app_bucket
-        if bucket is None:
-            return "No rate limit bucket available."
-        reset_in = max(0, bucket.reset_timestamp - time.time())
-        return (
-            f"Rate limit: {bucket.remaining}/{bucket.limit} points remaining. "
-            f"Resets in {reset_in:.0f}s."
-        )
+    # Removed unused introspection helpers get_delay / is_rate_limited /
+    # get_rate_limit_display.
 
     def _get_bucket_key(self, is_user_request: bool) -> str:
         """Get the bucket identifier for logging"""

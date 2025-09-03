@@ -14,7 +14,9 @@ import aiohttp
 from ..application_context import ApplicationContext
 from ..config.globals import set_global_watcher
 from ..config.watcher import create_config_watcher
-from ..constants import HEALTH_MONITOR_INTERVAL, TASK_WATCHDOG_INTERVAL
+from ..constants import (
+    TASK_WATCHDOG_INTERVAL,  # noqa: F401 - may be used by watchdog service
+)
 from ..logs.logger import logger
 from ..manager import HealthMonitor, ManagerStatistics
 from ..manager.task_watchdog import TaskWatchdog
@@ -38,7 +40,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         self.shutdown_initiated = False
         self.restart_requested = False
         self.new_config: list[dict[str, Any]] | None = None
-        self._health_check_in_progress = False
+        # Removed unused _health_check_in_progress (dead code)
         self.context = context
         self.http_session: aiohttp.ClientSession | None = None
         self._health_monitor: HealthMonitor | None = None
@@ -201,48 +203,9 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         self.new_config = None
         return success
 
-    async def _monitor_bot_health(self):
-        while self.running and not self.shutdown_initiated:
-            try:
-                jitter = _jitter_rng.uniform(0.8, 1.2)
-                await asyncio.sleep(HEALTH_MONITOR_INTERVAL * jitter)
-                if not self.running or self.shutdown_initiated:
-                    break
-                logger.log_event("manager", "health_tick", level=logging.DEBUG)
-                await self._perform_health_check()
-            except asyncio.CancelledError:
-                logger.log_event("manager", "health_cancelled", level=logging.WARNING)
-                raise
-            except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "manager", "health_error", level=logging.ERROR, error=str(e)
-                )
-                await asyncio.sleep(60 * _jitter_rng.uniform(0.5, 1.5))
-
-    async def _perform_health_check(self):
-        if not self._health_monitor:
-            self._health_monitor = HealthMonitor(self)
-        await self._health_monitor.perform_health_check()
-
-    async def _monitor_task_health(self):
-        while self.running and not self.shutdown_initiated:
-            try:
-                jitter = _jitter_rng.uniform(0.7, 1.3)
-                await asyncio.sleep(TASK_WATCHDOG_INTERVAL * jitter)
-                if not self.running or self.shutdown_initiated:
-                    break
-                logger.log_event("manager", "task_watchdog_tick", level=logging.DEBUG)
-                self._check_task_health()
-            except asyncio.CancelledError:
-                logger.log_event(
-                    "manager", "task_watchdog_cancelled", level=logging.WARNING
-                )
-                raise
-            except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "manager", "task_watchdog_error", level=logging.ERROR, error=str(e)
-                )
-                await asyncio.sleep(30)
+    # Removed unused private monitoring coroutines (_monitor_bot_health,
+    # _perform_health_check, _monitor_task_health) – monitoring handled by
+    # HealthMonitor/TaskWatchdog services.
 
     def _check_task_health(self):
         if not self._task_watchdog:

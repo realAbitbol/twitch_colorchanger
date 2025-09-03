@@ -77,8 +77,8 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         self.running = False
         self.irc_task: asyncio.Task | None = None
         self.stats = BotStats()
-        self.last_successful_connection = time.time()
-        self.connection_failure_start: float | None = None
+        # Removed unused connection tracking attributes flagged by dead-code scan.
+        # last_successful_connection / connection_failure_start were not referenced.
         self.last_color: str | None = None
         self.rate_limiter = context.get_rate_limiter(self.client_id, self.username)
         self.scheduler = AdaptiveScheduler()
