@@ -146,6 +146,30 @@ class TokenManager:
             )
         self.logger.log_event("token_manager", "registered", user=username)
 
+    def remove(self, username: str) -> bool:
+        """Remove a user from token tracking (e.g., config removal)."""
+        if username in self.tokens:
+            del self.tokens[username]
+            self.logger.log_event(
+                "token_manager", "removed", level=logging.DEBUG, user=username
+            )
+            return True
+        return False
+
+    def prune(self, active_usernames: set[str]) -> int:
+        """Prune tokens not in active set; return count removed."""
+        to_remove = [u for u in self.tokens if u not in active_usernames]
+        for u in to_remove:
+            del self.tokens[u]
+        if to_remove:
+            self.logger.log_event(
+                "token_manager",
+                "pruned",
+                removed=len(to_remove),
+                remaining=len(self.tokens),
+            )
+        return len(to_remove)
+
     def get_info(self, username: str) -> TokenInfo | None:
         return self.tokens.get(username)
 
