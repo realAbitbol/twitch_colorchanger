@@ -12,7 +12,9 @@ if TYPE_CHECKING:  # pragma: no cover
     from bot.manager import BotManager
 
 
-async def reconnect_unhealthy_bots(manager: BotManager, bots: list[TwitchColorBot]):
+async def reconnect_unhealthy_bots(
+    manager: BotManager, bots: list[TwitchColorBot]
+) -> None:
     logger.log_event("manager", "reconnecting_unhealthy", level=30, count=len(bots))
     for bot in bots:
         success = await attempt_bot_reconnection(manager, bot)
@@ -46,12 +48,13 @@ async def attempt_bot_reconnection(manager: BotManager, bot: TwitchColorBot) -> 
         return False
 
 
-def get_bot_reconnect_lock(bot: TwitchColorBot):
-    if not hasattr(bot, "_reconnect_lock"):
-        import asyncio as _asyncio
-
-        bot._reconnect_lock = _asyncio.Lock()  # type: ignore[attr-defined]
-    return bot._reconnect_lock  # type: ignore[attr-defined]
+def get_bot_reconnect_lock(bot: TwitchColorBot) -> asyncio.Lock:
+    lock = getattr(bot, "_reconnect_lock", None)
+    if lock is None:
+        lock = asyncio.Lock()
+    # Dynamically attach a private lock attribute; bots created without one will get it lazily.
+    bot._reconnect_lock = lock
+    return lock
 
 
 def bot_became_healthy(bot: TwitchColorBot) -> bool:
@@ -72,7 +75,7 @@ def bot_became_healthy(bot: TwitchColorBot) -> bool:
     return False
 
 
-async def cancel_stale_listener(bot: TwitchColorBot):
+async def cancel_stale_listener(bot: TwitchColorBot) -> None:
     if not hasattr(bot, "irc_task") or bot.irc_task is None:
         return
     try:
@@ -112,7 +115,7 @@ async def force_bot_reconnect(bot: TwitchColorBot) -> bool:
         )
     if bot.irc:
         bot.irc_task = asyncio.create_task(bot.irc.listen())
-    for channel in bot.irc.channels[1:] if bot.irc else []:  # type: ignore[operator]
+    for channel in bot.irc.channels[1:] if bot.irc else []:
         try:
             if bot.irc:
                 await bot.irc.join_channel(channel)
@@ -129,13 +132,13 @@ async def force_bot_reconnect(bot: TwitchColorBot) -> bool:
 
 
 def start_fresh_listener(bot: TwitchColorBot) -> bool:
+    if not bot.irc:
+        logger.log_event(
+            "manager", "cannot_start_listener", level=40, user=bot.username
+        )
+        return False
     try:
-        if not bot.irc:
-            logger.log_event(
-                "manager", "cannot_start_listener", level=40, user=bot.username
-            )
-            return False
-        bot.irc_task = asyncio.create_task(bot.irc.listen())  # type: ignore[attr-defined]
+        bot.irc_task = asyncio.create_task(bot.irc.listen())
         return True
     except Exception as e:  # noqa: BLE001
         logger.log_event(

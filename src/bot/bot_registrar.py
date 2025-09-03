@@ -35,7 +35,7 @@ class BotRegistrar:
         )
         # Register persistence hook for future background refreshes.
         try:
-            self._tm.register_update_hook(bot.username, bot._persist_token_changes)  # type: ignore[attr-defined]
+            self._tm.register_update_hook(bot.username, bot._persist_token_changes)
         except Exception as e:  # noqa: BLE001
             logger.log_event(
                 "bot",
@@ -50,20 +50,21 @@ class BotRegistrar:
             info = self._tm.get_info(bot.username)
             if not info:
                 return
-            old_access = bot.access_token  # type: ignore[attr-defined]
+            old_access = bot.access_token
             old_refresh = getattr(bot, "refresh_token", None)
             # Update bot with possibly refreshed tokens
-            bot.access_token = info.access_token  # type: ignore[union-attr,attr-defined]
-            if getattr(info, "refresh_token", None):  # type: ignore[attr-defined]
-                bot.refresh_token = info.refresh_token  # type: ignore[attr-defined]
+            bot.access_token = info.access_token
+            if getattr(info, "refresh_token", None):
+                bot.refresh_token = info.refresh_token
             # Persist only if tokens actually changed
-            if (info.access_token and info.access_token != old_access) or (
+            access_changed = bool(info.access_token and info.access_token != old_access)
+            refresh_changed = bool(
                 getattr(info, "refresh_token", None)
-                and info.refresh_token != old_refresh  # type: ignore[attr-defined]
-            ):
-                # Best-effort persistence; failures already logged inside helper.
+                and info.refresh_token != old_refresh
+            )
+            if access_changed or refresh_changed:
                 try:
-                    await bot._persist_token_changes()  # type: ignore[attr-defined]
+                    await bot._persist_token_changes()
                 except Exception as e:  # noqa: BLE001
                     logger.log_event(
                         "bot",

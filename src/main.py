@@ -21,7 +21,7 @@ from .logs.logger import logger
 from .utils import emit_startup_instructions
 
 
-async def main():
+async def main() -> None:
     """Main function"""
     try:
         logger.log_event("app", "start")
@@ -55,7 +55,7 @@ async def main():
 
 # Best-effort safety net: ensure any lingering aiohttp session is closed
 @atexit.register
-def _cleanup_any_context():  # pragma: no cover - process exit path
+def _cleanup_any_context() -> None:  # pragma: no cover - process exit path
     try:  # best-effort; nothing to close explicitly yet
         # Import lazily to avoid import side-effects if not needed
         from .application_context import (  # noqa: F401

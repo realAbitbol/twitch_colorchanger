@@ -15,7 +15,7 @@ from typing import Any
 
 from ..constants import CONFIG_WRITE_DEBOUNCE
 from ..logs.logger import logger
-from . import globals as watcher_globals  # type: ignore
+from . import globals as watcher_globals
 
 
 class ConfigRepository:
@@ -41,11 +41,17 @@ class ConfigRepository:
             with open(self.path, encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, dict) and "users" in data:
-                users = data["users"]
-                self._cached_users = users
+                raw_users = data["users"]  # expected list[dict[str, Any]]
+                if not isinstance(raw_users, list):
+                    return []
+                # Runtime validation: ensure list elements are dict-like
+                users_list: list[dict[str, Any]] = [
+                    u for u in raw_users if isinstance(u, dict)
+                ]
+                self._cached_users = users_list
                 self._file_mtime = mtime
                 self._file_size = size
-                return users
+                return users_list
             if isinstance(data, list):
                 self._cached_users = data
                 self._file_mtime = mtime
@@ -109,7 +115,7 @@ class ConfigRepository:
                 loop = asyncio.get_running_loop()
 
                 # Schedule a tiny asynchronous debounce without blocking caller
-                async def _debounce():  # pragma: no cover (timing minor)
+                async def _debounce() -> None:  # pragma: no cover (timing minor)
                     await asyncio.sleep(CONFIG_WRITE_DEBOUNCE)
 
                 loop.create_task(_debounce())

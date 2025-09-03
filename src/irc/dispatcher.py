@@ -8,7 +8,7 @@ import traceback
 from typing import TYPE_CHECKING
 
 from ..logs.logger import logger
-from .parser import build_privmsg, parse_irc_message
+from .parser import IRCMessage, build_privmsg, parse_irc_message
 
 if TYPE_CHECKING:  # pragma: no cover
     from .async_irc import AsyncTwitchIRC
@@ -29,7 +29,7 @@ class IRCDispatcher:
                 await self._handle_irc_message(line.strip())
         return buffer
 
-    async def _handle_irc_message(self, raw_message: str):  # noqa: C901
+    async def _handle_irc_message(self, raw_message: str) -> None:  # noqa: C901
         if not raw_message.startswith("PING"):
             logger.log_event(
                 "irc",
@@ -52,19 +52,19 @@ class IRCDispatcher:
         elif command == "PRIVMSG" and parsed.prefix:
             await self._handle_privmsg(parsed)
 
-    async def _handle_ping(self, raw_message: str):
+    async def _handle_ping(self, raw_message: str) -> None:
         server = raw_message.split(":", 1)[1] if ":" in raw_message else "tmi.twitch.tv"
         pong = f"PONG :{server}"
         await self.client._send_line(pong)  # noqa: SLF001
         self.client.last_ping_from_server = __import__("time").time()
 
-    def _handle_channel_confirmation(self, params: str):
+    def _handle_channel_confirmation(self, params: str) -> None:
         if " #" in params:
             channel = params.split(" #")[1].split()[0].lower()
             self.client.confirmed_channels.add(channel)
             self.client.joined_channels.add(channel)
 
-    async def _handle_privmsg(self, parsed):  # type: ignore[no-untyped-def]
+    async def _handle_privmsg(self, parsed: IRCMessage) -> None:
         priv = build_privmsg(parsed)
         if not priv:
             return
@@ -72,7 +72,7 @@ class IRCDispatcher:
         await self._process_message_handlers(priv.author, priv.channel, priv.message)
         await self._handle_color_change_command(priv.author, priv.channel, priv.message)
 
-    def _log_chat_message(self, username: str, channel: str, message: str):
+    def _log_chat_message(self, username: str, channel: str, message: str) -> None:
         is_bot_message = (
             username.lower() == self.client.username.lower()
             if self.client.username
@@ -104,7 +104,7 @@ class IRCDispatcher:
 
     async def _process_message_handlers(
         self, username: str, channel: str, message: str
-    ):
+    ) -> None:
         if not self.client.message_handler:
             logger.log_event(
                 "irc",
@@ -122,10 +122,10 @@ class IRCDispatcher:
         )
         handler = self.client.message_handler
         try:
-            if inspect.iscoroutinefunction(handler):  # type: ignore[arg-type]
-                await handler(username, channel, message)  # type: ignore[call-arg]
+            if inspect.iscoroutinefunction(handler):
+                await handler(username, channel, message)
             else:
-                maybe = handler(username, channel, message)  # type: ignore[call-arg]
+                maybe = handler(username, channel, message)
                 if inspect.isawaitable(maybe):
                     await maybe
         except Exception as e:  # noqa: BLE001
@@ -141,17 +141,17 @@ class IRCDispatcher:
 
     async def _handle_color_change_command(
         self, username: str, channel: str, message: str
-    ):
+    ) -> None:
         if not self.client.color_change_handler:
             return
         if not message.startswith("!"):
             return
         handler = self.client.color_change_handler
         try:
-            if inspect.iscoroutinefunction(handler):  # type: ignore[arg-type]
-                await handler(username, channel, message)  # type: ignore[call-arg]
+            if inspect.iscoroutinefunction(handler):
+                await handler(username, channel, message)
             else:
-                result = handler(username, channel, message)  # type: ignore[call-arg]
+                result = handler(username, channel, message)
                 if inspect.isawaitable(result):
                     await result
         except Exception as e:  # noqa: BLE001

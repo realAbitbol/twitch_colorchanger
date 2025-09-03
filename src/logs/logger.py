@@ -7,7 +7,7 @@ import os
 import sys
 
 try:
-    from .event_catalog import EVENT_TEMPLATES  # type: ignore
+    from .event_catalog import EVENT_TEMPLATES
 except Exception:  # pragma: no cover
     EVENT_TEMPLATES = {}
 
@@ -22,11 +22,11 @@ class SimpleFormatter(logging.Formatter):
     }
     RESET = "\x1b[0m"
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.enable_color = sys.stdout.isatty()
 
-    def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
+    def format(self, record: logging.LogRecord) -> str:  # noqa: D401 (simple override)
         msg = record.getMessage()
         color = self.LEVEL_COLORS.get(record.levelno, "") if self.enable_color else ""
         reset = self.RESET if self.enable_color else ""
@@ -34,7 +34,9 @@ class SimpleFormatter(logging.Formatter):
 
 
 class BotLogger:
-    def __init__(self, name: str = "twitch_colorchanger", log_file: str | None = None):
+    def __init__(
+        self, name: str = "twitch_colorchanger", log_file: str | None = None
+    ) -> None:
         self.logger = logging.getLogger(name)
         self.log_file = log_file
         self.logger.handlers.clear()
@@ -54,7 +56,7 @@ class BotLogger:
             )
             self.logger.addHandler(file_handler)
 
-    def set_level(self, level: int):
+    def set_level(self, level: int) -> None:
         self.logger.setLevel(level)
 
     def log_event(
@@ -63,9 +65,10 @@ class BotLogger:
         action: str,
         level: int = logging.INFO,
         human: str | None = None,
+        *,
         exc_info: bool = False,
-        **kwargs,
-    ):
+        **kwargs: object,
+    ) -> None:
         event_name = f"{domain}_{action}".lower()
         human_text = human
         derived = False
@@ -85,12 +88,15 @@ class BotLogger:
             kwargs.setdefault("derived", True)
         self._log(level, event_name, exc_info=exc_info, **kwargs)
 
-    def _log(self, level: int, event_name: str, exc_info: bool = False, **kwargs):
+    def _log(
+        self, level: int, event_name: str, exc_info: bool = False, **kwargs: object
+    ) -> None:
         debug_enabled = self._is_debug_enabled()
-        user, channel, human_text = self._extract_reserved(kwargs)
+        kw: dict[str, object] = dict(kwargs)  # copy for mutation in extract
+        user, channel, human_text = self._extract_reserved(kw)
         prefix = self._build_prefix(user, channel)
         msg = (
-            self._build_debug_message(event_name, prefix, human_text, kwargs)
+            self._build_debug_message(event_name, prefix, human_text, kw)
             if debug_enabled
             else self._build_concise_message(event_name, prefix, human_text, channel)
         )
@@ -101,11 +107,16 @@ class BotLogger:
         return os.environ.get("DEBUG", "false").lower() in ("true", "1", "yes")
 
     @staticmethod
-    def _extract_reserved(kwargs: dict):
-        user = kwargs.pop("user", None)
-        channel = kwargs.pop("channel", None)
-        human_text = kwargs.pop("_human_text", None) or kwargs.get("human")
+    def _extract_reserved(
+        kwargs: dict[str, object],
+    ) -> tuple[str | None, str | None, str | None]:
+        user_o = kwargs.pop("user", None)
+        channel_o = kwargs.pop("channel", None)
+        human_text_o = kwargs.pop("_human_text", None) or kwargs.get("human")
         kwargs.pop("human", None)
+        user = str(user_o) if isinstance(user_o, str) else None
+        channel = str(channel_o) if isinstance(channel_o, str) else None
+        human_text = str(human_text_o) if isinstance(human_text_o, str) else None
         return user, channel, human_text
 
     @staticmethod
@@ -115,7 +126,7 @@ class BotLogger:
 
     @staticmethod
     def _build_debug_message(
-        event_name: str, prefix: str, human_text: str | None, kwargs: dict
+        event_name: str, prefix: str, human_text: str | None, kwargs: dict[str, object]
     ) -> str:
         context = ", ".join(f"{k}={v}" for k, v in kwargs.items())
         base = f"{event_name} {prefix}"

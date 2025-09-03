@@ -24,7 +24,7 @@ class HealthMonitor:
     def start(self) -> asyncio.Task:
         return asyncio.create_task(self._loop())
 
-    async def _loop(self):  # pragma: no cover (timing heavy)
+    async def _loop(self) -> None:  # pragma: no cover (timing heavy)
         while self.manager.running and not self.manager.shutdown_initiated:
             try:
                 jitter = _rng.uniform(0.8, 1.2)
@@ -40,7 +40,7 @@ class HealthMonitor:
                 logger.log_event("manager", "health_error", level=40, error=str(e))
                 await asyncio.sleep(60 * _rng.uniform(0.5, 1.5))
 
-    async def perform_health_check(self):
+    async def perform_health_check(self) -> None:
         if self._in_progress:
             logger.log_event("manager", "health_check_running", level=10)
             return
@@ -72,7 +72,7 @@ class HealthMonitor:
                 unhealthy.append(bot)
         return unhealthy
 
-    def _log_bot_health_issues(self, bot: TwitchColorBot):
+    def _log_bot_health_issues(self, bot: TwitchColorBot) -> None:
         logger.log_event("manager", "bot_unhealthy", level=30, user=bot.username)
         if bot.irc:
             try:

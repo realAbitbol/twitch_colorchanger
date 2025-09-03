@@ -56,7 +56,7 @@ class IRCJoinManager:
                 if data is None:
                     return False
                 decoded_data = data.decode("utf-8", errors="ignore")
-                message_buffer = await self.client.dispatcher.process_incoming_data(  # type: ignore[attr-defined]
+                message_buffer = await self.client.dispatcher.process_incoming_data(
                     message_buffer, decoded_data
                 )
                 if channel in self.client.confirmed_channels:
@@ -105,7 +105,7 @@ class IRCJoinManager:
         )
         return True
 
-    def _log_connection_reset_error(self):  # pragma: no cover - logging only
+    def _log_connection_reset_error(self) -> None:  # pragma: no cover - logging only
         reset_msg = (
             f"❌ {self.client.username}: Connection reset by server - "
             "likely authentication failure"
@@ -118,7 +118,9 @@ class IRCJoinManager:
             message=reset_msg,
         )
 
-    def _log_join_timeout(self, channel: str):  # pragma: no cover - logging only
+    def _log_join_timeout(
+        self, channel: str
+    ) -> None:  # pragma: no cover - logging only
         logger.log_event(
             "irc",
             "join_timeout",
@@ -143,7 +145,7 @@ class IRCJoinManager:
             + 1,
             "timestamp": time.time(),
         }
-        attempts = self.client.pending_joins[channel]["attempts"]  # type: ignore[index]
+        attempts = int(self.client.pending_joins[channel].get("attempts", 0))
         if attempts > self.client.max_join_attempts:
             logger.log_event(
                 "irc",

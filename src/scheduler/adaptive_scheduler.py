@@ -35,12 +35,12 @@ class ScheduledTask:
     kwargs: dict
     priority: int  # Lower number = higher priority
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Set default priority if not provided"""
         if not hasattr(self, "priority") or self.priority is None:
             self.priority = 0
 
-    def __lt__(self, other):
+    def __lt__(self, other: "ScheduledTask") -> bool:
         """For heap ordering - compare by next_run time, then priority"""
         if self.next_run != other.next_run:
             return self.next_run < other.next_run
@@ -58,13 +58,13 @@ class AdaptiveScheduler:
     - Memory-efficient with monotonic timing
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.tasks: list[ScheduledTask] = []
         self.running = False
         self.scheduler_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
 
-    async def start(self):
+    async def start(self) -> None:
         """Start the scheduler"""
         if self.running:
             return
@@ -76,7 +76,7 @@ class AdaptiveScheduler:
 
     logger.log_event("scheduler", "started")
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Stop the scheduler and cancel all tasks"""
         if not self.running:
             return
@@ -101,13 +101,13 @@ class AdaptiveScheduler:
 
     async def schedule_recurring(  # noqa: D401
         self,
-        callback: Callable,
+        callback: Callable[..., object],
         interval: float,
         name: str,
-        *args,
+        *args: object,
         priority: int = 0,
         initial_delay: float = 0,
-        **kwargs,
+        **kwargs: object,
     ) -> bool:
         """
         Schedule a recurring task
@@ -151,12 +151,12 @@ class AdaptiveScheduler:
 
     async def schedule_once(  # noqa: D401
         self,
-        callback: Callable,
+        callback: Callable[..., object],
         delay: float,
         name: str,
-        *args,
+        *args: object,
         priority: int = 0,
-        **kwargs,
+        **kwargs: object,
     ) -> bool:
         """
         Schedule a one-time task
@@ -245,7 +245,7 @@ class AdaptiveScheduler:
 
     # Removed get_health_status (unused).  # noqa: ERA001
 
-    async def _run_scheduler(self):
+    async def _run_scheduler(self) -> None:
         """Main scheduler loop"""
         while self.running:
             try:
@@ -264,7 +264,7 @@ class AdaptiveScheduler:
                 # Wait a bit before retrying to avoid tight error loops
                 await asyncio.sleep(1.0)
 
-    async def _process_next_batch(self):
+    async def _process_next_batch(self) -> None:
         """Process the next batch of ready tasks"""
         current_time = time.monotonic()
         tasks_to_run = []
@@ -298,7 +298,7 @@ class AdaptiveScheduler:
 
         await asyncio.sleep(min(sleep_time, 5.0))  # Cap at 5 seconds
 
-    async def _execute_task(self, task: ScheduledTask):
+    async def _execute_task(self, task: ScheduledTask) -> None:
         """Execute a single task with error handling"""
         try:
             if asyncio.iscoroutinefunction(task.callback):

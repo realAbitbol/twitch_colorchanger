@@ -78,7 +78,7 @@ class IRCConnectionController:
             channel = original_channels[0] if original_channels else ""
             try:
                 success = await asyncio.wait_for(
-                    host.connect(host.token, host.username, channel),  # type: ignore[arg-type]
+                    host.connect(host.token, host.username, channel),
                     timeout=ASYNC_IRC_RECONNECT_TIMEOUT,
                 )
             except TimeoutError:

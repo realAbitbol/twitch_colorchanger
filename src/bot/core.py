@@ -6,7 +6,13 @@ import asyncio
 import logging
 import os
 import time
+from collections.abc import Callable
 from datetime import datetime
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # pragma: no cover
+    from ..color import ColorChangeService
+    from ..token.manager import TokenManager
 
 import aiohttp
 
@@ -67,7 +73,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             )
         self.http_session = http_session
         self.api = TwitchAPI(self.http_session)
-        self.token_manager = None  # set at start
+        self.token_manager: TokenManager | None = None  # set at start
         self._registrar: BotRegistrar | None = None
         self.channels = channels
         self.use_random_colors = is_prime_or_turbo
@@ -82,18 +88,27 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         self.last_color: str | None = None
         self.rate_limiter = context.get_rate_limiter(self.client_id, self.username)
         self.scheduler = AdaptiveScheduler()
+        # Lazy-initialized optional services / state containers
+        self._color_service: ColorChangeService | None = None
+        self._last_color_change_payload: dict[str, Any] | None = None
 
-    async def start(self):
+    async def start(self) -> None:
         logger.log_event("bot", "start", user=self.username)
         self.running = True
+        # ApplicationContext guarantees a token_manager; still guard defensively
         self.token_manager = self.context.token_manager
+        if self.token_manager is None:  # pragma: no cover - defensive
+            logger.log_event(
+                "bot", "no_token_manager", level=logging.ERROR, user=self.username
+            )
+            return
         self._registrar = BotRegistrar(self.token_manager)
         await self._registrar.register(self)
         if not await self._initialize_connection():
             return
         await self._run_irc_loop()
 
-    async def _run_irc_loop(self):
+    async def _run_irc_loop(self) -> None:
         """Run primary IRC listen task with limited auto-reconnect attempts."""
         if not self.irc:
             logger.log_event(
@@ -102,7 +117,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             return
         self.irc_task = asyncio.create_task(self.irc.listen())
 
-        def _irc_task_done(task: asyncio.Task):  # local callback
+        def _irc_task_done(task: asyncio.Task[Any]) -> None:  # local callback
             if task.cancelled():
                 return
             exc = task.exception()
@@ -126,7 +141,9 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                     )
 
         self.irc_task.add_done_callback(_irc_task_done)
-        normalized_channels = getattr(self, "_normalized_channels_cache", self.channels)  # type: ignore[attr-defined]
+        normalized_channels: list[str] = getattr(
+            self, "_normalized_channels_cache", self.channels
+        )
         for channel in normalized_channels[1:]:
             await self.irc.join_channel(channel)
         await self.scheduler.start()
@@ -142,7 +159,9 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         finally:
             await self.stop()
 
-    async def _attempt_reconnect(self, error: Exception, cb):  # type: ignore[no-untyped-def]
+    async def _attempt_reconnect(
+        self, error: Exception, cb: Callable[[asyncio.Task[Any]], None]
+    ) -> None:
         backoff = 1.0
         attempts = 0
         max_attempts = 5
@@ -174,7 +193,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                 current_error = e2
                 continue
 
-    async def stop(self):
+    async def stop(self) -> None:
         logger.log_event("bot", "stopping", level=logging.WARNING, user=self.username)
         self.running = False
         await self.scheduler.stop()
@@ -182,9 +201,9 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         await self._disconnect_irc()
         await self._wait_for_irc_task()
         # Flush any pending debounced config writes before final shutdown.
-        if getattr(self, "config_file", None):
+        if self.config_file:
             try:
-                await flush_pending_updates(self.config_file)  # type: ignore[attr-defined]
+                await flush_pending_updates(self.config_file)
             except Exception as e:  # noqa: BLE001
                 # Log at debug to avoid noisy shutdown warnings; still visible for diagnostics.
                 logger.log_event(
@@ -234,10 +253,17 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             self.channels = normalized_channels
         self.irc.channels = normalized_channels.copy()
         self.irc.set_message_handler(self.handle_irc_message)
-        try:
-            self.irc.set_auth_failure_callback(self._on_irc_auth_failure)  # type: ignore[attr-defined]
-        except AttributeError:
-            pass
+        if hasattr(self.irc, "set_auth_failure_callback"):
+            try:
+                self.irc.set_auth_failure_callback(self._on_irc_auth_failure)
+            except Exception as e:  # noqa: BLE001
+                logger.log_event(
+                    "bot",
+                    "auth_failure_callback_set_error",
+                    level=logging.DEBUG,
+                    user=self.username,
+                    error=str(e),
+                )
         if not await self.irc.connect(
             self.access_token, self.username, normalized_channels[0]
         ):
@@ -247,13 +273,13 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             return False
         logger.log_event("bot", "listener_start", user=self.username)
         # Provide normalized channels list to caller context (start method) via return attribute
-        self._normalized_channels_cache = normalized_channels  # type: ignore[attr-defined]
+        self._normalized_channels_cache: list[str] = normalized_channels
         return True
 
-    async def _cancel_token_task(self):  # compatibility no-op
-        pass
+    async def _cancel_token_task(self) -> None:  # compatibility no-op
+        return None
 
-    async def _disconnect_irc(self):
+    async def _disconnect_irc(self) -> None:
         if self.irc:
             try:
                 await self.irc.disconnect()
@@ -266,7 +292,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                     error=str(e),
                 )
 
-    async def _wait_for_irc_task(self):
+    async def _wait_for_irc_task(self) -> None:
         if self.irc_task and not self.irc_task.done():
             try:
                 await asyncio.wait_for(self.irc_task, timeout=2.0)
@@ -290,7 +316,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                     error=str(e),
                 )
 
-    async def handle_irc_message(self, sender: str, channel: str, message: str):
+    async def handle_irc_message(self, sender: str, channel: str, message: str) -> None:
         if sender.lower() != self.username.lower():
             return
         self.stats.messages_sent += 1
@@ -321,7 +347,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         await self._persist_enabled_flag(target_enabled)
         return True
 
-    async def _persist_enabled_flag(self, flag: bool):
+    async def _persist_enabled_flag(self, flag: bool) -> None:
         if not self.config_file:
             return
         user_config = self._build_user_config()
@@ -341,17 +367,16 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         if not self.token_manager:
             return False
         try:
-            if force:
-                await self.token_manager.force_refresh(self.username)
-            else:
-                await self.token_manager.get_fresh_token(self.username)
-            info = self.token_manager.get_token_info(self.username)
+            outcome = await self.token_manager.ensure_fresh(
+                self.username, force_refresh=force
+            )
+            info = self.token_manager.get_info(self.username)
             if info and info.access_token:
                 if info.access_token != self.access_token:
                     self.access_token = info.access_token
                     if self.irc:
                         self.irc.update_token(info.access_token)
-                return True
+                return outcome.name != "FAILED"
             return False
         except Exception as e:  # noqa: BLE001
             logger.log_event(
@@ -363,13 +388,13 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             )
             return False
 
-    async def _get_user_info(self):
-        async def op():
+    async def _get_user_info(self) -> dict[str, Any] | None:
+        async def op() -> dict[str, Any] | None:
             return await self._get_user_info_impl()
 
         return await run_with_retry(op, DEFAULT_NETWORK_RETRY, user=self.username)
 
-    async def _get_user_info_impl(self):
+    async def _get_user_info_impl(self) -> dict[str, Any] | None:
         await self.rate_limiter.wait_if_needed("get_user_info", is_user_request=True)
         try:
             data, status_code, headers = await self.api.request(
@@ -377,7 +402,10 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             )
             self.rate_limiter.update_from_headers(headers, is_user_request=True)
             if status_code == 200 and data and data.get("data"):
-                return data["data"][0]
+                first = data["data"][0]
+                if isinstance(first, dict):  # narrow type
+                    return first
+                return None
             if status_code == 429:
                 self.rate_limiter.handle_429_error(headers, is_user_request=True)
                 return None
@@ -401,13 +429,13 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             )
             return None
 
-    async def _get_current_color(self):
-        async def op() -> dict | None:
+    async def _get_current_color(self) -> str | None:
+        async def op() -> str | None:
             return await self._get_current_color_impl()
 
         return await run_with_retry(op, DEFAULT_NETWORK_RETRY, user=self.username)
 
-    async def _get_current_color_impl(self):
+    async def _get_current_color_impl(self) -> str | None:
         await self.rate_limiter.wait_if_needed(
             "get_current_color", is_user_request=True
         )
@@ -421,18 +449,15 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                 params=params,
             )
             self.rate_limiter.update_from_headers(headers, is_user_request=True)
-            if (
-                status_code == 200
-                and data
-                and data.get("data")
-                and len(data["data"]) > 0
-            ):
-                color = data["data"][0].get("color")
-                if color:
-                    logger.log_event(
-                        "bot", "current_color_is", user=self.username, color=color
-                    )
-                    return color
+            if status_code == 200 and data and data.get("data"):
+                first = data["data"][0]
+                if isinstance(first, dict):
+                    color = first.get("color")
+                    if isinstance(color, str):
+                        logger.log_event(
+                            "bot", "current_color_is", user=self.username, color=color
+                        )
+                        return color
             elif status_code == 429:
                 self.rate_limiter.handle_429_error(headers, is_user_request=True)
                 return None
@@ -450,40 +475,41 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             )
             return None
 
-    async def _on_irc_auth_failure(self):
+    async def _on_irc_auth_failure(self) -> None:
+        if not self.token_manager:
+            return None
         try:
-            if not hasattr(self, "token_manager"):
-                return
-            refreshed = await self.token_manager.force_refresh(self.username)
-            info = self.token_manager.get_token_info(self.username)
-            if info and info.access_token:
-                self.access_token = info.access_token
-                if self.irc:
-                    self.irc.update_token(info.access_token)
-                if refreshed:
-                    logger.log_event(
-                        "bot", "irc_auth_refresh_success", user=self.username
-                    )
+            outcome = await self.token_manager.ensure_fresh(
+                self.username, force_refresh=True
+            )
         except Exception as e:  # noqa: BLE001
             logger.log_event(
                 "bot",
-                "irc_auth_failure_error",
+                "irc_auth_refresh_error",
                 level=logging.ERROR,
                 user=self.username,
                 error=str(e),
             )
+            return None
+        info = self.token_manager.get_info(self.username)
+        if info and info.access_token:
+            self.access_token = info.access_token
+            if self.irc:
+                self.irc.update_token(info.access_token)
+            if outcome.name != "FAILED":
+                logger.log_event("bot", "irc_auth_refresh_success", user=self.username)
+        return None
 
     def increment_colors_changed(self) -> None:
         self.stats.colors_changed += 1
 
-    async def _change_color(self, hex_color=None):
-        # Local import to avoid circular imports; use relative path so that
-        # running via `python -m src.main` (package root `src`) works.
-        from ..color import ColorChangeService  # type: ignore
+    async def _change_color(self, hex_color: str | None = None) -> bool:
+        # Local import only when needed to avoid circular dependency at import time
+        if self._color_service is None:
+            from ..color import ColorChangeService  # local import
 
-        if not hasattr(self, "_color_service"):
-            self._color_service = ColorChangeService(self)  # type: ignore[attr-defined]
-        return await self._color_service.change_color(hex_color)  # type: ignore[attr-defined]
+            self._color_service = ColorChangeService(self)
+        return await self._color_service.change_color(hex_color)
 
     async def _perform_color_request(
         self, params: dict, action: str
@@ -494,8 +520,8 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         return self._classify_color_status(status_code, action)
 
     async def _execute_color_status_request(
-        self, params: dict, action: str
-    ) -> int | ColorRequestResult:  # type: ignore[override]
+        self, params: dict[str, Any], action: str
+    ) -> int | ColorRequestResult:
         async def op() -> int:
             await self.rate_limiter.wait_if_needed(action, is_user_request=True)
             data, status_code, headers = await asyncio.wait_for(
@@ -509,7 +535,8 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                 timeout=10,
             )
             self.rate_limiter.update_from_headers(headers, is_user_request=True)
-            self._last_color_change_payload = data  # type: ignore[attr-defined]
+            # record last payload for diagnostics
+            self._last_color_change_payload = data
             return status_code
 
         try:
@@ -564,16 +591,17 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
 
     def _extract_color_error_snippet(self) -> str | None:
         try:  # pragma: no cover - defensive
-            payload = getattr(self, "_last_color_change_payload", {})  # type: ignore[attr-defined]
+            payload: dict[str, Any] | None = self._last_color_change_payload
+            if payload is None:
+                return None
             if isinstance(payload, dict):
                 message = payload.get("message") or payload.get("error")
                 base = message if message else payload
                 return str(base)[:200]
         except Exception:  # noqa: BLE001
             return None
-        return None
 
-    def _get_rate_limit_display(self, debug_only=False):
+    def _get_rate_limit_display(self, debug_only: bool = False) -> str:
         debug_enabled = os.environ.get("DEBUG", "false").lower() in ("true", "1", "yes")
         if debug_only and not debug_enabled:
             return ""
@@ -592,11 +620,11 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             return f" [{remaining}/{limit} reqs, reset in {reset_in:.0f}s]"
         return f" [⚠️ {remaining}/{limit} reqs, reset in {reset_in:.0f}s]"
 
-    def close(self):
+    def close(self) -> None:
         logger.log_event("bot", "closing_for_user", user=self.username)
         self.running = False
 
-    def print_statistics(self):
+    def print_statistics(self) -> None:
         logger.log_event(
             "bot",
             "statistics",

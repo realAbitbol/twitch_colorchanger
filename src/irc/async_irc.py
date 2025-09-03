@@ -28,7 +28,7 @@ from . import (
 
 
 class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
-    def __init__(self):
+    def __init__(self) -> None:
         self.username: str | None = None
         self.token: str | None = None
         self.channels: list[str] = []
@@ -64,7 +64,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         self.join_manager = IRCJoinManager(self)
         self.listener = IRCListener(self)
 
-    def _set_state(self, new_state: ConnectionState):
+    def _set_state(self, new_state: ConnectionState) -> None:
         if self.state != new_state:
             old_state = (
                 self.state.name if hasattr(self.state, "name") else str(self.state)
@@ -190,7 +190,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             await self.disconnect()
             return False
 
-    async def _send_line(self, message: str):
+    async def _send_line(self, message: str) -> None:
         if self.writer:
             line = f"{message}\r\n"
             self.writer.write(line.encode("utf-8"))
@@ -199,10 +199,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
     async def join_channel(self, channel: str) -> bool:
         return await self.join_manager.join_channel(channel)
 
-    async def listen(self):
+    async def listen(self) -> None:
         return await self.listener.listen()
 
-    def update_token(self, new_token: str):
+    def update_token(self, new_token: str) -> None:
         self.token = (
             new_token if new_token.startswith("oauth:") else f"oauth:{new_token}"
         )
@@ -210,7 +210,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             "irc", "token_updated", level=logging.DEBUG, user=self.username
         )
 
-    async def disconnect(self):
+    async def disconnect(self) -> None:
         self.running = False
         self.connected = False
         if self.writer:
@@ -240,7 +240,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
     async def force_reconnect(self) -> bool:
         return await self.connection_controller.force_reconnect()
 
-    def set_message_handler(self, handler: Callable[[str, str, str], Any]):
+    def set_message_handler(self, handler: Callable[[str, str, str], Any]) -> None:
         self.message_handler = handler
 
     def get_connection_stats(self) -> dict:
@@ -254,10 +254,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
 
     # Removed unused retry decision helper _should_retry_connection
 
-    def set_color_change_handler(self, handler: Callable[[str, str, str], Any]):
+    def set_color_change_handler(self, handler: Callable[[str, str, str], Any]) -> None:
         """Register a handler for color change commands (messages starting with !)."""
         self.color_change_handler = handler
 
-    def _reset_connection_timer(self):
+    def _reset_connection_timer(self) -> None:
         self.connection_start_time = 0
         self.consecutive_failures = 0

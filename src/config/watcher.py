@@ -7,9 +7,10 @@ import logging
 import os
 import threading
 from collections.abc import Callable
+from typing import Any
 
 from watchdog.events import FileSystemEventHandler
-from watchdog.observers import Observer
+from watchdog.observers import Observer as _Observer
 
 from ..constants import RELOAD_WATCH_DELAY
 from ..logs.logger import logger
@@ -23,7 +24,7 @@ from .core import (
 class ConfigFileHandler(FileSystemEventHandler):
     """File system event handler for config file changes"""
 
-    def __init__(self, config_file: str, watcher_instance):
+    def __init__(self, config_file: str, watcher_instance: "ConfigWatcher"):
         super().__init__()
         self.config_file = os.path.abspath(config_file)
         self.watcher = watcher_instance
@@ -35,21 +36,29 @@ class ConfigFileHandler(FileSystemEventHandler):
 class ConfigWatcher:
     """Watches config file for changes and triggers bot restart"""
 
-    def __init__(self, config_file: str, restart_callback: Callable):
+    observer: Any | None
+    running: bool
+    paused: bool
+    _pause_lock: threading.Lock
+
+    def __init__(
+        self, config_file: str, restart_callback: Callable[[list[dict[str, Any]]], Any]
+    ):
         self.config_file = config_file
         self.restart_callback = restart_callback
+        # Initialize runtime attributes
         self.observer = None
         self.running = False
         self.paused = False
         self._pause_lock = threading.Lock()
 
-    def pause_watching(self):
+    def pause_watching(self) -> None:
         """Temporarily pause watching (for bot-initiated changes)"""
         with self._pause_lock:
             self.paused = True
             logger.log_event("config_watch", "paused", level=logging.DEBUG)
 
-    def resume_watching(self):
+    def resume_watching(self) -> None:
         """Resume watching after bot-initiated changes (non-blocking)."""
 
         def _unpause():  # runs in thread after delay
@@ -67,7 +76,7 @@ class ConfigWatcher:
 
         threading.Thread(target=_delay_then_unpause, daemon=True).start()
 
-    def start(self):
+    def start(self) -> None:
         """Start watching the config file"""
         if self.running:
             return
@@ -82,15 +91,17 @@ class ConfigWatcher:
             )
             return
 
-        self.observer = Observer()
-        event_handler = ConfigFileHandler(self.config_file, self)
-
         try:
-            self.observer.schedule(event_handler, config_dir, recursive=False)
-            self.observer.start()
+            observer = _Observer()
+            event_handler = ConfigFileHandler(self.config_file, self)
+            observer.schedule(event_handler, config_dir, recursive=False)
+            observer.start()
+            self.observer = observer
             self.running = True
             logger.log_event("config_watch", "start", path=self.config_file)
         except Exception as e:
+            # Ensure we don't retain a partially started observer
+            self.observer = None
             logger.log_event(
                 "config_watch",
                 "start_failed",
@@ -98,15 +109,19 @@ class ConfigWatcher:
                 error=str(e),
             )
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop watching the config file"""
-        if self.observer and self.running:
-            self.observer.stop()
-            self.observer.join()
-            self.running = False
-            logger.log_event("config_watch", "stopped")
+        obs = self.observer
+        if self.running and obs is not None:
+            try:
+                obs.stop()
+                obs.join()
+            finally:
+                self.running = False
+                self.observer = None
+                logger.log_event("config_watch", "stopped")
 
-    def _on_config_changed(self):
+    def _on_config_changed(self) -> None:
         """Handle config file changes"""
         try:
             # Load and validate new config
@@ -155,7 +170,7 @@ class ConfigWatcher:
 
 
 async def create_config_watcher(
-    config_file: str, restart_callback: Callable
+    config_file: str, restart_callback: Callable[[list[dict[str, Any]]], Any]
 ) -> ConfigWatcher:
     """Create and start a config file watcher"""
     watcher = ConfigWatcher(config_file, restart_callback)

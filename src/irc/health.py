@@ -37,7 +37,9 @@ class IRCHealthMonitor:
         }
 
     def is_healthy(self) -> bool:
-        return self.get_health_snapshot()["healthy"]
+        snap = self.get_health_snapshot()
+        healthy = snap.get("healthy")
+        return bool(healthy)
 
     def get_health_snapshot(self) -> dict[str, Any]:
         host = self.host
