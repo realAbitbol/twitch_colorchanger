@@ -14,8 +14,14 @@ import aiohttp
 from .application_context import ApplicationContext
 from .bot import TwitchColorBot
 from .config_watcher import create_config_watcher
-from .constants import HEALTH_MONITOR_INTERVAL, TASK_WATCHDOG_INTERVAL
+from .constants import (  # legacy compatibility (may be unused)
+    HEALTH_MONITOR_INTERVAL,
+    TASK_WATCHDOG_INTERVAL,
+)
 from .logger import logger
+from .manager_health import HealthMonitor
+from .manager_statistics import ManagerStatistics
+from .task_watchdog import TaskWatchdog
 from .watcher_globals import set_global_watcher
 
 _jitter_rng = SystemRandom()
@@ -29,7 +35,11 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         users_config: list[dict[str, Any]],
         config_file: str | None = None,
         context: ApplicationContext | None = None,
-    ):
+    ) -> None:
+        """Initialize manager.
+
+        Parameters kept identical for backwards compatibility.
+        """
         self.users_config = users_config
         self.config_file = config_file
         self.bots: list[TwitchColorBot] = []
@@ -38,9 +48,13 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         self.shutdown_initiated = False
         self.restart_requested = False
         self.new_config: list[dict[str, Any]] | None = None
-        self._health_check_in_progress = False
+        self._health_check_in_progress = False  # legacy flag (may be removed later)
         self.context = context
         self.http_session: aiohttp.ClientSession | None = None
+        # Service components
+        self._health_monitor: HealthMonitor | None = None
+        self._task_watchdog: TaskWatchdog | None = None
+        self._stats_service = ManagerStatistics()
 
     # ---------------- Lifecycle -----------------
     async def _start_all_bots(self) -> bool:
@@ -211,19 +225,10 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                 )
                 await asyncio.sleep(60 * _jitter_rng.uniform(0.5, 1.5))
 
-    async def _perform_health_check(self):
-        if self._health_check_in_progress:
-            logger.log_event("manager", "health_check_running", level=logging.DEBUG)
-            return
-        self._health_check_in_progress = True
-        try:
-            unhealthy = self._identify_unhealthy_bots()
-            if unhealthy:
-                await self._reconnect_unhealthy_bots(unhealthy)
-            else:
-                logger.log_event("manager", "all_healthy")
-        finally:
-            self._health_check_in_progress = False
+    async def _perform_health_check(self):  # backwards compatibility wrapper
+        if not self._health_monitor:
+            self._health_monitor = HealthMonitor(self)
+        await self._health_monitor.perform_health_check()
 
     async def _monitor_task_health(self):
         while self.running and not self.shutdown_initiated:
@@ -245,78 +250,12 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                 )
                 await asyncio.sleep(30)
 
-    def _check_task_health(self):
-        dead: list[int] = []
-        alive: list[asyncio.Task] = []
-        for i, task in enumerate(self.tasks):
-            if task.done():
-                if task.exception():
-                    logger.log_event(
-                        "manager",
-                        "task_exception_detected",
-                        level=logging.WARNING,
-                        index=i,
-                        error=str(task.exception()),
-                    )
-                else:
-                    logger.log_event("manager", "task_completed", index=i)
-                dead.append(i)
-            else:
-                alive.append(task)
-        if dead:
-            self.tasks = alive
-            logger.log_event(
-                "manager", "removed_dead_tasks", level=logging.WARNING, count=len(dead)
-            )
-        else:
-            logger.log_event("manager", "all_tasks_alive", level=logging.DEBUG)
+    def _check_task_health(self):  # wrapper for compatibility
+        if not self._task_watchdog:
+            self._task_watchdog = TaskWatchdog(self)
+        self._task_watchdog._check_task_health()  # noqa: SLF001
 
-    def _identify_unhealthy_bots(self) -> list[TwitchColorBot]:
-        unhealthy: list[TwitchColorBot] = []
-        for bot in self.bots:
-            try:
-                if bot.irc and not bot.irc.is_healthy():
-                    unhealthy.append(bot)
-                    self._log_bot_health_issues(bot)
-            except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "manager",
-                    "health_error",
-                    level=logging.WARNING,
-                    error=str(e),
-                    user=getattr(bot, "username", None),
-                )
-                unhealthy.append(bot)
-        return unhealthy
-
-    def _log_bot_health_issues(self, bot: TwitchColorBot):
-        logger.log_event(
-            "manager", "bot_unhealthy", level=logging.WARNING, user=bot.username
-        )
-        if bot.irc:
-            try:
-                stats = bot.irc.get_connection_stats()
-                logger.log_event(
-                    "manager",
-                    "bot_health_stats",
-                    level=logging.WARNING,
-                    user=bot.username,
-                    time_since_activity=f"{stats['time_since_activity']:.1f}s",
-                    connected=stats["connected"],
-                    running=stats["running"],
-                )
-            except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "manager",
-                    "connection_stats_error",
-                    level=logging.WARNING,
-                    user=bot.username,
-                    error=str(e),
-                )
-        else:
-            logger.log_event(
-                "manager", "irc_none", level=logging.WARNING, user=bot.username
-            )
+    # Health issue logging handled in HealthMonitor
 
     async def _reconnect_unhealthy_bots(self, bots: list[TwitchColorBot]):
         logger.log_event(
@@ -391,13 +330,13 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         return False
 
     async def _cancel_stale_listener(self, bot: TwitchColorBot):
-        if not hasattr(bot, "irc_task") or not bot.irc_task:  # type: ignore[attr-defined]
+        if not hasattr(bot, "irc_task") or bot.irc_task is None:
             return
         try:
-            if not bot.irc_task.done():  # type: ignore[attr-defined]
-                bot.irc_task.cancel()  # type: ignore[attr-defined]
+            if not bot.irc_task.done():
+                bot.irc_task.cancel()
                 try:
-                    await asyncio.wait_for(bot.irc_task, timeout=1.5)  # type: ignore[attr-defined]
+                    await asyncio.wait_for(bot.irc_task, timeout=1.5)
                 except (TimeoutError, asyncio.CancelledError):
                     pass
         except Exception as e:  # noqa: BLE001
@@ -428,8 +367,9 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             )
             return False
         try:
-            if getattr(bot, "irc_task", None) is not None and not bot.irc_task.done():  # type: ignore[attr-defined]
-                bot.irc_task.cancel()  # type: ignore[attr-defined]
+            task = getattr(bot, "irc_task", None)
+            if task is not None and not task.done():
+                task.cancel()
         except Exception:  # noqa: BLE001
             logger.log_event(
                 "manager",
@@ -438,7 +378,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                 user=bot.username,
             )
         if bot.irc:
-            bot.irc_task = asyncio.create_task(bot.irc.listen())  # type: ignore[attr-defined]
+            bot.irc_task = asyncio.create_task(bot.irc.listen())
         for channel in bot.irc.channels[1:] if bot.irc else []:
             try:
                 if bot.irc:
@@ -491,55 +431,29 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
 
     def _start_health_monitoring(self):
         if self.running:
-            task = asyncio.create_task(self._monitor_bot_health())
+            if not self._health_monitor:
+                self._health_monitor = HealthMonitor(self)
+            task = self._health_monitor.start()
             self.tasks.append(task)
             logger.log_event("manager", "started_health_monitor")
 
     def _start_task_watchdog(self):
         if self.running:
-            task = asyncio.create_task(self._monitor_task_health())
+            if not self._task_watchdog:
+                self._task_watchdog = TaskWatchdog(self)
+            task = self._task_watchdog.start()
             self.tasks.append(task)
             logger.log_event("manager", "started_task_watchdog")
 
     # --------------- Statistics ---------------
     def _save_statistics(self) -> dict[str, dict[str, int]]:
-        stats: dict[str, dict[str, int]] = {}
-        for bot in self.bots:
-            stats[bot.username] = {
-                "messages_sent": bot.messages_sent,
-                "colors_changed": bot.colors_changed,
-            }
-        logger.log_event(
-            "manager", "saved_statistics", level=logging.DEBUG, bots=len(stats)
-        )
-        return stats
+        return self._stats_service.save(self.bots)
 
     def _restore_statistics(self, saved: dict[str, dict[str, int]]):
-        restored = 0
-        for bot in self.bots:
-            if bot.username in saved:
-                bot.messages_sent = saved[bot.username]["messages_sent"]
-                bot.colors_changed = saved[bot.username]["colors_changed"]
-                restored += 1
-        if restored:
-            logger.log_event(
-                "manager", "restored_statistics", level=logging.DEBUG, bots=restored
-            )
+        self._stats_service.restore(self.bots, saved)
 
     def print_statistics(self):  # keep method signature
-        if not self.bots:
-            return
-        total_messages = sum(bot.messages_sent for bot in self.bots)
-        total_colors = sum(bot.colors_changed for bot in self.bots)
-        logger.log_event(
-            "manager",
-            "aggregate_statistics",
-            bots=len(self.bots),
-            total_messages=total_messages,
-            total_color_changes=total_colors,
-        )
-        for bot in self.bots:
-            bot.print_statistics()
+        self._stats_service.aggregate(self.bots)
 
     # --------------- Signals ---------------
     def setup_signal_handlers(self):  # pragma: no cover

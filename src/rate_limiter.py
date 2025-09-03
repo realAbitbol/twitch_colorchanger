@@ -4,14 +4,15 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from random import SystemRandom
 
+from .backoff_strategy import AdaptiveBackoff
 from .constants import (
     DEFAULT_BUCKET_LIMIT,
     RATE_LIMIT_SAFETY_BUFFER,
     STALE_BUCKET_AGE,
 )
 from .logger import logger
+from .rate_limit_headers import parse_rate_limit_headers
 
 
 @dataclass
@@ -29,32 +30,22 @@ class TwitchRateLimiter:
     """Manages Twitch API rate limiting with separate buckets for app and user
     access."""
 
-    def __init__(self, client_id: str, username: str = None):
+    def __init__(self, client_id: str, username: str | None = None) -> None:
         self.client_id = client_id
         self.username = username
-
-        # Separate buckets for app access and user access requests
+        # Buckets
         self.app_bucket: RateLimitInfo | None = None
         self.user_bucket: RateLimitInfo | None = None
-
-        # Lock to prevent race conditions
+        # Lock
         self._lock = asyncio.Lock()
-
-        # Safety margins
-        self.safety_buffer = RATE_LIMIT_SAFETY_BUFFER  # Keep points as safety buffer
-        self.min_delay = 0.1  # Minimum delay between requests (100ms)
-
-        # Hysteresis parameters to avoid oscillation
-        self.hysteresis_threshold = (
-            10  # Extra buffer when switching to conservative mode
-        )
+        # Safety / timing
+        self.safety_buffer = RATE_LIMIT_SAFETY_BUFFER
+        self.min_delay = 0.1
+        # Hysteresis
+        self.hysteresis_threshold = 10
         self.is_conservative_mode = False
-
-        # Adaptive backoff state for repeated 429s without reset header
-        self._backoff_delay = 0.0  # Current backoff delay seconds
-        self._backoff_until = 0.0  # Wall-clock timestamp until which we delay
-        self._last_unknown_429 = 0.0  # Timestamp of last 429 without reset header
-        self._unknown_429_count = 0  # Consecutive unknown 429 count
+        # Adaptive backoff
+        self._backoff = AdaptiveBackoff()
 
     # --------------------------- Introspection --------------------------- #
     def snapshot(self) -> dict:
@@ -80,12 +71,7 @@ class TwitchRateLimiter:
             "hysteresis_threshold": self.hysteresis_threshold,
             "app_bucket": bucket_view(self.app_bucket),
             "user_bucket": bucket_view(self.user_bucket),
-            "backoff": {
-                "delay": self._backoff_delay,
-                "until": self._backoff_until,
-                "remaining": max(0.0, self._backoff_until - time.time()),
-                "unknown_429_count": self._unknown_429_count,
-            },
+            "backoff": self._backoff.snapshot(),
         }
 
     def get_delay(self, is_user_request: bool = True, points_needed: int = 1) -> float:
@@ -137,8 +123,15 @@ class TwitchRateLimiter:
             self._log_rate_limit_headers(headers, is_user_request)
 
             # Parse rate limit information from headers
-            rate_info = self._parse_rate_limit_headers(headers)
-            if rate_info:
+            parsed = parse_rate_limit_headers(headers)
+            if parsed:
+                rate_info = RateLimitInfo(
+                    limit=parsed.limit,
+                    remaining=parsed.remaining,
+                    reset_timestamp=parsed.reset_timestamp,
+                    last_updated=parsed.last_updated,
+                    monotonic_last_updated=parsed.monotonic_last_updated,
+                )
                 # Update appropriate bucket
                 self._update_rate_limit_bucket(rate_info, is_user_request)
                 # Log successful update
@@ -177,26 +170,7 @@ class TwitchRateLimiter:
                 bucket=bucket_key,
             )
 
-    def _parse_rate_limit_headers(
-        self, headers: dict[str, str]
-    ) -> RateLimitInfo | None:
-        """Parse rate limit headers into RateLimitInfo object"""
-        # Extract rate limit headers (case-insensitive)
-        limit = headers.get("ratelimit-limit") or headers.get("Ratelimit-Limit")
-        remaining = headers.get("ratelimit-remaining") or headers.get(
-            "Ratelimit-Remaining"
-        )
-        reset = headers.get("ratelimit-reset") or headers.get("Ratelimit-Reset")
-
-        if limit and remaining and reset:
-            return RateLimitInfo(
-                limit=int(limit),
-                remaining=int(remaining),
-                reset_timestamp=float(reset),
-                last_updated=time.time(),
-                monotonic_last_updated=time.monotonic(),
-            )
-        return None
+    # Header parsing moved to rate_limit_headers.parse_rate_limit_headers
 
     def _update_rate_limit_bucket(
         self, rate_info: RateLimitInfo, is_user_request: bool
@@ -367,9 +341,8 @@ class TwitchRateLimiter:
         """
         async with self._lock:
             # Adaptive backoff enforcement (applies before bucket logic)
-            now = time.time()
-            if self._backoff_until > now:
-                remaining = self._backoff_until - now
+            remaining = self._backoff.active_delay()
+            if remaining > 0:
                 logger.log_event(
                     "rate_limit",
                     "backoff_applied",
@@ -463,8 +436,8 @@ class TwitchRateLimiter:
             )
 
             # Reset adaptive backoff if active
-            if self._backoff_delay > 0:
-                self._reset_backoff()
+            if self._backoff.active_delay() > 0:
+                self._backoff.reset()
 
             # Update bucket to reflect we're out of points
             if is_user_request:
@@ -490,49 +463,10 @@ class TwitchRateLimiter:
                 level=logging.ERROR,
                 bucket=bucket_key,
             )
-            self._increase_backoff()
+            self._backoff.increase()
 
     # --------------------------- Adaptive Backoff --------------------------- #
-    def _increase_backoff(self):
-        now = time.time()
-        # Reset series if last unknown 429 was long ago
-        if now - self._last_unknown_429 > 60:
-            self._unknown_429_count = 0
-            self._backoff_delay = 0
-
-        self._last_unknown_429 = now
-        self._unknown_429_count += 1
-
-        # Exponential backoff with cap
-        if self._backoff_delay == 0:
-            new_delay = 1.0
-        else:
-            new_delay = min(self._backoff_delay * 2, 30.0)
-
-        # Small randomness to avoid thundering herd (±10%) (non-crypto)
-        jitter = new_delay * 0.1
-        rng = SystemRandom()
-        jittered = max(0.5, new_delay + rng.uniform(-jitter, jitter))
-        self._backoff_delay = jittered
-        self._backoff_until = now + self._backoff_delay
-
-        logger.log_event(
-            "rate_limit",
-            "backoff_increase",
-            level=logging.WARNING if self._backoff_delay >= 5 else logging.DEBUG,
-            delay=round(self._backoff_delay, 2),
-            count=self._unknown_429_count,
-        )
-
-    def _reset_backoff(self):
-        self._backoff_delay = 0.0
-        self._backoff_until = 0.0
-        self._unknown_429_count = 0
-        logger.log_event(
-            "rate_limit",
-            "backoff_reset",
-            level=logging.DEBUG,
-        )
+    # Backoff logic moved to AdaptiveBackoff
 
 
 # Legacy global registry removed: rate limiters are now provided by ApplicationContext

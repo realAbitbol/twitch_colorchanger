@@ -3,59 +3,28 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import time
 from datetime import datetime
-from typing import Any
 
 import aiohttp
 
 from .adaptive_scheduler import AdaptiveScheduler
 from .application_context import ApplicationContext
 from .async_irc import AsyncTwitchIRC
+from .bot_registrar import BotRegistrar
+from .bot_stats import BotStats
 from .config import update_user_in_config
 from .logger import logger
 from .retry_policies import COLOR_CHANGE_RETRY, DEFAULT_NETWORK_RETRY, run_with_retry
+from .twitch_api import TwitchAPI
 from .user_config_model import normalize_channels_list
 
 # Constants
 CHAT_COLOR_ENDPOINT = "chat/color"
 
-
-async def _make_api_request(  # pylint: disable=too-many-arguments
-    method: str,
-    endpoint: str,
-    access_token: str,
-    client_id: str,
-    data: dict[str, Any] = None,
-    params: dict[str, Any] = None,
-    session: aiohttp.ClientSession = None,
-) -> tuple[dict[str, Any], int, dict[str, str]]:
-    """Make a simple HTTP request to Twitch API using shared session"""
-    if not session:
-        raise ValueError(
-            "HTTP session is required - no fallback to new session creation"
-        )
-
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Client-Id": client_id,
-        "Content-Type": "application/json",
-    }
-
-    url = f"https://api.twitch.tv/helix/{endpoint}"
-
-    async with session.request(
-        method, url, headers=headers, json=data, params=params
-    ) as response:
-        try:
-            response_data = await response.json()
-        except (aiohttp.ContentTypeError, json.JSONDecodeError):
-            response_data = {}
-
-        return response_data, response.status, dict(response.headers)
+# NOTE: _make_api_request moved to twitch_api.TwitchAPI
 
 
 class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
@@ -93,32 +62,32 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         self.user_id = user_id
         self.token_expiry: datetime | None = None
 
-        # HTTP session for API requests (required)
         if not http_session:
             raise ValueError(
                 "http_session is required - bots must use shared HTTP session"
             )
         self.http_session = http_session
 
-        # Token manager reference (assigned during start)
+        # API client abstraction
+        self.api = TwitchAPI(self.http_session)
+
+        # Token manager + registrar (assigned during start)
         self.token_manager = None  # Set during start()
+        self._registrar: BotRegistrar | None = None
 
         # Bot settings
         self.channels = channels
         self.use_random_colors = is_prime_or_turbo
         self.config_file = config_file
-
-        # Feature flag: whether automatic color changing is active (persisted)
         self.enabled = enabled
 
         # IRC connection and runtime flags
-        self.irc = None
+        self.irc: AsyncTwitchIRC | None = None
         self.running = False
-        self.irc_task = None
+        self.irc_task: asyncio.Task | None = None
 
-        # Statistics
-        self.messages_sent = 0
-        self.colors_changed = 0
+        # Statistics container
+        self.stats = BotStats()
 
         # Network health tracking
         self.last_successful_connection = time.time()
@@ -130,28 +99,18 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         # Rate limiter via context
         self.rate_limiter = context.get_rate_limiter(self.client_id, self.username)
 
-        # Adaptive scheduler (currently mostly idle, reserved for future tasks)
+        # Adaptive scheduler
         self.scheduler = AdaptiveScheduler()
 
     async def start(self):
         """Start the bot"""
         logger.log_event("bot", "start", user=self.username)
         self.running = True
-        # Register with centralized TokenManager
-        logger.log_event("bot", "registering_token_manager", user=self.username)
+
+        # Register with TokenManager via registrar helper
         self.token_manager = self.context.token_manager
-        self.token_manager.register_user(
-            username=self.username,
-            access_token=self.access_token,
-            refresh_token=self.refresh_token,
-            client_id=self.client_id,
-            client_secret=self.client_secret,
-            expiry=self.token_expiry,
-        )
-        # Token manager already started by context
-        fresh = await self.token_manager.get_fresh_token(self.username)
-        if fresh:
-            self.access_token = fresh
+        self._registrar = BotRegistrar(self.token_manager)
+        await self._registrar.register(self)
 
         if not self.user_id:
             user_info = await self._get_user_info()
@@ -226,37 +185,21 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         """Stop the bot"""
         logger.log_event("bot", "stopping", level=logging.WARNING, user=self.username)
         self.running = False
-
-        # Stop scheduler
         await self.scheduler.stop()
-
-        # Cancel background tasks (placeholder for future tasks)
         await self._cancel_token_task()
-
-        # Disconnect IRC
         await self._disconnect_irc()
-
-        # Wait for IRC task to finish
         await self._wait_for_irc_task()
-
-        # Ensure running flag is set to False (in case early return happened)
         self.running = False
-
-        # Small delay to let tasks finalize cleanly
         await asyncio.sleep(0.1)
 
-    async def _cancel_token_task(self):
-        """Cancel the token refresh background task (now handled by scheduler)"""
-        # Token management is now handled by the adaptive scheduler
-        # This method is kept for compatibility but does nothing
+    async def _cancel_token_task(self):  # compatibility no-op
         pass
 
     async def _disconnect_irc(self):
-        """Disconnect IRC connection"""
         if self.irc:
             try:
                 await self.irc.disconnect()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.log_event(
                     "bot",
                     "disconnect_error",
@@ -266,7 +209,6 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 )
 
     async def _wait_for_irc_task(self):
-        """Wait for IRC task to finish with timeout"""
         if self.irc_task and not self.irc_task.done():
             try:
                 await asyncio.wait_for(self.irc_task, timeout=2.0)
@@ -278,13 +220,10 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                     user=self.username,
                     error="timeout",
                 )
-                # Cancel the task if it's still running
                 self.irc_task.cancel()
             except asyncio.CancelledError:
-                # Expected if the task was cancelled
-                # Re-raise CancelledError as per asyncio best practices
                 raise
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.log_event(
                     "bot",
                     "waiting_irc_task_error",
@@ -294,29 +233,17 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 )
 
     async def handle_irc_message(self, sender: str, channel: str, message: str):
-        """Handle IRC messages from the async IRC client.
-
-        Supports user commands:
-          ccd -> disable automatic color changes
-          cce -> enable automatic color changes
-        (Only processed for the bot's own messages.)
-        """
         if sender.lower() != self.username.lower():
             return
-
-        self.messages_sent += 1
-
+        self.stats.messages_sent += 1
         msg_lower = message.strip().lower()
 
         async def _persist_enabled(flag: bool, failure_event: str):
             if not self.config_file:
                 return
-            # Reuse builder and override enabled flag
             user_config = self._build_user_config()
             user_config["enabled"] = flag
             try:
-                import asyncio
-
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(
                     None, update_user_in_config, user_config, self.config_file
@@ -330,63 +257,32 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                     error=str(e),
                 )
 
-        if msg_lower == "ccd":  # disable
+        if msg_lower == "ccd":
             if getattr(self, "enabled", True):
                 self.enabled = False
                 logger.log_event("bot", "auto_color_disabled", user=self.username)
                 await _persist_enabled(False, "persist_disable_failed")
             return
-        if msg_lower == "cce":  # enable
+        if msg_lower == "cce":
             if not getattr(self, "enabled", True):
                 self.enabled = True
                 logger.log_event("bot", "auto_color_enabled", user=self.username)
                 await _persist_enabled(True, "persist_enable_failed")
             return
 
-        # Normal behavior: attempt color change if enabled
         if getattr(self, "enabled", True):
             await self._change_color()
 
-    # Removed _adaptive_token_check; token freshness handled on-demand by TokenManager
-
-    ## Removed unused _check_scheduler_health (scheduler simplified)  # noqa: ERA001
-
-    ## Removed unused get_failure_statistics (no external callers)  # noqa: ERA001
-
-    ## Removed _update_network_status (unused).  # noqa: ERA001
-
-    # --- Helper methods for network status (extracted to lower complexity) ---
-    ## Removed _handle_connection_recovered (unused).  # noqa: ERA001
-
-    ## Removed _record_or_get_failure_duration (unused).  # noqa: ERA001
-
-    ## Removed _emit_failure_progress_events (unused).  # noqa: ERA001
-
-    ## Removed unused _check_irc_health (IRC client owns health)  # noqa: ERA001
-
-    ## Removed _check_and_refresh_token wrapper (unused).  # noqa: ERA001
-
     async def _check_and_refresh_token(self, force: bool = False) -> bool:
-        """Ensure we have a fresh access token.
-
-        This restores a previously removed helper that callers still invoke.
-        Integrates with centralized TokenManager without duplicating logic.
-
-        Returns True if a (possibly refreshed) valid access token is available.
-        """
         if not self.token_manager:
             return False
         try:
             if force:
-                # Force refresh regardless of perceived freshness
                 await self.token_manager.force_refresh(self.username)
             else:
-                # Opportunistic fetch (will refresh if stale)
                 await self.token_manager.get_fresh_token(self.username)
-
             info = self.token_manager.get_token_info(self.username)
             if info and info.access_token:
-                # Update local copy + IRC connection if changed
                 if info.access_token != self.access_token:
                     self.access_token = info.access_token
                     if self.irc:
@@ -403,41 +299,28 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             )
             return False
 
-    ## Removed deprecated token helper methods (centralized in TokenManager)  # noqa: ERA001
-
     async def _get_user_info(self):
-        """Retrieve user information from Twitch API"""
-
-        async def op():  # Wrap for retry policy
+        async def op():
             return await self._get_user_info_impl()
 
         return await run_with_retry(op, DEFAULT_NETWORK_RETRY, user=self.username)
 
     async def _get_user_info_impl(self):
-        """Implementation of user info retrieval"""
-        # Wait for rate limiting before making request
         await self.rate_limiter.wait_if_needed("get_user_info", is_user_request=True)
-
         try:
-            data, status_code, headers = await _make_api_request(
+            data, status_code, headers = await self.api.request(
                 "GET",
                 "users",
-                self.access_token,
-                self.client_id,
-                session=self.http_session,
+                access_token=self.access_token,
+                client_id=self.client_id,
             )
-
-            # Update rate limiting info from response headers
             self.rate_limiter.update_from_headers(headers, is_user_request=True)
-
             if status_code == 200 and data and data.get("data"):
                 return data["data"][0]
             if status_code == 429:
                 self.rate_limiter.handle_429_error(headers, is_user_request=True)
                 return None
             if status_code == 401:
-                # Don't log 401 as error - it's expected when tokens are expired
-                # The calling function will handle the refresh
                 return None
             logger.log_event(
                 "bot",
@@ -447,8 +330,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 status_code=status_code,
             )
             return None
-
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.log_event(
                 "bot",
                 "user_info_error",
@@ -459,34 +341,25 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             return None
 
     async def _get_current_color(self):
-        """Get the user's current color from Twitch API"""
-
         async def op() -> dict | None:
             return await self._get_current_color_impl()
 
         return await run_with_retry(op, DEFAULT_NETWORK_RETRY, user=self.username)
 
     async def _get_current_color_impl(self):
-        """Implementation of current color retrieval"""
-        # Wait for rate limiting before making request
         await self.rate_limiter.wait_if_needed(
             "get_current_color", is_user_request=True
         )
-
         try:
             params = {"user_id": self.user_id}
-            data, status_code, headers = await _make_api_request(
+            data, status_code, headers = await self.api.request(
                 "GET",
                 CHAT_COLOR_ENDPOINT,
-                self.access_token,
-                self.client_id,
+                access_token=self.access_token,
+                client_id=self.client_id,
                 params=params,
-                session=self.http_session,
             )
-
-            # Update rate limiting info from response headers
             self.rate_limiter.update_from_headers(headers, is_user_request=True)
-
             if (
                 status_code == 200
                 and data
@@ -503,14 +376,10 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 self.rate_limiter.handle_429_error(headers, is_user_request=True)
                 return None
             elif status_code == 401:
-                # Token might be expired - let the exception handler deal with refresh
                 return None
-
-            # If no color set or API call fails, return None
             logger.log_event("bot", "no_current_color_set", user=self.username)
             return None
-
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.log_event(
                 "bot",
                 "get_current_color_error",
@@ -521,20 +390,15 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             return None
 
     async def _persist_token_changes(self):
-        """Persist token changes to configuration file with atomic updates"""
         if not self._validate_config_prerequisites():
             return
-
         user_config = self._build_user_config()
-
-        # Attempt to save with retries
         max_retries = 3
         for attempt in range(max_retries):
             if await self._attempt_config_save(user_config, attempt, max_retries):
-                return  # Success
+                return
 
     def _validate_config_prerequisites(self) -> bool:
-        """Validate prerequisites for config persistence"""
         if not hasattr(self, "config_file") or not self.config_file:
             logger.log_event(
                 "bot",
@@ -543,23 +407,19 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 user=self.username,
             )
             return False
-
         if not self.access_token:
             logger.log_event(
                 "bot", "empty_access_token", level=logging.WARNING, user=self.username
             )
             return False
-
         if not self.refresh_token:
             logger.log_event(
                 "bot", "empty_refresh_token", level=logging.WARNING, user=self.username
             )
             return False
-
         return True
 
     async def _on_irc_auth_failure(self):
-        """Callback invoked when IRC indicates authentication failure."""
         try:
             if not hasattr(self, "token_manager"):
                 return
@@ -583,7 +443,6 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             )
 
     def _build_user_config(self) -> dict:
-        """Build user configuration dictionary"""
         return {
             "username": self.username,
             "client_id": self.client_id,
@@ -598,12 +457,10 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     async def _attempt_config_save(
         self, user_config: dict, attempt: int, max_retries: int
     ) -> bool:
-        """Attempt to save config with error handling"""
         try:
             update_user_in_config(user_config, self.config_file)
             logger.log_event("bot", "token_saved", user=self.username)
             return True
-
         except FileNotFoundError:
             logger.log_event(
                 "bot",
@@ -612,8 +469,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 user=self.username,
                 path=self.config_file,
             )
-            return True  # Don't retry for missing file
-
+            return True
         except PermissionError:
             logger.log_event(
                 "bot",
@@ -621,15 +477,13 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 level=logging.ERROR,
                 user=self.username,
             )
-            return True  # Don't retry for permission errors
-
-        except Exception as e:
+            return True
+        except Exception as e:  # noqa: BLE001
             return await self._handle_config_save_error(e, attempt, max_retries)
 
     async def _handle_config_save_error(
         self, error: Exception, attempt: int, max_retries: int
     ) -> bool:
-        """Handle config save errors with retry logic"""
         if attempt < max_retries - 1:
             logger.log_event(
                 "bot",
@@ -639,11 +493,8 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 attempt=attempt + 1,
                 error=str(error),
             )
-            # Brief delay before retry
-            import asyncio
-
             await asyncio.sleep(0.1 * (attempt + 1))
-            return False  # Continue retrying
+            return False
         else:
             logger.log_event(
                 "bot",
@@ -653,10 +504,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 attempts=max_retries,
                 error=str(error),
             )
-            return True  # Stop retrying
+            return True
 
     async def _persist_normalized_channels(self):
-        """Persist normalized channels to configuration file"""
         if hasattr(self, "config_file") and self.config_file:
             user_config = {
                 "username": self.username,
@@ -664,21 +514,17 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 "client_secret": self.client_secret,
                 "access_token": self.access_token,
                 "refresh_token": self.refresh_token,
-                "channels": self.channels,  # Use the normalized channels
+                "channels": self.channels,
                 "is_prime_or_turbo": self.use_random_colors,
-                # retain enabled flag if present in existing config (default True)
                 "enabled": getattr(self, "enabled", True),
             }
             try:
-                # Run potentially blocking file update in thread to avoid blocking loop
-                import asyncio
-
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(
                     None, update_user_in_config, user_config, self.config_file
                 )
                 logger.log_event("bot", "normalized_channels_saved", user=self.username)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.log_event(
                     "bot",
                     "normalized_channels_save_failed",
@@ -687,41 +533,27 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                     error=str(e),
                 )
 
+    def increment_colors_changed(self) -> None:
+        """Increment color change counter."""
+        self.stats.colors_changed += 1
+
     async def _change_color(self, hex_color=None):
-        """Delegate color change to service."""
         from .color_change_service import ColorChangeService  # local import
 
         if not hasattr(self, "_color_service"):
             self._color_service = ColorChangeService(self)  # type: ignore[attr-defined]
         return await self._color_service.change_color(hex_color)  # type: ignore[attr-defined]
 
-    # Color selection moved to ColorChangeService
-
-    # _attempt_color_change removed – unified in ColorChangeService
-
-    # _handle_color_change_response removed – logic in ColorChangeService
-
-    ## Removed deprecated _handle_api_error placeholder  # noqa: ERA001
-
-    # _try_preset_color_fallback removed – handled via fallback logic
-
     async def _perform_color_request(self, params: dict, action: str) -> int:
-        """Perform the color change HTTP PUT with retry and rate limiting.
-
-        Returns status_code (int). Headers automatically update rate limiter.
-        action distinguishes between change_color and preset_color for delay separation.
-        """
-
         async def op() -> int:
             await self.rate_limiter.wait_if_needed(action, is_user_request=True)
             _, status_code, headers = await asyncio.wait_for(
-                _make_api_request(
+                self.api.request(
                     "PUT",
                     CHAT_COLOR_ENDPOINT,
-                    self.access_token,
-                    self.client_id,
+                    access_token=self.access_token,
+                    client_id=self.client_id,
                     params=params,
-                    session=self.http_session,
                 ),
                 timeout=10,
             )
@@ -736,9 +568,8 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             logger.log_event(
                 "bot", "color_change_timeout", level=logging.ERROR, user=self.username
             )
-            return 0  # distinguishable non-HTTP code
+            return 0
         except Exception as e:  # noqa: BLE001
-            # Generic network/other error already logged via retry attempts; final log
             logger.log_event(
                 "bot",
                 "preset_color_error"
@@ -751,52 +582,33 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             return 0
 
     def _get_rate_limit_display(self, debug_only=False):
-        """Get rate limit information for display in messages"""
-        # Check if debug mode is enabled
         debug_enabled = os.environ.get("DEBUG", "false").lower() in ("true", "1", "yes")
-
-        # If debug_only is True and debug is not enabled, return empty string
         if debug_only and not debug_enabled:
             return ""
-
         if not self.rate_limiter.user_bucket:
             return " [rate limit info pending]"
-
         bucket = self.rate_limiter.user_bucket
         current_time = time.time()
-
-        # If bucket info is stale, indicate it
         if current_time - bucket.last_updated > 60:
             return " [rate limit info stale]"
-
         remaining = bucket.remaining
         limit = bucket.limit
         reset_in = max(0, bucket.reset_timestamp - current_time)
-
-        # Format the rate limit info compactly
         if remaining > 100:
-            # Plenty of requests left - show simple status
             return f" [{remaining}/{limit} reqs]"
         if remaining > 10:
-            # Getting low - show with time until reset
             return f" [{remaining}/{limit} reqs, reset in {reset_in:.0f}s]"
-        # Very low - highlight the critical status
         return f" [⚠️ {remaining}/{limit} reqs, reset in {reset_in:.0f}s]"
 
     def close(self):
-        """Close the bot and clean up resources"""
         logger.log_event("bot", "closing_for_user", user=self.username)
         self.running = False
 
-        # Note: Don't set self.irc = None here to avoid race conditions
-        # with health checks. The real cleanup happens in the async stop() method
-
     def print_statistics(self):
-        """Print bot statistics"""
         logger.log_event(
             "bot",
             "statistics",
             user=self.username,
-            messages=self.messages_sent,
-            colors=self.colors_changed,
+            messages=self.stats.messages_sent,
+            colors=self.stats.colors_changed,
         )
