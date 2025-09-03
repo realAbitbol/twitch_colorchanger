@@ -77,6 +77,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         is_prime_or_turbo: bool = True,
         config_file: str = None,
         user_id: str = None,
+        enabled: bool = True,
     ):
         self.context = context
 
@@ -108,6 +109,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         self.use_random_colors = is_prime_or_turbo
         self.config_file = config_file
 
+        # Feature flag: whether automatic color changing is active (persisted)
+        self.enabled = enabled
+
         # IRC connection and runtime flags
         self.irc = None
         self.running = False
@@ -120,9 +124,6 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         # Network health tracking
         self.last_successful_connection = time.time()
         self.connection_failure_start: float | None = None
-
-        # Token failure tracking
-        # Removed token failure tracking attributes (unused).  # noqa: ERA001
 
         # Color tracking
         self.last_color: str | None = None
@@ -294,14 +295,64 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 )
 
     async def handle_irc_message(self, sender: str, channel: str, message: str):
-        """Handle IRC messages from the async IRC client"""
-        # Suppress unused argument warnings
-        _ = channel
-        _ = message
-        # Only react to our own messages
-        if sender.lower() == self.username.lower():
-            self.messages_sent += 1
-            # Direct async color change - no more threading complexity!
+        """Handle IRC messages from the async IRC client.
+
+        Supports user commands:
+          ccd -> disable automatic color changes
+          cce -> enable automatic color changes
+        (Only processed for the bot's own messages.)
+        """
+        if sender.lower() != self.username.lower():
+            return
+
+        self.messages_sent += 1
+
+        msg_lower = message.strip().lower()
+
+        async def _persist_enabled(flag: bool, failure_event: str):
+            if not self.config_file:
+                return
+            user_config = {
+                "username": self.username,
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "access_token": self.access_token,
+                "refresh_token": self.refresh_token,
+                "channels": self.channels,
+                "is_prime_or_turbo": self.use_random_colors,
+                "enabled": flag,
+            }
+            try:
+                import asyncio
+
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None, update_user_in_config, user_config, self.config_file
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.log_event(
+                    "bot",
+                    failure_event,
+                    level=logging.WARNING,
+                    user=self.username,
+                    error=str(e),
+                )
+
+        if msg_lower == "ccd":  # disable
+            if getattr(self, "enabled", True):
+                self.enabled = False
+                logger.log_event("bot", "auto_color_disabled", user=self.username)
+                await _persist_enabled(False, "persist_disable_failed")
+            return
+        if msg_lower == "cce":  # enable
+            if not getattr(self, "enabled", True):
+                self.enabled = True
+                logger.log_event("bot", "auto_color_enabled", user=self.username)
+                await _persist_enabled(True, "persist_enable_failed")
+            return
+
+        # Normal behavior: attempt color change if enabled
+        if getattr(self, "enabled", True):
             await self._change_color()
 
     # Removed _adaptive_token_check; token freshness handled on-demand by TokenManager
@@ -512,6 +563,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             "refresh_token": self.refresh_token,
             "channels": getattr(self, "channels", [self.username.lower()]),
             "is_prime_or_turbo": self.use_random_colors,
+            "enabled": getattr(self, "enabled", True),
         }
 
     async def _attempt_config_save(
@@ -585,6 +637,8 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 "refresh_token": self.refresh_token,
                 "channels": self.channels,  # Use the normalized channels
                 "is_prime_or_turbo": self.use_random_colors,
+                # retain enabled flag if present in existing config (default True)
+                "enabled": getattr(self, "enabled", True),
             }
             try:
                 # Run potentially blocking file update in thread to avoid blocking loop

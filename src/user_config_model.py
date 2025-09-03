@@ -27,6 +27,7 @@ class UserConfig:
     refresh_token: str | None = None
     channels: list[str] = field(default_factory=list)
     is_prime_or_turbo: bool = True
+    enabled: bool = True  # New flag to enable/disable automatic color change
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> UserConfig:
@@ -40,6 +41,7 @@ class UserConfig:
             if isinstance(data.get("channels"), list)
             else [],
             is_prime_or_turbo=bool(data.get("is_prime_or_turbo", True)),
+            enabled=bool(data.get("enabled", True)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -47,6 +49,7 @@ class UserConfig:
             "username": self.username,
             "channels": self.channels,
             "is_prime_or_turbo": self.is_prime_or_turbo,
+            "enabled": self.enabled,
         }
         if self.client_id:
             data["client_id"] = self.client_id

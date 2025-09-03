@@ -90,6 +90,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             is_prime_or_turbo=user_config.get("is_prime_or_turbo", True),
             config_file=self.config_file,
             user_id=None,
+            enabled=user_config.get("enabled", True),
         )
         logger.log_event("manager", "bot_created", user=username)
         return bot
