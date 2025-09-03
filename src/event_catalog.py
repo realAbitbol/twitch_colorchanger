@@ -684,6 +684,27 @@ EVENT_TEMPLATES: dict[tuple[str, str], str] = {
     ("bot", "color_changed"): "Color changed to {color} user={user}",
     ("bot", "closing_for_user"): "Closing bot user={user}",
     ("bot", "statistics"): "Statistics user={user} messages={messages} colors={colors}",
+    # Config repository watcher pause/resume safeguarding
+    (
+        "config",
+        "watcher_pause_failed",
+    ): "Failed to pause config watcher: {error_type} {error}",
+    (
+        "config",
+        "watcher_resume_failed",
+    ): "Failed to resume config watcher: {error_type} {error}",
+    (
+        "config",
+        "save_skipped_checksum_match",
+    ): "Skipped save (checksum match) checksum={checksum} users={user_count}",
+    (
+        "config",
+        "update_user_invalid",
+    ): "Rejected invalid user update username={username}",
+    (
+        "config",
+        "update_user_normalized",
+    ): "User update normalized username={username} channels={channel_count}",
     ("bot", "connect_failed"): "Failed to connect to IRC user={user}",
     (
         "bot",
