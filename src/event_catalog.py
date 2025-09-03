@@ -79,6 +79,12 @@ EVENT_TEMPLATES: dict[tuple[str, str], str] = {
     ("rate_limit", "429_headers"): "Received 429 Too Many Requests (headers captured)",
     ("rate_limit", "429_reset_known"): "429 with known reset; waiting {wait_seconds}s",
     ("rate_limit", "429_reset_unknown"): "429 without reset header",
+    (
+        "rate_limit",
+        "backoff_increase",
+    ): "Adaptive backoff increased to {delay}s (count={count})",
+    ("rate_limit", "backoff_applied"): "Adaptive backoff applied waiting {remaining}s",
+    ("rate_limit", "backoff_reset"): "Adaptive backoff reset",
     # Token events
     (
         "token",

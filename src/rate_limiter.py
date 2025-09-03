@@ -4,6 +4,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
+from random import SystemRandom
 
 from .constants import (
     DEFAULT_BUCKET_LIMIT,
@@ -48,6 +49,44 @@ class TwitchRateLimiter:
             10  # Extra buffer when switching to conservative mode
         )
         self.is_conservative_mode = False
+
+        # Adaptive backoff state for repeated 429s without reset header
+        self._backoff_delay = 0.0  # Current backoff delay seconds
+        self._backoff_until = 0.0  # Wall-clock timestamp until which we delay
+        self._last_unknown_429 = 0.0  # Timestamp of last 429 without reset header
+        self._unknown_429_count = 0  # Consecutive unknown 429 count
+
+    # --------------------------- Introspection --------------------------- #
+    def snapshot(self) -> dict:
+        """Return a serializable snapshot of limiter state for debugging."""
+
+        def bucket_view(bucket: RateLimitInfo | None):  # type: ignore[name-defined]
+            if not bucket:
+                return None
+            return {
+                "limit": bucket.limit,
+                "remaining": bucket.remaining,
+                "reset_timestamp": bucket.reset_timestamp,
+                "reset_in": max(0, bucket.reset_timestamp - time.time()),
+                "last_updated": bucket.last_updated,
+                "age": time.time() - bucket.last_updated,
+            }
+
+        return {
+            "client_id": self.client_id,
+            "username": self.username,
+            "conservative_mode": self.is_conservative_mode,
+            "safety_buffer": self.safety_buffer,
+            "hysteresis_threshold": self.hysteresis_threshold,
+            "app_bucket": bucket_view(self.app_bucket),
+            "user_bucket": bucket_view(self.user_bucket),
+            "backoff": {
+                "delay": self._backoff_delay,
+                "until": self._backoff_until,
+                "remaining": max(0.0, self._backoff_until - time.time()),
+                "unknown_429_count": self._unknown_429_count,
+            },
+        }
 
     def get_delay(self, is_user_request: bool = True, points_needed: int = 1) -> float:
         """Return the optimal delay before the next request."""
@@ -327,6 +366,19 @@ class TwitchRateLimiter:
             points_cost: Points cost of this request (default 1)
         """
         async with self._lock:
+            # Adaptive backoff enforcement (applies before bucket logic)
+            now = time.time()
+            if self._backoff_until > now:
+                remaining = self._backoff_until - now
+                logger.log_event(
+                    "rate_limit",
+                    "backoff_applied",
+                    level=logging.WARNING if remaining > 1 else logging.DEBUG,
+                    remaining=round(remaining, 2),
+                    endpoint=endpoint,
+                )
+                await asyncio.sleep(remaining)
+
             # Get appropriate bucket
             bucket = self.user_bucket if is_user_request else self.app_bucket
 
@@ -410,6 +462,10 @@ class TwitchRateLimiter:
                 wait_seconds=round(wait_time, 1),
             )
 
+            # Reset adaptive backoff if active
+            if self._backoff_delay > 0:
+                self._reset_backoff()
+
             # Update bucket to reflect we're out of points
             if is_user_request:
                 self.user_bucket = RateLimitInfo(
@@ -434,6 +490,49 @@ class TwitchRateLimiter:
                 level=logging.ERROR,
                 bucket=bucket_key,
             )
+            self._increase_backoff()
+
+    # --------------------------- Adaptive Backoff --------------------------- #
+    def _increase_backoff(self):
+        now = time.time()
+        # Reset series if last unknown 429 was long ago
+        if now - self._last_unknown_429 > 60:
+            self._unknown_429_count = 0
+            self._backoff_delay = 0
+
+        self._last_unknown_429 = now
+        self._unknown_429_count += 1
+
+        # Exponential backoff with cap
+        if self._backoff_delay == 0:
+            new_delay = 1.0
+        else:
+            new_delay = min(self._backoff_delay * 2, 30.0)
+
+        # Small randomness to avoid thundering herd (±10%) (non-crypto)
+        jitter = new_delay * 0.1
+        rng = SystemRandom()
+        jittered = max(0.5, new_delay + rng.uniform(-jitter, jitter))
+        self._backoff_delay = jittered
+        self._backoff_until = now + self._backoff_delay
+
+        logger.log_event(
+            "rate_limit",
+            "backoff_increase",
+            level=logging.WARNING if self._backoff_delay >= 5 else logging.DEBUG,
+            delay=round(self._backoff_delay, 2),
+            count=self._unknown_429_count,
+        )
+
+    def _reset_backoff(self):
+        self._backoff_delay = 0.0
+        self._backoff_until = 0.0
+        self._unknown_429_count = 0
+        logger.log_event(
+            "rate_limit",
+            "backoff_reset",
+            level=logging.DEBUG,
+        )
 
 
 # Global rate limiter instances (one per client_id/username combination)

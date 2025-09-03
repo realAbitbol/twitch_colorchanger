@@ -1,6 +1,6 @@
-"""
-Main bot class for Twitch color changing functionality
-"""
+"""Main bot class for Twitch color changing functionality"""
+
+from __future__ import annotations
 
 import asyncio
 import json
@@ -14,6 +14,7 @@ import aiohttp
 
 from .adaptive_scheduler import AdaptiveScheduler
 from .async_irc import AsyncTwitchIRC
+from .color_utils import get_random_hex, get_random_preset
 from .config import disable_random_colors_for_user, update_user_in_config
 from .constants import NETWORK_PARTITION_THRESHOLD, PARTIAL_CONNECTIVITY_THRESHOLD
 from .error_handling import APIError, simple_retry
@@ -21,76 +22,6 @@ from .logger import logger
 from .rate_limiter import get_rate_limiter
 from .token_manager import get_token_manager
 from .user_config_model import normalize_channels_list
-
-
-# Local color helpers (previously in colors.py)
-def _twitch_preset_colors():
-    return [
-        "blue",
-        "blue_violet",
-        "cadet_blue",
-        "chocolate",
-        "coral",
-        "dodger_blue",
-        "firebrick",
-        "golden_rod",
-        "green",
-        "hot_pink",
-        "orange_red",
-        "red",
-        "sea_green",
-        "spring_green",
-        "yellow_green",
-    ]
-
-
-def get_different_twitch_color(exclude_color=None):
-    colors = _twitch_preset_colors()
-    if exclude_color is None or len(colors) <= 1:
-        import random  # nosec B311
-
-        return random.choice(colors)  # nosec B311
-    available = [c for c in colors if c != exclude_color]
-    import random  # nosec B311
-
-    return random.choice(available)  # nosec B311
-
-
-def generate_random_hex_color(exclude_color=None):
-    import random  # nosec B311
-
-    max_attempts = 10
-    attempts = 0
-    while attempts < max_attempts:
-        hue = random.randint(0, 359)  # nosec B311
-        saturation = random.randint(60, 100)  # nosec B311
-        lightness = random.randint(35, 75)  # nosec B311
-        c = (1 - abs(2 * lightness / 100 - 1)) * saturation / 100
-        x = c * (1 - abs((hue / 60) % 2 - 1))
-        m = lightness / 100 - c / 2
-        if 0 <= hue < 60:
-            r, g, b = c, x, 0
-        elif 60 <= hue < 120:
-            r, g, b = x, c, 0
-        elif 120 <= hue < 180:
-            r, g, b = 0, c, x
-        elif 180 <= hue < 240:
-            r, g, b = 0, x, c
-        elif 240 <= hue < 300:
-            r, g, b = x, 0, c
-        else:
-            r, g, b = c, 0, x
-        r = int((r + m) * 255)
-        g = int((g + m) * 255)
-        b = int((b + m) * 255)
-        color = f"#{r:02x}{g:02x}{b:02x}"
-        if exclude_color is None or color != exclude_color:
-            return color
-        attempts += 1
-    return color
-
-
-# print_log fully migrated to structured logger; legacy import removed
 
 # Constants
 CHAT_COLOR_ENDPOINT = "chat/color"
@@ -103,7 +34,7 @@ async def _make_api_request(  # pylint: disable=too-many-arguments
     client_id: str,
     data: dict[str, Any] = None,
     params: dict[str, Any] = None,
-    session: "aiohttp.ClientSession" = None,
+    session: aiohttp.ClientSession = None,
 ) -> tuple[dict[str, Any], int, dict[str, str]]:
     """Make a simple HTTP request to Twitch API using shared session"""
     if not session:
@@ -143,7 +74,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         client_secret: str,
         nick: str,
         channels: list[str],
-        http_session: "aiohttp.ClientSession",
+        http_session: aiohttp.ClientSession,
         is_prime_or_turbo: bool = True,
         config_file: str = None,
         user_id: str = None,
@@ -923,9 +854,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         """Select the appropriate color based on user settings"""
         if self.use_random_colors:
             # Use hex colors for Prime/Turbo users
-            return generate_random_hex_color(exclude_color=self.last_color)
+            return get_random_hex(exclude=self.last_color)
         # Use static Twitch preset colors for regular users
-        return get_different_twitch_color(exclude_color=self.last_color)
+        return get_random_preset(exclude=self.last_color)
 
     async def _attempt_color_change(self, color):
         """Attempt to change color and handle the response"""
@@ -1102,7 +1033,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     async def _try_preset_color_fallback(self):
         """Try changing color with preset colors as fallback"""
         try:
-            color = get_different_twitch_color(exclude_color=self.last_color)
+            color = get_random_preset(exclude=self.last_color)
             params = {"user_id": self.user_id, "color": color}
 
             _, status_code, headers = await asyncio.wait_for(
