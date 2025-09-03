@@ -9,7 +9,10 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from config.core import update_user_in_config
+from config.async_persistence import (
+    async_update_user_in_config,
+    queue_user_update,
+)
 from logs.logger import logger
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -40,10 +43,8 @@ class BotPersistenceMixin:
             # Overwrite channels explicitly
             user_config["channels"] = self.channels  # type: ignore[attr-defined]
             try:
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(
-                    None,
-                    update_user_in_config,
+                # Debounced write; normalization may happen in bursts.
+                await queue_user_update(
                     user_config,
                     self.config_file,  # type: ignore[attr-defined]
                 )
@@ -101,9 +102,15 @@ class BotPersistenceMixin:
         self, user_config: dict, attempt: int, max_retries: int
     ) -> bool:
         try:
-            update_user_in_config(user_config, self.config_file)  # type: ignore[attr-defined]
-            logger.log_event("bot", "token_saved", user=self.username)  # type: ignore[attr-defined]
-            return True
+            success = await async_update_user_in_config(  # type: ignore[attr-defined]
+                user_config,
+                self.config_file,  # type: ignore[attr-defined]
+            )
+            if success:
+                logger.log_event("bot", "token_saved", user=self.username)  # type: ignore[attr-defined]
+                return True
+            # Fall through to generic handling below to trigger retries
+            raise RuntimeError("update_user_in_config returned False")
         except FileNotFoundError:
             logger.log_event(
                 "bot",
