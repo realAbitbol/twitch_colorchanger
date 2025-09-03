@@ -6,8 +6,9 @@ import asyncio
 import logging
 import os
 import signal
+from collections.abc import Iterable
 from secrets import SystemRandom
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import aiohttp
 
@@ -19,6 +20,9 @@ from ..constants import (
 )
 from ..logs.logger import logger
 from ..manager import HealthMonitor, ManagerStatistics
+
+if TYPE_CHECKING:  # pragma: no cover
+    from ..manager.statistics import _BotProto
 from ..manager.task_watchdog import TaskWatchdog
 from .core import TwitchColorBot
 
@@ -99,7 +103,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         logger.log_event("manager", "bot_created", user=username)
         return bot
 
-    async def _stop_all_bots(self):
+    async def _stop_all_bots(self) -> None:
         if not self.running:
             return
         logger.log_event("manager", "stopping_all", level=logging.WARNING)
@@ -109,7 +113,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         self.running = False
         logger.log_event("manager", "all_stopped")
 
-    def _cancel_all_tasks(self):
+    def _cancel_all_tasks(self) -> None:
         for i, task in enumerate(self.tasks):
             try:
                 if task and not task.done():
@@ -124,7 +128,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                     error=str(e),
                 )
 
-    def _close_all_bots(self):
+    def _close_all_bots(self) -> None:
         for i, bot in enumerate(self.bots):
             try:
                 bot.close()
@@ -139,7 +143,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                     user=getattr(bot, "username", None),
                 )
 
-    async def _wait_for_task_completion(self):
+    async def _wait_for_task_completion(self) -> None:
         if not self.tasks:
             return
         try:
@@ -160,7 +164,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         finally:
             self.tasks.clear()
 
-    def stop(self):
+    def stop(self) -> None:
         self.shutdown_initiated = True
         try:
             loop = asyncio.get_running_loop()
@@ -168,7 +172,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         except RuntimeError:
             pass
 
-    def request_restart(self, new_users_config: list[dict[str, Any]]):
+    def request_restart(self, new_users_config: list[dict[str, Any]]) -> None:
         logger.log_event("manager", "config_change_detected")
         self.new_config = new_users_config
         self.restart_requested = True
@@ -194,7 +198,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                 # Prune tokens for users no longer present
                 if self.context and self.context.token_manager:
                     active = {u.get("username", "").lower() for u in self.users_config}
-                    self.context.token_manager.prune(active)  # type: ignore[attr-defined]
+                    self.context.token_manager.prune(active)
             except Exception as e:  # noqa: BLE001
                 logger.log_event(
                     "manager", "token_prune_failed", level=logging.DEBUG, error=str(e)
@@ -207,12 +211,12 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
     # _perform_health_check, _monitor_task_health) – monitoring handled by
     # HealthMonitor/TaskWatchdog services.
 
-    def _check_task_health(self):
+    def _check_task_health(self) -> None:
         if not self._task_watchdog:
             self._task_watchdog = TaskWatchdog(self)
         self._task_watchdog._check_task_health()  # noqa: SLF001
 
-    def _start_health_monitoring(self):
+    def _start_health_monitoring(self) -> None:
         if self.running:
             if not self._health_monitor:
                 self._health_monitor = HealthMonitor(self)
@@ -220,7 +224,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             self.tasks.append(task)
             logger.log_event("manager", "started_health_monitor")
 
-    def _start_task_watchdog(self):
+    def _start_task_watchdog(self) -> None:
         if self.running:
             if not self._task_watchdog:
                 self._task_watchdog = TaskWatchdog(self)
@@ -229,16 +233,19 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             logger.log_event("manager", "started_task_watchdog")
 
     def _save_statistics(self) -> dict[str, dict[str, int]]:
-        return self._stats_service.save(self.bots)
+        bots_iter: Iterable[_BotProto] = cast(Iterable["_BotProto"], self.bots)
+        return self._stats_service.save(bots_iter)
 
-    def _restore_statistics(self, saved: dict[str, dict[str, int]]):
-        self._stats_service.restore(self.bots, saved)
+    def _restore_statistics(self, saved: dict[str, dict[str, int]]) -> None:
+        bots_iter: Iterable[_BotProto] = cast(Iterable["_BotProto"], self.bots)
+        self._stats_service.restore(bots_iter, saved)
 
-    def print_statistics(self):
-        self._stats_service.aggregate(self.bots)
+    def print_statistics(self) -> None:
+        bots_iter: Iterable[_BotProto] = cast(Iterable["_BotProto"], self.bots)
+        self._stats_service.aggregate(bots_iter)
 
-    def setup_signal_handlers(self):  # pragma: no cover
-        def handler(signum, _frame):  # noqa: D401
+    def setup_signal_handlers(self) -> None:  # pragma: no cover
+        def handler(signum: int, _frame: object | None) -> None:  # noqa: D401
             # Idempotent signal handler: only trigger once
             if self.shutdown_initiated:
                 return
@@ -252,12 +259,12 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         signal.signal(signal.SIGTERM, handler)
 
 
-async def _setup_config_watcher(manager: BotManager, config_file: str | None):
+async def _setup_config_watcher(manager: BotManager, config_file: str | None) -> Any:
     if not config_file or not os.path.exists(config_file):
         return None
     try:
 
-        def restart_cb(new_config):
+        def restart_cb(new_config: list[dict[str, Any]]) -> None:
             manager.request_restart(new_config)
 
         watcher = await create_config_watcher(config_file, restart_cb)
@@ -279,7 +286,7 @@ async def _setup_config_watcher(manager: BotManager, config_file: str | None):
         return None
 
 
-async def _run_main_loop(manager: BotManager):
+async def _run_main_loop(manager: BotManager) -> None:
     while manager.running:
         await asyncio.sleep(1)
         if manager.shutdown_initiated:
@@ -301,7 +308,7 @@ async def _run_main_loop(manager: BotManager):
             break
 
 
-def _cleanup_watcher(watcher):  # pragma: no cover
+def _cleanup_watcher(watcher: Any) -> None:  # pragma: no cover
     if watcher:
         watcher.stop()
     try:
@@ -310,7 +317,9 @@ def _cleanup_watcher(watcher):  # pragma: no cover
         pass
 
 
-async def run_bots(users_config: list[dict[str, Any]], config_file: str | None = None):
+async def run_bots(
+    users_config: list[dict[str, Any]], config_file: str | None = None
+) -> None:
     from ..application_context import ApplicationContext  # local import
 
     context = await ApplicationContext.create()

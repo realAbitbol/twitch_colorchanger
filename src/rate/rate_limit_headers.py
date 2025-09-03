@@ -26,7 +26,7 @@ def parse_rate_limit_headers(headers: Mapping[str, str]) -> ParsedRateLimit | No
     """
 
     # Case-insensitive access attempt
-    def get_ci(name: str):
+    def get_ci(name: str) -> str | None:
         return (
             headers.get(name) or headers.get(name.lower()) or headers.get(name.upper())
         )

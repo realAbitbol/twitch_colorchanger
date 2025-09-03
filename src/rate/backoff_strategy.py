@@ -31,14 +31,14 @@ class AdaptiveBackoff:
             return self._until - now
         return 0.0
 
-    def reset(self):
+    def reset(self) -> None:
         if self._delay > 0:
             logger.log_event("rate_limit", "backoff_reset", level=logging.DEBUG)
         self._delay = 0.0
         self._until = 0.0
         self._count = 0
 
-    def increase(self):
+    def increase(self) -> None:
         now = time.time()
         if now - self._last_unknown > 60:
             self._count = 0

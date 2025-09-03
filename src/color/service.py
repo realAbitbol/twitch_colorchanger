@@ -6,7 +6,7 @@ packaged under `color`.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from ..logs.logger import logger
 from ..rate.retry_policies import COLOR_CHANGE_RETRY, run_with_retry
@@ -99,7 +99,12 @@ class ColorChangeService:
 
     async def _issue_request(self, color: str, action: str) -> ColorRequestResult:
         params = {"user_id": self.bot.user_id, "color": color}
-        return await self.bot._perform_color_request(params, action=action)
+        # _perform_color_request is defined on the bot and returns a ColorRequestResult
+        # but lacks a precise return annotation; cast here to satisfy typing.
+        return cast(
+            ColorRequestResult,
+            await self.bot._perform_color_request(params, action=action),
+        )
 
     def _on_success(self, color: str, is_preset: bool) -> bool:
         self._record_success(color, is_preset)
@@ -183,7 +188,8 @@ class ColorChangeService:
                 user=self.bot.username,
                 status_code=status_code,
             )
-            return self._on_success(self.bot.last_color or "", is_preset)  # type: ignore[arg-type]
+            # self.bot.last_color may be None; using `or ""` guarantees a str.
+            return self._on_success(self.bot.last_color or "", is_preset)
         logger.log_event(
             "bot",
             "color_change_status_failed"

@@ -13,7 +13,9 @@ from ..logs.logger import logger
 ## Removed legacy simple_retry wrapper (superseded by run_with_retry)  # noqa: ERA001
 
 
-def log_error(message: str, error: Exception, user: str = None):  # pragma: no cover
+def log_error(
+    message: str, error: Exception, user: str | None = None
+) -> None:  # pragma: no cover
     logger.log_event(
         "error",
         "logged",

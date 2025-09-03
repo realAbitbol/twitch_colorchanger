@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import time
+from typing import Any, cast
 
 import aiohttp
 
@@ -35,7 +36,7 @@ class DeviceCodeFlow:
             try:
                 async with session.post(self.device_code_url, data=data) as response:
                     if response.status == 200:
-                        result = await response.json()
+                        result = cast(dict[str, Any], await response.json())
                         logger.log_event(
                             "device_flow",
                             "code_success",
@@ -44,7 +45,7 @@ class DeviceCodeFlow:
                             interval=self.poll_interval,
                         )
                         return result
-                    error_data = await response.json()
+                    error_data = cast(dict[str, Any], await response.json())
                     logger.log_event(
                         "device_flow",
                         "code_error",
@@ -85,7 +86,7 @@ class DeviceCodeFlow:
 
                 try:
                     async with session.post(self.token_url, data=data) as response:
-                        result = await response.json()
+                        result = cast(dict[str, Any], await response.json())
 
                         if response.status == 200:
                             logger.log_event(

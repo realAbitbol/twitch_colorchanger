@@ -22,7 +22,7 @@ class TaskWatchdog:
     def start(self) -> asyncio.Task:
         return asyncio.create_task(self._loop())
 
-    async def _loop(self):  # pragma: no cover (timing heavy)
+    async def _loop(self) -> None:  # pragma: no cover (timing heavy)
         while self.manager.running and not self.manager.shutdown_initiated:
             try:
                 jitter = _rng.uniform(0.7, 1.3)
@@ -40,7 +40,7 @@ class TaskWatchdog:
                 )
                 await asyncio.sleep(30)
 
-    def _check_task_health(self):
+    def _check_task_health(self) -> None:
         dead: list[int] = []
         alive: list[asyncio.Task] = []
         for i, task in enumerate(self.manager.tasks):

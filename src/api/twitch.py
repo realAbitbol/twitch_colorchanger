@@ -52,12 +52,16 @@ class TwitchAPI:
             return data, resp.status, dict(resp.headers)
 
     # ---- High level helpers ----
-    async def get_user(self, *, access_token: str, client_id: str) -> dict | None:
+    async def get_user(
+        self, *, access_token: str, client_id: str
+    ) -> dict[str, Any] | None:
         data, status, _ = await self.request(
             "GET", "users", access_token=access_token, client_id=client_id
         )
-        if status == 200 and data.get("data"):
-            return data["data"][0]
+        if status == 200 and isinstance(data.get("data"), list) and data["data"]:
+            first = data["data"][0]
+            if isinstance(first, dict):
+                return first
         return None
 
     async def get_chat_color(
@@ -71,9 +75,12 @@ class TwitchAPI:
             client_id=client_id,
             params=params,
         )
-        if status == 200 and data.get("data"):
+        if status == 200 and isinstance(data.get("data"), list) and data["data"]:
             entry = data["data"][0]
-            return entry.get("color")
+            if isinstance(entry, dict):
+                color = entry.get("color")
+                if isinstance(color, str):
+                    return color
         return None
 
     async def set_chat_color(

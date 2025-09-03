@@ -50,7 +50,7 @@ class TokenInfo:
 class TokenManager:
     _instance = None  # Simple singleton; not thread-safe by design (single event loop).
 
-    def __new__(cls, http_session: aiohttp.ClientSession):
+    def __new__(cls, http_session: aiohttp.ClientSession) -> TokenManager:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
@@ -74,7 +74,7 @@ class TokenManager:
         # Mark as initialized to avoid repeating work on future constructions.
         self._inst_initialized = True
 
-    async def start(self):
+    async def start(self) -> None:
         if self.running:
             return
         # Defensive: if a previous background task is still lingering (e.g. rapid
@@ -107,7 +107,7 @@ class TokenManager:
         self.logger.log_event("token_manager", "start")
         await asyncio.sleep(0)
 
-    async def stop(self):
+    async def stop(self) -> None:
         if not self.running:
             return
         self.running = False
@@ -136,7 +136,7 @@ class TokenManager:
         client_id: str,
         client_secret: str,
         expiry: datetime | None,
-    ):
+    ) -> None:
         info = self.tokens.get(username)
         if info:
             info.access_token = access_token
@@ -351,7 +351,7 @@ class TokenManager:
             return None
         return (info.expiry - datetime.now()).total_seconds()
 
-    async def _background_refresh_loop(self):
+    async def _background_refresh_loop(self) -> None:
         base = TOKEN_MANAGER_BACKGROUND_BASE_SLEEP
         while self.running:
             try:

@@ -17,7 +17,7 @@ class IRCListener:
     def __init__(self, client: AsyncTwitchIRC):
         self.client = client
 
-    async def listen(self):  # noqa: C901
+    async def listen(self) -> None:  # noqa: C901
         if not self._can_start_listening():
             return
         self._initialize_listening()
@@ -40,7 +40,7 @@ class IRCListener:
             return False
         return True
 
-    def _initialize_listening(self):
+    def _initialize_listening(self) -> None:
         logger.log_event("irc", "listener_start", user=self.client.username)
         self.client.running = True
         import time as _t
@@ -78,13 +78,13 @@ class IRCListener:
             self.client.connected = False
             return True
         decoded_data = data.decode("utf-8", errors="ignore")
-        self.client.message_buffer = await self.client.dispatcher.process_incoming_data(  # type: ignore[attr-defined]
+        self.client.message_buffer = await self.client.dispatcher.process_incoming_data(
             self.client.message_buffer, decoded_data
         )
-        return self.client.heartbeat.perform_periodic_checks()  # type: ignore[attr-defined]
+        return self.client.heartbeat.perform_periodic_checks()
 
     def _handle_read_timeout(self) -> bool:
-        if self.client.heartbeat.is_connection_stale():  # type: ignore[attr-defined]
+        if self.client.heartbeat.is_connection_stale():
             logger.log_event(
                 "irc",
                 "connection_stale",
@@ -95,7 +95,7 @@ class IRCListener:
             return True
         return False
 
-    def _finalize_listening(self):
+    def _finalize_listening(self) -> None:
         self.client.running = False
         logger.log_event(
             "irc", "listener_stopped", level=logging.WARNING, user=self.client.username

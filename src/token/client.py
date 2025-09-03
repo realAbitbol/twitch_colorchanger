@@ -133,7 +133,7 @@ class TokenClient:
                 raise NetworkError(f"HTTP {resp.status} during token refresh")
         except TimeoutError as e:
             raise NetworkError("Token refresh timeout") from e
-        except aiohttp.ClientError as e:  # type: ignore[name-defined]
+        except aiohttp.ClientError as e:
             raise NetworkError(f"Network error during token refresh: {e}") from e
         except ParsingError:
             logger.log_event(
@@ -239,7 +239,7 @@ class TokenClient:
                 "token", "validation_timeout", level=logging.WARNING, user=username
             )
             raise NetworkError("Token validation timeout") from e
-        except aiohttp.ClientError as e:  # type: ignore[name-defined]
+        except aiohttp.ClientError as e:
             logger.log_event(
                 "token",
                 "validation_network_error",

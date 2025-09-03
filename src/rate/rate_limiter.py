@@ -48,10 +48,10 @@ class TwitchRateLimiter:
         self._backoff = AdaptiveBackoff()
 
     # --------------------------- Introspection --------------------------- #
-    def snapshot(self) -> dict:
+    def snapshot(self) -> dict[str, object]:
         """Return a serializable snapshot of limiter state for debugging."""
 
-        def bucket_view(bucket: RateLimitInfo | None):  # type: ignore[name-defined]
+        def bucket_view(bucket: RateLimitInfo | None) -> dict[str, object] | None:
             if not bucket:
                 return None
             return {
@@ -85,7 +85,7 @@ class TwitchRateLimiter:
 
     def update_from_headers(
         self, headers: dict[str, str], is_user_request: bool = True
-    ):
+    ) -> None:
         """
         Update rate limit info from API response headers
 
@@ -306,7 +306,7 @@ class TwitchRateLimiter:
         endpoint: str = "default",
         is_user_request: bool = True,
         points_cost: int = 1,
-    ):
+    ) -> None:
         """
         Wait if necessary to respect rate limits before making a request
 
@@ -374,7 +374,9 @@ class TwitchRateLimiter:
                 bucket.remaining = max(0, bucket.remaining - points_cost)
                 bucket.last_updated = time.time()
 
-    def handle_429_error(self, headers: dict[str, str], is_user_request: bool = True):
+    def handle_429_error(
+        self, headers: dict[str, str], is_user_request: bool = True
+    ) -> None:
         """
         Handle a 429 Too Many Requests error by updating rate limit info
 
