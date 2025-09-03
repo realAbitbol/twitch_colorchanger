@@ -156,7 +156,9 @@ class ApplicationContext:
         logger.log_event("context", "task_registered", task=name)
 
     def task_snapshot(self) -> list[dict[str, str]]:
-        out = []
+        # Currently unused (kept for potential future diagnostics). If still unused,
+        # consider removing after verification cycles.  # pragma: no cover
+        out: list[dict[str, str]] = []
         for name, t in self._tasks.items():
             out.append({"name": name, "state": "done" if t.done() else "running"})
         return out

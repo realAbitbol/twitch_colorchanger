@@ -99,7 +99,7 @@ class AdaptiveScheduler:
 
     logger.log_event("scheduler", "stopped", level=logging.WARNING)
 
-    async def schedule_recurring(
+    async def schedule_recurring(  # noqa: D401
         self,
         callback: Callable,
         interval: float,
@@ -149,7 +149,7 @@ class AdaptiveScheduler:
         )
         return True
 
-    async def schedule_once(
+    async def schedule_once(  # noqa: D401
         self,
         callback: Callable,
         delay: float,
@@ -193,7 +193,7 @@ class AdaptiveScheduler:
         )
         return True
 
-    async def cancel_task(self, name: str) -> bool:
+    async def cancel_task(self, name: str) -> bool:  # noqa: D401
         """Cancel all tasks with the given name"""
         if not self.running:
             return False
@@ -206,7 +206,7 @@ class AdaptiveScheduler:
         logger.log_event("scheduler", "cancelled_tasks_named", task=name)
         return True
 
-    async def reschedule_task(self, name: str, new_interval: float) -> bool:
+    async def reschedule_task(self, name: str, new_interval: float) -> bool:  # noqa: D401
         """Update the interval for a recurring task"""
         if not self.running:
             return False
@@ -230,7 +230,7 @@ class AdaptiveScheduler:
 
         return False
 
-    def get_next_task_delay(self) -> float:
+    def get_next_task_delay(self) -> float:  # noqa: D401
         """Get delay until next task (for debugging/monitoring)"""
         if not self.tasks:
             return float("inf")
@@ -239,7 +239,7 @@ class AdaptiveScheduler:
         delay = next_task.next_run - time.monotonic()
         return max(0, delay)
 
-    def get_task_count(self) -> int:
+    def get_task_count(self) -> int:  # noqa: D401
         """Get number of scheduled tasks"""
         return len(self.tasks)
 

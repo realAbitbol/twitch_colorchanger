@@ -11,7 +11,6 @@ from typing import Any
 from ..constants import (
     ASYNC_IRC_CONNECT_TIMEOUT,
     CHANNEL_JOIN_TIMEOUT,
-    CONNECTION_RETRY_TIMEOUT,
     MAX_JOIN_ATTEMPTS,
     PING_EXPECTED_INTERVAL,
     SERVER_ACTIVITY_TIMEOUT,
@@ -54,6 +53,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         self.last_reconnect_attempt = 0.0
         self.connection_start_time = 0.0
         self.message_handler: Callable[[str, str, str], Any] | None = None
+        # Optional handlers (dispatcher checks for presence)
         self.color_change_handler: Callable[[str, str, str], Any] | None = None
         self.message_buffer = ""
         self._join_grace_deadline: float | None = None
@@ -243,9 +243,6 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
     def set_message_handler(self, handler: Callable[[str, str, str], Any]):
         self.message_handler = handler
 
-    def set_color_change_handler(self, handler: Callable[[str, str, str], Any]):
-        self.color_change_handler = handler
-
     def get_connection_stats(self) -> dict:
         return self.health_monitor.get_connection_stats()
 
@@ -255,21 +252,11 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
     def get_health_snapshot(self) -> dict[str, Any]:
         return self.health_monitor.get_health_snapshot()
 
-    def _should_retry_connection(self) -> bool:
-        if self.connection_start_time == 0:
-            self.connection_start_time = time.time()
-            return True
-        elapsed = time.time() - self.connection_start_time
-        if elapsed > CONNECTION_RETRY_TIMEOUT:
-            logger.log_event(
-                "irc",
-                "connection_retry_timeout",
-                level=logging.WARNING,
-                user=self.username,
-                timeout=CONNECTION_RETRY_TIMEOUT,
-            )
-            return False
-        return True
+    # Removed unused retry decision helper _should_retry_connection
+
+    def set_color_change_handler(self, handler: Callable[[str, str, str], Any]):
+        """Register a handler for color change commands (messages starting with !)."""
+        self.color_change_handler = handler
 
     def _reset_connection_timer(self):
         self.connection_start_time = 0

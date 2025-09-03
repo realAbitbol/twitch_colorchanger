@@ -57,8 +57,9 @@ async def main():
 @atexit.register
 def _cleanup_any_context():  # pragma: no cover - process exit path
     try:  # best-effort; nothing to close explicitly yet
-        from .application_context import (
-            ApplicationContext as _AC,  # type: ignore  # noqa: F401
+        # Import lazily to avoid import side-effects if not needed
+        from .application_context import (  # noqa: F401
+            ApplicationContext,
         )
     except Exception as e:  # noqa: BLE001
         # Log at debug to avoid noise
