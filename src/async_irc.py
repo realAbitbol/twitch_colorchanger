@@ -6,12 +6,10 @@ import asyncio
 import inspect
 import secrets
 import time
-import traceback
 from collections.abc import Callable
 from enum import Enum, auto
 from typing import Any
 
-from .colors import BColors
 from .constants import (
     ASYNC_IRC_CONNECT_TIMEOUT,
     ASYNC_IRC_JOIN_TIMEOUT,
@@ -28,7 +26,7 @@ from .constants import (
     RECONNECT_DELAY,
     SERVER_ACTIVITY_TIMEOUT,
 )
-from .utils import print_log
+from .logger import logger
 
 
 class ConnectionState(Enum):
@@ -92,15 +90,16 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         self._join_grace_deadline: float | None = None
 
     def _set_state(self, new_state: ConnectionState):
-        """Set connection state with logging"""
+        """Set connection state with structured logging"""
         if self.state != new_state:
             old_state = (
                 self.state.name if hasattr(self.state, "name") else str(self.state)
             )
-            print_log(
-                f"🔄 {self.username}: State {old_state} → {new_state.name}",
-                BColors.OKCYAN,
-                debug_only=True,
+            logger.debug(
+                "irc_state_change",
+                user=self.username,
+                old_state=old_state,
+                new_state=new_state.name,
             )
             self.state = new_state
 
@@ -113,26 +112,24 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
 
         try:
             self._set_state(ConnectionState.CONNECTING)
-            print_log(
-                f"🔗 {self.username}: Connecting to {self.server}:{self.port}...",
-                BColors.OKCYAN,
+            logger.info(
+                "irc_connect_start",
+                user=self.username,
+                server=self.server,
+                port=self.port,
             )
-
-            # Async connection establishment
-            print_log(
-                f"🔗 {self.username}: Opening connection with timeout "
-                f"{ASYNC_IRC_CONNECT_TIMEOUT}s",
-                BColors.OKCYAN,
-                debug_only=True,
+            logger.debug(
+                "irc_open_connection",
+                user=self.username,
+                timeout=ASYNC_IRC_CONNECT_TIMEOUT,
             )
             self.reader, self.writer = await asyncio.wait_for(
                 asyncio.open_connection(self.server, self.port),
                 timeout=ASYNC_IRC_CONNECT_TIMEOUT,
             )
-            print_log(
-                f"🔗 {self.username}: Connection established, sending auth",
-                BColors.OKCYAN,
-                debug_only=True,
+            logger.debug(
+                "irc_connection_established",
+                user=self.username,
             )
 
             # Send authentication
@@ -145,18 +142,18 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             await self._send_line("CAP REQ :twitch.tv/tags")
             await self._send_line("CAP REQ :twitch.tv/commands")
 
-            print_log(
-                f"🔗 {self.username}: Auth sent, waiting 2s for processing",
-                BColors.OKCYAN,
-                debug_only=True,
+            logger.debug(
+                "irc_auth_sent",
+                user=self.username,
+                wait_seconds=2,
             )
             # Wait for connection confirmation
             await asyncio.sleep(2)  # Give server time to process
 
-            print_log(
-                f"🔗 {self.username}: Attempting to join channel #{channel}",
-                BColors.OKCYAN,
-                debug_only=True,
+            logger.debug(
+                "irc_join_begin",
+                user=self.username,
+                channel=channel.lower(),
             )
             # Start temporary message processing for join confirmation
             self._set_state(ConnectionState.JOINING)
@@ -166,39 +163,46 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                 self._reset_connection_timer()  # Reset timer after successful connection
                 self._set_state(ConnectionState.READY)
                 self._join_grace_deadline = time.time() + 30  # 30s grace for joins
-                print_log(
-                    f"✅ {self.username}: Connected and joined #{channel}",
-                    BColors.OKGREEN,
+                logger.info(
+                    "irc_connect_success",
+                    user=self.username,
+                    channel=channel.lower(),
                 )
                 return True
 
-            print_log(f"❌ {self.username}: Failed to join #{channel}", BColors.FAIL)
+            logger.error(
+                "irc_connect_join_failed",
+                user=self.username,
+                channel=channel.lower(),
+            )
             await self.disconnect()
             return False
 
         except TimeoutError:
-            timeout_msg = (
-                f"❌ {self.username}: Connection timeout after "
-                f"{ASYNC_IRC_CONNECT_TIMEOUT}s"
+            logger.error(
+                "irc_connect_timeout",
+                user=self.username,
+                timeout=ASYNC_IRC_CONNECT_TIMEOUT,
             )
-            print_log(timeout_msg, BColors.FAIL)
             await self.disconnect()
             return False
         except OSError as e:
             if "Connection reset by peer" in str(e):
-                reset_msg = (
-                    f"❌ {self.username}: Connection reset by server - "
-                    "check token/username validity"
-                )
-                print_log(reset_msg, BColors.FAIL)
+                logger.error("irc_connect_reset", user=self.username, error=str(e))
             else:
-                print_log(f"❌ {self.username}: Network error: {e}", BColors.FAIL)
+                logger.error(
+                    "irc_connect_network_error",
+                    user=self.username,
+                    error=str(e),
+                )
             await self.disconnect()
             return False
         except Exception as e:
-            print_log(
-                f"❌ {self.username}: Connection error: {type(e).__name__}: {e}",
-                BColors.FAIL,
+            logger.exception(
+                "irc_connect_exception",
+                user=self.username,
+                error_type=type(e).__name__,
+                error=str(e),
             )
             await self.disconnect()
             return False
@@ -208,14 +212,11 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         channel = channel.lower()
 
         if channel in self.confirmed_channels:
-            print_log(
-                f"ℹ️ {self.username}: Already in #{channel}",
-                BColors.OKCYAN,
-                debug_only=True,
+            logger.debug(
+                "irc_join_already_confirmed", user=self.username, channel=channel
             )
             return True
-
-        print_log(f"🚪 {self.username}: Joining #{channel}...", BColors.OKCYAN)
+        logger.info("irc_join_start", user=self.username, channel=channel)
 
         try:
             # Send JOIN command
@@ -225,8 +226,13 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             return await self._wait_for_join_confirmation(channel)
 
         except Exception as e:
-            error_msg = f"❌ {self.username}: Error joining #{channel}: {e}"
-            print_log(error_msg, BColors.FAIL)
+            logger.error(
+                "irc_join_error",
+                user=self.username,
+                channel=channel,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
             return False
 
     async def _wait_for_join_confirmation(self, channel: str) -> bool:
@@ -258,8 +264,13 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                 self._log_connection_reset_error()
                 return False
             except Exception as e:
-                error_msg = f"❌ {self.username}: Error during join processing: {e}"
-                print_log(error_msg, BColors.FAIL)
+                logger.error(
+                    "irc_join_processing_error",
+                    user=self.username,
+                    channel=channel,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
                 return False
 
         # Join timeout
@@ -270,20 +281,14 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         """Read data during join process, return None if connection lost"""
         # Check if reader is available
         if not self.reader:
-            print_log(
-                f"❌ {self.username}: No reader available during join",
-                BColors.FAIL,
-            )
+            logger.error("irc_join_no_reader", user=self.username)
             return None
 
         # Read with short timeout to allow checking for join confirmation
         data = await asyncio.wait_for(self.reader.read(4096), timeout=0.5)
 
         if not data:
-            print_log(
-                f"❌ {self.username}: Connection lost during join",
-                BColors.FAIL,
-            )
+            logger.error("irc_join_connection_lost", user=self.username)
             return None
 
         return data
@@ -292,10 +297,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         """Finalize channel join after confirmation"""
         if channel not in self.channels:
             self.channels.append(channel)
-        print_log(
-            f"✅ {self.username}: Successfully joined #{channel}",
-            BColors.OKGREEN,
-        )
+        logger.info("irc_join_success", user=self.username, channel=channel)
         return True
 
     def _log_connection_reset_error(self):
@@ -304,15 +306,19 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             f"❌ {self.username}: Connection reset by server - "
             "likely authentication failure"
         )
-        print_log(reset_msg, BColors.FAIL)
+        logger.error(
+            "irc_connection_reset",
+            user=self.username,
+            message=reset_msg,
+        )
 
     def _log_join_timeout(self, channel: str):
         """Log join timeout error"""
-        timeout_msg = (
-            f"⏰ {self.username}: Join timeout for #{channel} after "
-            f"{ASYNC_IRC_JOIN_TIMEOUT}s"
+        logger.error(
+            "irc_join_timeout",
+            user=self.username,
+            channel=channel,
         )
-        print_log(timeout_msg, BColors.FAIL)
 
     async def _send_line(self, message: str):
         """Send a line to the IRC server"""
@@ -326,10 +332,8 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         channel = channel.lower()
 
         if channel in self.confirmed_channels:
-            print_log(
-                f"ℹ️ {self.username}: Already in #{channel}",
-                BColors.OKCYAN,
-                debug_only=True,
+            logger.debug(
+                "irc_join_already_confirmed", user=self.username, channel=channel
             )
             return True
 
@@ -341,15 +345,11 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
 
         attempts = self.pending_joins[channel]["attempts"]
         if attempts > self.max_join_attempts:
-            print_log(
-                f"❌ {self.username}: Max join attempts reached for #{channel}",
-                BColors.FAIL,
-            )
+            logger.error("irc_join_max_attempts", user=self.username, channel=channel)
             return False
 
-        print_log(
-            f"🚪 {self.username}: Joining #{channel} (attempt {attempts})...",
-            BColors.OKCYAN,
+        logger.info(
+            "irc_join_attempt", user=self.username, channel=channel, attempt=attempts
         )
 
         try:
@@ -362,23 +362,22 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                     self.pending_joins.pop(channel, None)
                     if channel not in self.channels:
                         self.channels.append(channel)
-                    print_log(
-                        f"✅ {self.username}: Successfully joined #{channel}",
-                        BColors.OKGREEN,
-                    )
+                    logger.info("irc_join_success", user=self.username, channel=channel)
                     return True
                 await asyncio.sleep(0.1)  # Non-blocking sleep
 
             # Join timeout
-            print_log(
-                f"⏰ {self.username}: Join timeout for #{channel}", BColors.WARNING
-            )
+            logger.warning("irc_join_timeout", user=self.username, channel=channel)
             self.pending_joins.pop(channel, None)
             return False
 
         except Exception as e:
-            print_log(
-                f"❌ {self.username}: Error joining #{channel}: {e}", BColors.FAIL
+            logger.error(
+                "irc_join_error",
+                user=self.username,
+                channel=channel,
+                error=str(e),
+                error_type=type(e).__name__,
             )
             self.pending_joins.pop(channel, None)
             return False
@@ -401,17 +400,13 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
     def _can_start_listening(self) -> bool:
         """Check if we can start listening"""
         if not self.connected or not self.reader:
-            print_log(
-                f"❌ {self.username}: Cannot listen - not connected", BColors.FAIL
-            )
+            logger.error("irc_listen_start_failed", user=self.username)
             return False
         return True
 
     def _initialize_listening(self):
         """Initialize the listening state"""
-        print_log(
-            f"👂 {self.username}: Starting async message listener...", BColors.OKCYAN
-        )
+        logger.info("irc_listener_start", user=self.username)
         self.running = True
         self.last_server_activity = time.time()
 
@@ -422,13 +417,18 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         except TimeoutError:
             return self._handle_read_timeout()
         except Exception as e:
-            print_log(f"❌ {self.username}: Listen error: {e}", BColors.FAIL)
+            logger.exception(
+                "irc_listen_error",
+                user=self.username,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
             return True
 
     async def _handle_data_read(self) -> bool:
         """Handle reading data from the connection. Returns True if should break."""
         if not self.reader:
-            print_log(f"❌ {self.username}: No reader available", BColors.FAIL)
+            logger.error("irc_no_reader", user=self.username)
             return True
 
         data = await asyncio.wait_for(
@@ -437,7 +437,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         )
 
         if not data:
-            print_log(f"❌ {self.username}: IRC connection lost", BColors.FAIL)
+            logger.error("irc_connection_lost", user=self.username)
             self.connected = False
             return True
 
@@ -453,10 +453,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
     def _handle_read_timeout(self) -> bool:
         """Handle read timeout. Returns True if should break."""
         if self._is_connection_stale():
-            print_log(
-                f"💀 {self.username}: Connection appears stale",
-                BColors.WARNING,
-            )
+            logger.warning("irc_connection_stale", user=self.username)
             self.connected = False
             return True
         return False
@@ -464,7 +461,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
     def _finalize_listening(self):
         """Finalize the listening state"""
         self.running = False
-        print_log(f"🔇 {self.username}: Stopped listening", BColors.WARNING)
+        logger.warning("irc_listener_stopped", user=self.username)
         if not self.writer or not self.reader:
             self.connected = False
 
@@ -487,7 +484,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         """Handle individual IRC messages"""
         # Debug: Log all incoming messages
         if not raw_message.startswith("PING"):
-            print_log(f"🔍 IRC: {raw_message}", BColors.HEADER, debug_only=True)
+            logger.debug("irc_raw", user=self.username, raw=raw_message)
 
         # Handle PINGs immediately
         if raw_message.startswith("PING"):
@@ -560,16 +557,20 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
     ) -> tuple[str | None, str | None, str | None]:
         """Parse PRIVMSG components and return channel, message, username"""
         if not prefix or " :" not in params:
-            print_log(
-                f"🐛 Invalid PRIVMSG format: prefix='{prefix}', params='{params}'",
-                BColors.WARNING,
+            logger.warning(
+                "irc_privmsg_invalid_format",
+                user=self.username,
+                prefix=prefix,
+                params=params,
             )
             return None, None, None
 
         # Parse channel and message
         channel_msg = params.split(" :", 1)
         if len(channel_msg) < 2:
-            print_log(f"🐛 Failed to parse PRIVMSG: '{params}'", BColors.WARNING)
+            logger.warning(
+                "irc_privmsg_parse_failed", user=self.username, params=params
+            )
             return None, None, None
 
         channel = channel_msg[0].strip().lstrip("#").lower()
@@ -585,24 +586,38 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         is_bot_message = (
             username.lower() == self.username.lower() if self.username else False
         )
-        print_log(
-            f"💬 Received message from {username} in #{channel}: {message}",
-            BColors.OKCYAN,
-            debug_only=not is_bot_message,
-        )
+        if is_bot_message:
+            logger.info(
+                "irc_privmsg",
+                user=self.username,
+                author=username,
+                channel=channel,
+                chat_message=message,
+                self_message=True,
+            )
+        else:
+            logger.debug(
+                "irc_privmsg",
+                user=self.username,
+                author=username,
+                channel=channel,
+                chat_message=message,
+                self_message=False,
+            )
 
     async def _process_message_handlers(
         self, username: str, channel: str, message: str
     ):
         """Process message through registered handlers"""
         if not self.message_handler:
-            print_log("⚠️ No message handler set!", BColors.WARNING)
+            logger.warning("irc_no_message_handler", user=self.username)
             return
 
-        print_log(
-            f"🔄 Calling message handler for {username} in #{channel}",
-            BColors.OKCYAN,
-            debug_only=True,
+        logger.debug(
+            "irc_dispatch_message_handler",
+            user=self.username,
+            channel=channel,
+            author=username,
         )
 
         try:
@@ -616,14 +631,20 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                 )
                 await task
 
-            print_log(
-                f"✅ Message handler completed for {username} in #{channel}",
-                BColors.OKGREEN,
-                debug_only=True,
+            logger.debug(
+                "irc_message_handler_complete",
+                user=self.username,
+                channel=channel,
+                author=username,
             )
         except Exception as e:
-            print_log(f"❌ Message handler error: {e}", BColors.FAIL)
-            print_log(f"❌ Full traceback: {traceback.format_exc()}", BColors.FAIL)
+            logger.exception(
+                "irc_message_handler_error",
+                user=self.username,
+                channel=channel,
+                author=username,
+                error=str(e),
+            )
 
     async def _handle_color_change_command(
         self, username: str, channel: str, message: str
@@ -638,7 +659,13 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             )
             await task
         except Exception as e:
-            print_log(f"❌ Color change handler error: {e}", BColors.FAIL)
+            logger.exception(
+                "irc_color_change_handler_error",
+                user=self.username,
+                channel=channel,
+                author=username,
+                error=str(e),
+            )
 
     def _perform_periodic_checks(self) -> bool:
         """
@@ -650,11 +677,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         # Check for server activity timeout
         activity_timeout = self.server_activity_timeout
         if current_time - self.last_server_activity > activity_timeout:
-            print_log(
-                f"💀 {self.username}: No server activity for {
-                    self.server_activity_timeout
-                }s",
-                BColors.WARNING,
+            logger.warning(
+                "irc_no_server_activity",
+                user=self.username,
+                timeout=self.server_activity_timeout,
             )
             return True
 
@@ -665,11 +691,11 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
             and current_time - self.last_ping_from_server > ping_timeout
         ):
             time_since_ping = current_time - self.last_ping_from_server
-            ping_msg = (
-                f"🏓 {self.username}: Ping timeout - "
-                f"last ping {time_since_ping:.0f}s ago"
+            logger.warning(
+                "irc_ping_timeout",
+                user=self.username,
+                time_since_ping=time_since_ping,
             )
-            print_log(ping_msg, BColors.WARNING)
             return True
 
         return False
@@ -684,11 +710,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
 
         if time_since_activity > early_stale_threshold:
             # Log early warning for observability
-            print_log(
-                f"⚠️ {self.username}: Connection showing early staleness "
-                f"({time_since_activity:.1f}s since activity)",
-                BColors.WARNING,
-                debug_only=True,
+            logger.debug(
+                "irc_stale_early_warning",
+                user=self.username,
+                time_since_activity=time_since_activity,
             )
 
         # Return true if we're beyond 50% of timeout (original behavior preserved)
@@ -699,11 +724,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         self.token = (
             new_token if new_token.startswith("oauth:") else f"oauth:{new_token}"
         )
-        print_log(
-            f"🔑 {self.username}: IRC token updated for future connections",
-            BColors.OKGREEN,
-            debug_only=True,
-        )
+        logger.debug("irc_token_updated", user=self.username)
 
     async def disconnect(self):
         """Disconnect from IRC server"""
@@ -715,8 +736,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                 self.writer.close()
                 await self.writer.wait_closed()
             except Exception as e:
-                print_log(
-                    f"❌ {self.username}: Error closing connection: {e}", BColors.FAIL
+                logger.exception(
+                    "irc_disconnect_error",
+                    user=self.username,
+                    error=str(e),
                 )
             finally:
                 self.writer = None
@@ -727,23 +750,18 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
         self.confirmed_channels.clear()
         self.pending_joins.clear()
         self.message_buffer = ""
-
         self._set_state(ConnectionState.DISCONNECTED)
-        print_log(f"📡 {self.username}: Disconnected", BColors.WARNING)
+        logger.warning("irc_disconnected", user=self.username)
 
     async def force_reconnect(self) -> bool:
         """Force a reconnection (for external health checks) with race protection"""
         async with self._reconnect_lock:
             if not self.username or not self.token or not self.channels:
-                print_log(
-                    "❌ Cannot reconnect: missing connection details", BColors.FAIL
-                )
+                logger.error("irc_reconnect_missing_details", user=self.username)
                 return False
 
             self._set_state(ConnectionState.RECONNECTING)
-            print_log(
-                f"🔄 {self.username}: Forcing async reconnection...", BColors.WARNING
-            )
+            logger.warning("irc_force_reconnect", user=self.username)
 
             # Check if we need to wait due to exponential backoff
             now = time.time()
@@ -752,10 +770,11 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
 
             if time_since_last_attempt < backoff_delay:
                 remaining_wait = backoff_delay - time_since_last_attempt
-                print_log(
-                    f"⏳ {self.username}: Waiting {remaining_wait:.1f}s due to exponential backoff "
-                    f"(attempt {self.consecutive_failures + 1})",
-                    BColors.WARNING,
+                logger.warning(
+                    "irc_reconnect_backoff_wait",
+                    user=self.username,
+                    remaining_wait=remaining_wait,
+                    attempt=self.consecutive_failures + 1,
                 )
                 await asyncio.sleep(remaining_wait)
 
@@ -780,9 +799,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                     timeout=ASYNC_IRC_RECONNECT_TIMEOUT,
                 )
             except TimeoutError:
-                print_log(
-                    f"⏰ {self.username}: Reconnection timed out after {ASYNC_IRC_RECONNECT_TIMEOUT}s",
-                    BColors.FAIL,
+                logger.error(
+                    "irc_reconnect_timeout",
+                    user=self.username,
+                    timeout=ASYNC_IRC_RECONNECT_TIMEOUT,
                 )
                 success = False
 
@@ -800,14 +820,17 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
                 self._join_grace_deadline = time.time() + 30
 
                 num_channels = len(self.channels)
-                success_msg = f"✅ {self.username}: Async reconnected (base channel joined). Pending rejoin of {num_channels - 1} extra channels"
-                print_log(success_msg, BColors.OKGREEN)
-            else:
-                failure_msg = (
-                    f"❌ {self.username}: Async reconnection failed "
-                    f"(attempt {self.consecutive_failures})"
+                logger.info(
+                    "irc_reconnect_success",
+                    user=self.username,
+                    extra_channels=num_channels - 1,
                 )
-                print_log(failure_msg, BColors.FAIL)
+            else:
+                logger.error(
+                    "irc_reconnect_failed",
+                    user=self.username,
+                    attempt=self.consecutive_failures,
+                )
 
             # Set final state based on success and health
             if success:
@@ -967,9 +990,10 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
 
         elapsed = time.time() - self.connection_start_time
         if elapsed > CONNECTION_RETRY_TIMEOUT:
-            print_log(
-                f"⏰ {self.username}: Connection retry timeout ({CONNECTION_RETRY_TIMEOUT}s) exceeded",
-                BColors.WARNING,
+            logger.warning(
+                "irc_connection_retry_timeout",
+                user=self.username,
+                timeout=CONNECTION_RETRY_TIMEOUT,
             )
             return False
         return True

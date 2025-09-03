@@ -8,9 +8,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .colors import BColors
 from .logger import logger
-from .utils import print_log
 
 
 @dataclass
@@ -74,7 +72,8 @@ class AdaptiveScheduler:
         # Use async context for task creation
         async with self._lock:
             self.scheduler_task = asyncio.create_task(self._run_scheduler())
-        print_log("🕒 Adaptive scheduler started", BColors.OKGREEN)
+
+    logger.info("Adaptive scheduler started")
 
     async def stop(self):
         """Stop the scheduler and cancel all tasks"""
@@ -97,7 +96,7 @@ class AdaptiveScheduler:
         async with self._lock:
             self.tasks.clear()
 
-        print_log("🕒 Adaptive scheduler stopped", BColors.WARNING)
+    logger.warning("Adaptive scheduler stopped")
 
     async def schedule_recurring(
         self,
@@ -140,9 +139,10 @@ class AdaptiveScheduler:
         async with self._lock:
             heapq.heappush(self.tasks, task)
 
-        print_log(
-            f"📅 Scheduled recurring task '{name}' (interval: {interval}s)",
-            BColors.OKCYAN,
+        logger.debug(
+            f"Scheduled recurring task '{name}' (interval: {interval}s)",
+            task=name,
+            interval=interval,
         )
         return True
 
@@ -185,8 +185,10 @@ class AdaptiveScheduler:
         async with self._lock:
             heapq.heappush(self.tasks, task)
 
-        print_log(
-            f"📅 Scheduled one-time task '{name}' (delay: {delay}s)", BColors.OKCYAN
+        logger.debug(
+            f"Scheduled one-time task '{name}' (delay: {delay}s)",
+            task=name,
+            delay=delay,
         )
         return True
 
@@ -200,7 +202,7 @@ class AdaptiveScheduler:
             self.tasks = [task for task in self.tasks if task.name != name]
             heapq.heapify(self.tasks)  # Rebuild heap
 
-        print_log(f"🚫 Cancelled tasks named '{name}'", BColors.WARNING)
+        logger.info(f"Cancelled tasks named '{name}'", task=name)
         return True
 
     async def reschedule_task(self, name: str, new_interval: float) -> bool:
@@ -216,9 +218,10 @@ class AdaptiveScheduler:
                     current_time = time.monotonic()
                     task.next_run = current_time + new_interval
                     heapq.heapify(self.tasks)  # Rebuild heap
-                    print_log(
-                        f"🔄 Rescheduled task '{name}' (new interval: {new_interval}s)",
-                        BColors.OKCYAN,
+                    logger.debug(
+                        f"Rescheduled task '{name}' (new interval: {new_interval}s)",
+                        task=name,
+                        interval=new_interval,
                     )
                     return True
 
@@ -254,11 +257,11 @@ class AdaptiveScheduler:
                 await self._process_next_batch()
 
             except asyncio.CancelledError:
-                print_log("🕒 Scheduler cancelled", BColors.WARNING, debug_only=True)
+                logger.debug("Scheduler cancelled")
                 raise
 
             except Exception as e:
-                print_log(f"❌ Scheduler error: {e}", BColors.FAIL)
+                logger.error(f"Scheduler error: {e}")
                 # Wait a bit before retrying to avoid tight error loops
                 await asyncio.sleep(1.0)
 
@@ -306,12 +309,11 @@ class AdaptiveScheduler:
 
         except asyncio.CancelledError:
             # Don't log cancelled tasks as errors
-            print_log(
-                f"🚫 Task '{task.name}' cancelled", BColors.WARNING, debug_only=True
-            )
+            logger.debug(f"Task '{task.name}' cancelled", task=task.name)
             # Re-raise as per asyncio best practices
             raise
 
         except Exception as e:
-            print_log(f"❌ Task '{task.name}' failed: {e}", BColors.FAIL)
-            logger.error("Task execution error", task_name=task.name, error=str(e))
+            logger.error(
+                f"Task '{task.name}' failed: {e}", task=task.name, error=str(e)
+            )

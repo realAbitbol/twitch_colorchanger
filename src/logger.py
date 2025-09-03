@@ -6,74 +6,45 @@ import logging
 import os
 import sys
 
-from .colors import BColors
 
+class SimpleFormatter(logging.Formatter):
+    """Formatter without color codes (colors removed after migration)."""
 
-class ColoredFormatter(logging.Formatter):
-    """Simple formatter that outputs colored logs"""
-
-    def format(self, record: logging.LogRecord) -> str:
-        return self._format_colored(record)
-
-    def _format_colored(self, record: logging.LogRecord) -> str:
-        """Format log record with colors"""
-        # Color mapping
-        colors = {
-            "DEBUG": BColors.OKBLUE,
-            "INFO": BColors.OKGREEN,
-            "WARNING": BColors.WARNING,
-            "ERROR": BColors.FAIL,
-            "CRITICAL": BColors.FAIL + BColors.BOLD,
-        }
-
-        color = colors.get(record.levelname, "")
-
-        # Format message with optional context
+    def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
         message = record.getMessage()
         context_parts = []
-
         if hasattr(record, "user"):
             context_parts.append(f"user={record.user}")
         if hasattr(record, "channel"):
             context_parts.append(f"channel={record.channel}")
-
         if context_parts:
-            context = f" [{', '.join(context_parts)}]"
-        else:
-            context = ""
-
-        formatted = f"{color}{message}{context}{BColors.ENDC}"
-
-        # Add exception info if present
+            message = f"{message} [{', '.join(context_parts)}]"
         if record.exc_info:
-            formatted += f"\n{self.formatException(record.exc_info)}"
-
-        return formatted
+            message += f"\n{self.formatException(record.exc_info)}"
+        return message
 
 
 class BotLogger:
-    """Simple logging system with colored output"""
+    """Project logger with lightweight structured event support.
 
-    def __init__(self, name: str = "twitch_colorchanger", log_file: str = None):
+    Conventions:
+      * Prefer logger.log_event(domain="token", action="refresh_success", user=username, latency_ms=123)
+      * Falls back to level methods (info/debug/...) for free-form messages.
+      * log_event builds a canonical event name '<domain>_<action>' and attaches any extra
+        kwargs as key=value pairs appended to the message (until a JSON formatter is added).
+    """
+
+    def __init__(self, name: str = "twitch_colorchanger", log_file: str | None = None):
         self.logger = logging.getLogger(name)
         self.log_file = log_file
-
-        # Clear any existing handlers
         self.logger.handlers.clear()
-
-        # Set log level based on DEBUG flag
         debug_enabled = os.environ.get("DEBUG", "false").lower() in ("true", "1", "yes")
-        if debug_enabled:
-            self.logger.setLevel(logging.DEBUG)
-        else:
-            self.logger.setLevel(logging.INFO)
+        self.logger.setLevel(logging.DEBUG if debug_enabled else logging.INFO)
 
-        # Setup console handler with colored formatter
         console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setFormatter(ColoredFormatter())
+        console_handler.setFormatter(SimpleFormatter())
         self.logger.addHandler(console_handler)
 
-        # Setup file handler if log_file is specified
         if log_file:
             file_handler = logging.FileHandler(log_file)
             file_handler.setFormatter(
@@ -84,44 +55,40 @@ class BotLogger:
             self.logger.addHandler(file_handler)
 
     def set_level(self, level: int):
-        """Set the logging level"""
         self.logger.setLevel(level)
 
     def debug(self, message: str, **kwargs):
-        """Log debug message with optional context"""
         self._log(logging.DEBUG, message, **kwargs)
 
     def info(self, message: str, **kwargs):
-        """Log info message with optional context"""
         self._log(logging.INFO, message, **kwargs)
 
     def warning(self, message: str, **kwargs):
-        """Log warning message with optional context"""
         self._log(logging.WARNING, message, **kwargs)
 
     def error(self, message: str, exc_info: bool = False, **kwargs):
-        """Log error message with optional context and exception info"""
         self._log(logging.ERROR, message, exc_info=exc_info, **kwargs)
 
     def critical(self, message: str, exc_info: bool = False, **kwargs):
-        """Log critical message with optional context and exception info"""
         self._log(logging.CRITICAL, message, exc_info=exc_info, **kwargs)
 
-    def _log(self, level: int, message: str, exc_info: bool = False, **kwargs):
-        """Internal method to log with context"""
-        extra = {}
+    def exception(self, message: str, **kwargs):
+        """Log an exception with traceback (compat shim for std logging API)."""
+        self._log(logging.ERROR, message, exc_info=True, **kwargs)
 
-        # Extract known context fields
+    def log_event(self, domain: str, action: str, level: int = logging.INFO, **kwargs):
+        event_name = f"{domain}_{action}".lower()
+        self._log(level, event_name, **kwargs)
+
+    def _log(self, level: int, message: str, exc_info: bool = False, **kwargs):
+        extra: dict[str, str] = {}
         if "user" in kwargs:
             extra["user"] = kwargs.pop("user")
         if "channel" in kwargs:
             extra["channel"] = kwargs.pop("channel")
-
-        # If there are remaining kwargs, add them to the message
         if kwargs:
             context_str = ", ".join(f"{k}={v}" for k, v in kwargs.items())
             message = f"{message} ({context_str})"
-
         self.logger.log(level, message, exc_info=exc_info, extra=extra)
 
 
@@ -130,10 +97,11 @@ logger = BotLogger()
 
 
 # Backward compatibility functions
-def print_log(message: str, color: str = "", debug_only: bool = False):
-    """Legacy print_log function for backward compatibility"""
-    # color parameter kept for backward compatibility but ignored
-    _ = color  # Suppress unused argument warning
+def print_log(
+    message: str, color: str = "", debug_only: bool = False
+):  # pragma: no cover
+    """Legacy stub retained temporarily (stdout banner still uses utils)."""
+    del color
     if debug_only:
         logger.debug(message)
     else:

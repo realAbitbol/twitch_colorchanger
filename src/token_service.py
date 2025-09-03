@@ -9,8 +9,7 @@ from enum import Enum
 
 import aiohttp
 
-from .colors import BColors
-from .utils import print_log
+from .logger import logger
 
 
 class TokenStatus(Enum):
@@ -104,9 +103,10 @@ class TokenService:
                 return TokenStatus.VALID, access_token, refresh_token, final_expiry
             else:
                 # Token is valid but expires soon, should be refreshed
-                print_log(
-                    f"🕐 {username}: Token valid but expires soon, proceeding to refresh",
-                    BColors.WARNING,
+                logger.warning(
+                    "token_valid_but_expiring",
+                    user=username,
+                    action="refresh",
                 )
                 return None
         return None
@@ -117,13 +117,14 @@ class TokenService:
         """Perform token refresh with retry logic"""
         # Check if we're rate limited for this user
         if self._should_delay_refresh(username):
-            print_log(
-                f"⏳ {username}: Delaying token refresh due to recent failures",
-                BColors.WARNING,
+            logger.warning(
+                "token_refresh_delayed",
+                user=username,
+                reason="recent_failures",
+                retry_count=self._refresh_retry_count.get(username, 0),
             )
             return TokenStatus.FAILED, None, None, None
-
-        print_log(f"🔄 {username}: Token needs refresh", BColors.OKCYAN)
+        logger.info("token_refresh_needed", user=username)
 
         # Try refresh with retries
         for attempt in range(3):  # Max 3 attempts
@@ -134,9 +135,11 @@ class TokenService:
             # Wait before retry (except after last attempt)
             if attempt < 2:
                 delay = (2**attempt) + random.uniform(0, 1)  # nosec B311 - non-cryptographic jitter for retry delays
-                print_log(
-                    f"⏳ {username}: Refresh attempt {attempt + 1} failed, retrying in {delay:.1f}s",
-                    BColors.WARNING,
+                logger.warning(
+                    "token_refresh_retry_scheduled",
+                    user=username,
+                    attempt=attempt + 1,
+                    delay=delay,
                 )
                 await asyncio.sleep(delay)
 
@@ -161,8 +164,11 @@ class TokenService:
                     if expires_in
                     else None
                 )
-                print_log(
-                    f"✅ {username}: Token refreshed successfully", BColors.OKGREEN
+                logger.info(
+                    "token_refresh_success",
+                    user=username,
+                    attempt=attempt + 1,
+                    expires_in=expires_in,
                 )
                 # Reset retry tracking on success
                 self._refresh_retry_count.pop(username, None)
@@ -175,9 +181,12 @@ class TokenService:
                 )
 
         except Exception as e:
-            print_log(
-                f"❌ {username}: Refresh attempt {attempt + 1} error: {e}",
-                BColors.FAIL,
+            logger.error(
+                "token_refresh_attempt_error",
+                user=username,
+                attempt=attempt + 1,
+                error=str(e),
+                error_type=type(e).__name__,
             )
 
         return None
@@ -190,8 +199,12 @@ class TokenService:
             self._refresh_retry_count.get(username, 0) + 1
         )
         self._last_refresh_attempt[username] = datetime.now().timestamp()
-
-        print_log(f"❌ {username}: Token refresh failed after 3 attempts", BColors.FAIL)
+        logger.error(
+            "token_refresh_failed",
+            user=username,
+            attempts=3,
+            retry_count=self._refresh_retry_count[username],
+        )
         return TokenStatus.FAILED, None, None, None
 
     def _should_delay_refresh(self, username: str) -> bool:
@@ -217,15 +230,19 @@ class TokenService:
         try:
             return await self._refresh_token(refresh_token, username)
         except TimeoutError:
-            print_log(
-                f"⏰ {username}: Refresh timeout on attempt {attempt + 1}",
-                BColors.WARNING,
+            logger.warning(
+                "token_refresh_timeout",
+                user=username,
+                attempt=attempt + 1,
             )
             return None, None, None
         except aiohttp.ClientError as e:
-            print_log(
-                f"🌐 {username}: Network error on attempt {attempt + 1}: {e}",
-                BColors.WARNING,
+            logger.warning(
+                "token_refresh_network_error",
+                user=username,
+                attempt=attempt + 1,
+                error=str(e),
+                error_type=type(e).__name__,
             )
             return None, None, None
 
@@ -269,33 +286,43 @@ class TokenService:
 
                 # Log specific error codes
                 if response.status == 401:
-                    print_log(
-                        f"🔑 {username}: Token is invalid (401 Unauthorized)",
-                        BColors.WARNING,
+                    logger.warning(
+                        "token_validation_invalid",
+                        user=username,
+                        status=response.status,
                     )
                 elif response.status == 429:
-                    print_log(
-                        f"⏰ {username}: Rate limited during validation (429)",
-                        BColors.WARNING,
+                    logger.warning(
+                        "token_validation_rate_limited",
+                        user=username,
+                        status=response.status,
                     )
                 else:
-                    print_log(
-                        f"⚠️ {username}: Token validation failed with status "
-                        f"{response.status}",
-                        BColors.WARNING,
+                    logger.warning(
+                        "token_validation_failed_status",
+                        user=username,
+                        status=response.status,
                     )
                 return False, None
 
         except TimeoutError:
-            print_log(f"⏰ {username}: Token validation timeout", BColors.WARNING)
+            logger.warning("token_validation_timeout", user=username)
             return False, None
         except aiohttp.ClientError as e:
-            print_log(
-                f"🌐 {username}: Network error during validation: {e}", BColors.WARNING
+            logger.warning(
+                "token_validation_network_error",
+                user=username,
+                error=str(e),
+                error_type=type(e).__name__,
             )
             return False, None
         except Exception as e:
-            print_log(f"❌ {username}: Token validation error: {e}", BColors.FAIL)
+            logger.error(
+                "token_validation_error",
+                user=username,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
             return False, None
 
     async def _refresh_token(
@@ -327,9 +354,10 @@ class TokenService:
 
                     # Validate that we got required fields
                     if not new_access_token:
-                        print_log(
-                            f"❌ {username}: Invalid refresh response - missing access_token",
-                            BColors.FAIL,
+                        logger.error(
+                            "token_refresh_invalid_response",
+                            user=username,
+                            missing_field="access_token",
                         )
                         return None, None, None
 
@@ -345,35 +373,55 @@ class TokenService:
                     error_type = "parse_error"
 
                 if response.status == 400:
-                    print_log(
-                        f"🔑 {username}: Invalid refresh token (400) - {error_type}: {error_msg}",
-                        BColors.FAIL,
+                    logger.error(
+                        "token_refresh_invalid_token",
+                        user=username,
+                        status=response.status,
+                        error_type=error_type,
+                        error_message=error_msg,
                     )
                 elif response.status == 401:
-                    print_log(
-                        f"🔑 {username}: Unauthorized refresh (401) - {error_type}: {error_msg}",
-                        BColors.FAIL,
+                    logger.error(
+                        "token_refresh_unauthorized",
+                        user=username,
+                        status=response.status,
+                        error_type=error_type,
+                        error_message=error_msg,
                     )
                 elif response.status == 429:
-                    print_log(
-                        f"⏰ {username}: Rate limited during refresh (429)",
-                        BColors.WARNING,
+                    logger.warning(
+                        "token_refresh_rate_limited",
+                        user=username,
+                        status=response.status,
                     )
                 else:
-                    print_log(
-                        f"❌ {username}: Token refresh failed: {response.status} - {error_type}: {error_msg}",
-                        BColors.FAIL,
+                    logger.error(
+                        "token_refresh_http_error",
+                        user=username,
+                        status=response.status,
+                        error_type=error_type,
+                        error_message=error_msg,
                     )
                 return None, None, None
 
         except TimeoutError:
-            print_log(f"⏰ {username}: Token refresh timeout", BColors.FAIL)
+            logger.error("token_refresh_timeout", user=username)
             return None, None, None
         except aiohttp.ClientError as e:
-            print_log(f"🌐 {username}: Network error during refresh: {e}", BColors.FAIL)
+            logger.error(
+                "token_refresh_network_error",
+                user=username,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
             return None, None, None
         except Exception as e:
-            print_log(f"❌ {username}: Token refresh error: {e}", BColors.FAIL)
+            logger.error(
+                "token_refresh_error",
+                user=username,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
             return None, None, None
 
     def next_check_delay(self, token_expiry: datetime | None) -> float:
@@ -385,10 +433,9 @@ class TokenService:
         time_until_expiry = (token_expiry - now).total_seconds()
 
         # Debug logging to understand scheduling decisions
-        print_log(
-            f"🕐 Token scheduling: {time_until_expiry:.0f}s remaining",
-            BColors.OKCYAN,
-            debug_only=True,
+        logger.debug(
+            "token_schedule_debug",
+            seconds_remaining=time_until_expiry,
         )
 
         # If token is already expired or expires very soon, check immediately
