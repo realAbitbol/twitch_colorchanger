@@ -467,20 +467,7 @@ EVENT_TEMPLATES: dict[tuple[str, str], str] = {
         "token",
         "refresh_retry_scheduled",
     ): "Token refresh retry scheduled attempt={attempt} delay={delay}s",
-    # Validation events
-    ("validation", "username_invalid"): "Username invalid: '{username}'",
-    ("validation", "placeholder_token"): "Placeholder token used for {username}",
-    (
-        "validation",
-        "missing_auth",
-    ): "Missing authentication for {username} (token or client credentials required)",
-    ("validation", "channels_missing"): "Channels list missing for {username}",
-    ("validation", "channel_invalid"): "Invalid channel '{channel}' for {username}",
-    ("validation", "user_config_not_dict"): "User config must be dict got={type}",
-    ("validation", "users_not_list"): "Users config must be a list",
-    ("validation", "no_users"): "No users configured",
-    ("validation", "duplicate_username"): "Duplicate username '{username}' skipped",
-    ("validation", "user_invalid_skipped"): "Skipping invalid config for {username}",
+    # (Removed legacy validation events after inlining logic)
     # Config watcher events
     ("config_watch", "file_changed"): "Config file changed path={path}",
     ("config_watch", "dir_missing"): "Config directory missing path={path}",

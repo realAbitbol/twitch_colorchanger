@@ -12,8 +12,11 @@ from collections.abc import Callable
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-from .config import load_users_from_config, normalize_user_channels
-from .config_validator import get_valid_users
+from .config import (
+    _validate_and_filter_users,  # reuse core validation helper
+    load_users_from_config,
+    normalize_user_channels,
+)
 from .constants import RELOAD_WATCH_DELAY
 from .logger import logger
 
@@ -141,8 +144,8 @@ class ConfigWatcher:
                 new_users_config, self.config_file
             )
 
-            # Validate new configuration
-            valid_users = get_valid_users(new_users_config)
+            # Validate new configuration via shared helper
+            valid_users = _validate_and_filter_users(new_users_config)
 
             if not valid_users:
                 logger.log_event(

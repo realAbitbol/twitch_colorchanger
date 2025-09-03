@@ -7,11 +7,18 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
 from secrets import SystemRandom
 
 import aiohttp
+
+from .constants import (
+    TOKEN_MANAGER_BACKGROUND_BASE_SLEEP,
+    TOKEN_MANAGER_VALIDATION_MIN_INTERVAL,
+    TOKEN_REFRESH_THRESHOLD_SECONDS,
+)
+from .token_client import TokenClient, TokenOutcome
 
 try:
     from .structured_logger import get_logger  # type: ignore
@@ -26,19 +33,8 @@ except Exception:  # noqa: BLE001
 # Use SystemRandom for jitter to satisfy security lints
 _jitter_rng = SystemRandom()
 
-# Configuration constants
-TOKEN_REFRESH_THRESHOLD = 3600  # 1 hour in seconds
-TOKEN_SAFETY_BUFFER = 300  # 5 minutes buffer when refreshing
-MAX_REFRESH_RETRIES = 3
-BASE_RETRY_DELAY = 60  # Base delay between retries
-MAX_RETRY_DELAY = 1800  # Max 30 minutes
-VALIDATION_TIMEOUT = 30  # API call timeout
-
-
-class TokenRefreshError(Exception):
-    """Token refresh specific error"""
-
-    pass
+# Local timing constants (loop cadence / validation min interval)
+# (interval constants imported from constants.py)
 
 
 class TokenState(Enum):
@@ -47,7 +43,6 @@ class TokenState(Enum):
     FRESH = "fresh"  # > threshold remaining
     STALE = "stale"  # < threshold, needs refresh
     REFRESHING = "refreshing"  # Refresh in progress
-    FAILED = "failed"  # Refresh failed, in cooldown
     EXPIRED = "expired"  # Past expiry time
 
 
@@ -65,13 +60,7 @@ class TokenInfo:
 
     # Refresh management
     refresh_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    refresh_attempts: int = 0
-    last_refresh_attempt: float = 0
     last_validation: float = 0
-
-    # Backoff tracking
-    consecutive_failures: int = 0
-    cooldown_until: float = 0
 
 
 class TokenManager:
@@ -94,10 +83,8 @@ class TokenManager:
         self.background_task: asyncio.Task | None = None
         self.running = False
         self.logger = get_logger()
-
-        # Global locks for coordination
-        self._refresh_coordination_lock = asyncio.Lock()
-
+        # TokenClient cache per (client_id, client_secret)
+        self._client_cache: dict[tuple[str, str], TokenClient] = {}
         TokenManager._initialized = True
 
     async def start(self):
@@ -168,22 +155,20 @@ class TokenManager:
 
         token_info = self.tokens[username]
 
-        # Quick check if token is fresh
+        # Quick check if token is fresh enough
         if self._is_token_fresh(token_info):
             return token_info.access_token
 
-        # Need to refresh or validate
+        # Validate or refresh via TokenClient
         success = await self._ensure_token_fresh(token_info)
         return token_info.access_token if success else None
 
     async def force_refresh(self, username: str) -> bool:
-        """Force immediate token refresh for a user"""
         if username not in self.tokens:
             return False
-
         token_info = self.tokens[username]
         async with token_info.refresh_lock:
-            return await self._perform_refresh(token_info)
+            return await self._refresh_via_client(token_info, force=True)
 
     def get_token_info(self, username: str) -> TokenInfo | None:
         """Get token info for monitoring/debugging"""
@@ -207,7 +192,7 @@ class TokenManager:
                     await asyncio.gather(*refresh_tasks, return_exceptions=True)
 
                 # Sleep with jitter before next check
-                base_sleep = 60  # Check every minute
+                base_sleep = TOKEN_MANAGER_BACKGROUND_BASE_SLEEP
                 jitter = _jitter_rng.uniform(0.8, 1.2)
                 await asyncio.sleep(base_sleep * jitter)
 
@@ -235,10 +220,9 @@ class TokenManager:
 
         if time_until_expiry <= 0:
             return TokenState.EXPIRED
-        elif time_until_expiry <= TOKEN_REFRESH_THRESHOLD:
+        if time_until_expiry <= TOKEN_REFRESH_THRESHOLD_SECONDS:
             return TokenState.STALE
-        else:
-            return TokenState.FRESH
+        return TokenState.FRESH
 
     def _is_token_fresh(self, token_info: TokenInfo) -> bool:
         """Quick check if token is fresh enough to use"""
@@ -254,12 +238,8 @@ class TokenManager:
 
     def _should_proactive_refresh(self, token_info: TokenInfo) -> bool:
         """Check if token should be proactively refreshed"""
-        # Don't refresh if already in progress or failed recently
-        if token_info.state in (TokenState.REFRESHING, TokenState.FAILED):
-            return False
-
-        # Don't refresh if in cooldown
-        if time.time() < token_info.cooldown_until:
+        # Don't refresh if already in progress
+        if token_info.state == TokenState.REFRESHING:
             return False
 
         # Refresh if stale or expired
@@ -267,185 +247,81 @@ class TokenManager:
         return current_state in (TokenState.STALE, TokenState.EXPIRED)
 
     async def _ensure_token_fresh(self, token_info: TokenInfo) -> bool:
-        """Ensure token is fresh, refreshing if needed"""
-        # Use lock to prevent duplicate refreshes for same user
         async with token_info.refresh_lock:
-            # Re-check state under lock (another task might have refreshed)
             if self._is_token_fresh(token_info):
                 return True
+            return await self._refresh_via_client(token_info)
 
-            # Try validation first (maybe token is still good)
-            if await self._try_validation(token_info):
-                return True
+    def _get_client(self, token_info: TokenInfo) -> TokenClient:
+        key = (token_info.client_id, token_info.client_secret)
+        client = self._client_cache.get(key)
+        if client is None:
+            client = TokenClient(
+                token_info.client_id, token_info.client_secret, self.http_session
+            )
+            self._client_cache[key] = client
+        return client
 
-            # Need to refresh
-            return await self._perform_refresh(token_info)
-
-    async def _try_validation(self, token_info: TokenInfo) -> bool:
-        """Try validating current token with Twitch API"""
-        # Skip validation if we tried recently
-        if time.time() - token_info.last_validation < 30:
+    async def _refresh_via_client(
+        self, token_info: TokenInfo, force: bool = False
+    ) -> bool:
+        # Skip rapid re-validation
+        if (
+            not force
+            and time.time() - token_info.last_validation
+            < TOKEN_MANAGER_VALIDATION_MIN_INTERVAL
+        ):
             return False
-
+        token_info.last_validation = time.time()
+        client = self._get_client(token_info)
         try:
-            token_info.last_validation = time.time()
-
-            headers = {"Authorization": f"OAuth {token_info.access_token}"}
-            url = "https://id.twitch.tv/oauth2/validate"
-
-            timeout = aiohttp.ClientTimeout(total=VALIDATION_TIMEOUT)
-            async with self.http_session.get(
-                url, headers=headers, timeout=timeout
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    expires_in = data.get("expires_in", 0)
-
-                    # Update expiry from API response
-                    if expires_in > 0:
-                        token_info.expiry = datetime.now() + timedelta(
-                            seconds=expires_in
-                        )
-                        token_info.state = self._determine_token_state(token_info)
-
-                        # Only consider valid if above threshold
-                        if token_info.state == TokenState.FRESH:
-                            # Validated and still above freshness threshold
-                            self.logger.log_event(
-                                "token_manager",
-                                "token_validated",
-                                level=logging.DEBUG,
-                                username=token_info.username,
-                                expires_in=expires_in,
-                            )
-                            return True
-
-                # Token invalid or expires soon
-                return False
-
-        except Exception as e:
-            self.logger.log_event(
-                "token_manager",
-                "loop_error",
-                level=logging.WARNING,
-                error=str(e),
+            token_info.state = TokenState.REFRESHING
+            result = await client.ensure_fresh(
+                token_info.username,
+                token_info.access_token,
+                token_info.refresh_token,
+                token_info.expiry,
+                force_refresh=force,
             )
-            return False
-
-    async def _perform_refresh(self, token_info: TokenInfo) -> bool:
-        """Perform actual token refresh"""
-        if token_info.state == TokenState.REFRESHING:
-            return False  # Already refreshing
-
-        # Check if we should delay due to recent failures
-        if time.time() < token_info.cooldown_until:
-            self.logger.log_event(
-                "token_manager",
-                "refresh_in_cooldown",
-                level=logging.DEBUG,
-                username=token_info.username,
-            )
-            return False
-
-        token_info.state = TokenState.REFRESHING
-        token_info.refresh_attempts += 1
-        token_info.last_refresh_attempt = time.time()
-
-        try:
-            self.logger.log_event(
-                "token_manager",
-                "refresh_start",
-                attempt=token_info.refresh_attempts,
-                username=token_info.username,
-            )
-
-            # Refresh API call
-            new_access, new_refresh, expires_in = await self._call_refresh_api(
-                token_info
-            )
-
-            if new_access:
-                # Success - update token info
-                token_info.access_token = new_access
-                if new_refresh:
-                    token_info.refresh_token = new_refresh
-
-                if expires_in:
-                    # Apply safety buffer
-                    safe_expires_in = max(expires_in - TOKEN_SAFETY_BUFFER, 0)
-                    token_info.expiry = datetime.now() + timedelta(
-                        seconds=safe_expires_in
+            if result.outcome in (TokenOutcome.VALID, TokenOutcome.REFRESHED):
+                if result.access_token:
+                    token_info.access_token = result.access_token
+                if result.refresh_token:
+                    token_info.refresh_token = result.refresh_token
+                token_info.expiry = result.expiry
+                token_info.state = self._determine_token_state(token_info)
+                if result.outcome == TokenOutcome.REFRESHED:
+                    self.logger.log_event(
+                        "token_manager", "refresh_success", username=token_info.username
                     )
-
-                # Reset failure tracking
-                token_info.state = TokenState.FRESH
-                token_info.refresh_attempts = 0
-                token_info.consecutive_failures = 0
-                token_info.cooldown_until = 0
-
-                self.logger.log_event(
-                    "token_manager", "refresh_success", username=token_info.username
-                )
                 return True
-            else:
-                raise TokenRefreshError("Refresh API returned no token")
-
-        except Exception as e:
+            # Failed path -> mark stale or expired so loop can retry
+            token_info.state = self._determine_token_state(token_info)
+            if token_info.state == TokenState.FRESH:
+                # If still reported fresh but outcome failed, degrade to STALE to force retry
+                token_info.state = TokenState.STALE
             self.logger.log_event(
                 "token_manager",
                 "refresh_failed",
-                level=logging.ERROR,
+                level=20,
                 username=token_info.username,
-                error=str(e),
             )
-
-            # Handle failure
-            token_info.consecutive_failures += 1
-            token_info.state = TokenState.FAILED
-
-            # Calculate cooldown with exponential backoff + jitter
-            backoff_delay = min(
-                BASE_RETRY_DELAY * (2**token_info.consecutive_failures), MAX_RETRY_DELAY
-            )
-            jitter = _jitter_rng.uniform(0.5, 1.5)
-            cooldown = backoff_delay * jitter
-            token_info.cooldown_until = time.time() + cooldown
-
+            return False
+        except Exception as e:  # noqa: BLE001
+            token_info.state = self._determine_token_state(token_info)
+            if token_info.state == TokenState.FRESH:
+                token_info.state = TokenState.STALE
             self.logger.log_event(
                 "token_manager",
-                "refresh_cooldown",
-                level=logging.WARNING,
+                "refresh_failed",
+                level=40,
                 username=token_info.username,
-                cooldown=round(cooldown, 1),
+                error=str(e),
+                error_type=type(e).__name__,
             )
-
             return False
 
-    async def _call_refresh_api(
-        self, token_info: TokenInfo
-    ) -> tuple[str | None, str | None, int | None]:
-        """Call Twitch refresh token API"""
-        data = {
-            "grant_type": "refresh_token",
-            "refresh_token": token_info.refresh_token,
-            "client_id": token_info.client_id,
-            "client_secret": token_info.client_secret,
-        }
-
-        url = "https://id.twitch.tv/oauth2/token"
-        timeout = aiohttp.ClientTimeout(total=VALIDATION_TIMEOUT)
-
-        async with self.http_session.post(url, data=data, timeout=timeout) as response:
-            if response.status == 200:
-                result = await response.json()
-                return (
-                    result.get("access_token"),
-                    result.get("refresh_token"),
-                    result.get("expires_in"),
-                )
-            else:
-                error_text = await response.text()
-                raise TokenRefreshError(f"HTTP {response.status}: {error_text}")
+    # Removed direct _call_refresh_api; TokenClient handles network operations
 
 
 # Global instance management
