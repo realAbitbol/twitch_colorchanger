@@ -8,16 +8,16 @@ import logging
 import os
 import sys
 
-from .bot_manager import run_bots
-from .config import (
+from bot.manager import run_bots
+from config import (
     get_configuration,
     normalize_user_channels,
     print_config_summary,
     setup_missing_tokens,
 )
-from .error_handling import log_error
-from .logger import logger
-from .utils import emit_startup_instructions
+from errors.handling import log_error
+from project_logging.logger import logger
+from utils import emit_startup_instructions
 
 
 async def main():
