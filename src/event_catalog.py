@@ -253,6 +253,24 @@ EVENT_TEMPLATES: dict[tuple[str, str], str] = {
         "config",
         "disable_random_colors_failed",
     ): "Failed to disable random colors for {username}",
+    (
+        "config",
+        "save_operation_start",
+    ): "Save operation start user_count={user_count} file={config_file}",
+    (
+        "config",
+        "save_user_detail",
+    ): "Saving user index={index} username={username} prime_or_turbo={is_prime_or_turbo}",
+    ("config", "save_json_preview"): "Save JSON preview length={length}",
+    ("config", "save_verification"): "Verification read user_count={user_count}",
+    (
+        "config",
+        "save_verification_user",
+    ): "Verified user index={index} username={username} prime_or_turbo={is_prime_or_turbo}",
+    (
+        "config",
+        "added_missing_is_prime_or_turbo",
+    ): "Added missing is_prime_or_turbo for {username} value={value}",
     ("config", "no_config_file"): "No configuration file found",
     (
         "config",
@@ -502,6 +520,14 @@ EVENT_TEMPLATES: dict[tuple[str, str], str] = {
         "token_manager",
         "refresh_start",
     ): "Refreshing token attempt={attempt} username={username}",
+    (
+        "token_manager",
+        "user_registered",
+    ): "Registered user state={state} username={username}",
+    (
+        "token_manager",
+        "refresh_in_cooldown",
+    ): "Token refresh in cooldown username={username}",
     (
         "token_manager",
         "refresh_success",
