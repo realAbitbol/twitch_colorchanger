@@ -64,9 +64,7 @@ CONNECTION_RETRY_TIMEOUT = _get_env_int(
 RELOAD_WATCH_DELAY = _get_env_float(
     "RELOAD_WATCH_DELAY", 2.0
 )  # Delay after config reload before resuming watch
-CONFIG_SAVE_TIMEOUT = _get_env_float(
-    "CONFIG_SAVE_TIMEOUT", 10.0
-)  # Max time to wait for config save completion
+## Removed unused CONFIG_SAVE_TIMEOUT (async save no longer blocks)  # noqa: ERA001
 
 # File operations
 CONFIG_WRITE_DEBOUNCE = _get_env_float(

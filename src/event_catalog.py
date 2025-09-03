@@ -238,6 +238,18 @@ EVENT_TEMPLATES: dict[tuple[str, str], str] = {
     ("irc", "privmsg_parse_failed"): "Failed to parse PRIVMSG parameters",
     # Startup guidance
     ("startup", "instructions_header"): "Startup instructions emitted",
+    # Application context lifecycle
+    ("context", "creating"): "Creating application context",
+    ("context", "session_created"): "HTTP session created",
+    ("context", "start"): "Application context started",
+    ("context", "rate_limiter_created"): "Rate limiter created",
+    ("context", "shutdown_begin"): "Application context shutdown initiated",
+    ("context", "token_manager_stop_error"): "Error stopping token manager: {error}",
+    ("context", "session_close_error"): "Error closing HTTP session: {error}",
+    ("context", "shutdown"): "Application context shutdown complete",
+    # App-level context shutdown wrapping (main)
+    ("app", "context_shutdown_begin"): "App initiating context shutdown",
+    ("app", "context_shutdown_complete"): "App completed context shutdown",
     ("startup", "instructions_setup_step"): "Setup step {step}: {text}",
     ("startup", "instructions_auto_section"): "Automatic configuration section",
     ("startup", "instructions_manual_section"): "Manual configuration section",
@@ -467,6 +479,10 @@ EVENT_TEMPLATES: dict[tuple[str, str], str] = {
         "retry",
         "attempt",
     ): "Retry attempt {attempt}/{max_retries} in {wait_time}s user={user}: {error}",
+    (
+        "retry",
+        "give_up",
+    ): "Retry give-up after {attempt}/{max_attempts} attempts user={user}: {error_type} {error}",
     ("error", "logged"): "Error: {message} user={user} details={error}",
     # Token additional (legacy direct warn converted)
     (
@@ -640,6 +656,10 @@ EVENT_TEMPLATES: dict[tuple[str, str], str] = {
         "bot",
         "color_change_status_failed",
     ): "Failed to change color status={status_code} user={user}",
+    (
+        "bot",
+        "color_change_internal_error",
+    ): "Internal error changing color (non-HTTP) user={user}",
     ("bot", "rate_limited_color_change"): "Rate limited retry soon user={user}",
     (
         "bot",
@@ -686,6 +706,10 @@ EVENT_TEMPLATES: dict[tuple[str, str], str] = {
         "bot",
         "preset_color_failed_status",
     ): "Failed preset color status={status_code} user={user}",
+    (
+        "bot",
+        "preset_color_internal_error",
+    ): "Internal error preset color change (non-HTTP) user={user}",
     ("bot", "preset_color_error"): "Error preset color fallback user={user}: {error}",
     ("bot", "color_changed"): "Color changed to {color} user={user}",
     ("bot", "closing_for_user"): "Closing bot user={user}",

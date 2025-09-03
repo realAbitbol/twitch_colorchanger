@@ -6,7 +6,6 @@ import asyncio
 import logging
 import os
 import threading
-import time
 from collections.abc import Callable
 
 from watchdog.events import FileSystemEventHandler
@@ -30,33 +29,7 @@ class ConfigFileHandler(FileSystemEventHandler):
         self.watcher = watcher_instance
         self.last_modified = 0
 
-    def on_modified(self, event):
-        """Handle file modification events"""
-        if event.is_directory:
-            return
-
-        # Check if it's our config file
-        if os.path.abspath(event.src_path) == self.config_file:
-            # Check if watcher is paused (bot-initiated change)
-            with self.watcher._pause_lock:
-                if self.watcher.paused:
-                    logger.log_event(
-                        "config_watch", "change_ignored", level=logging.DEBUG
-                    )
-                    return
-
-            # Debounce rapid fire events (some editors trigger multiple events)
-            current_time = time.time()
-            if current_time - self.last_modified < 1.0:  # 1 second debounce
-                return
-            self.last_modified = current_time
-
-            logger.log_event("config_watch", "file_changed", path=event.src_path)
-
-            # Run callback in a thread to avoid blocking the file watcher
-            threading.Thread(
-                target=self.watcher._on_config_changed, daemon=True
-            ).start()
+    # Removed on_modified handler (unused).  # noqa: ERA001
 
 
 class ConfigWatcher:
@@ -77,14 +50,22 @@ class ConfigWatcher:
             logger.log_event("config_watch", "paused", level=logging.DEBUG)
 
     def resume_watching(self):
-        """Resume watching after bot-initiated changes"""
-        with self._pause_lock:
-            # Add a small delay before resuming to avoid race conditions
-            import time
+        """Resume watching after bot-initiated changes (non-blocking)."""
 
-            time.sleep(RELOAD_WATCH_DELAY)
-            self.paused = False
-            logger.log_event("config_watch", "resumed", level=logging.DEBUG)
+        def _unpause():  # runs in thread after delay
+            with self._pause_lock:
+                self.paused = False
+                logger.log_event("config_watch", "resumed", level=logging.DEBUG)
+
+        # Use a timer thread instead of blocking sleep
+        import threading
+        import time as _time
+
+        def _delay_then_unpause():
+            _time.sleep(RELOAD_WATCH_DELAY)
+            _unpause()
+
+        threading.Thread(target=_delay_then_unpause, daemon=True).start()
 
     def start(self):
         """Start watching the config file"""
@@ -186,8 +167,4 @@ async def create_config_watcher(
     return watcher
 
 
-def start_config_watcher(config_file: str, restart_callback: Callable) -> ConfigWatcher:
-    """Create and start a config file watcher (synchronous version for testing)"""
-    watcher = ConfigWatcher(config_file, restart_callback)
-    watcher.start()
-    return watcher
+## Removed legacy start_config_watcher (async factory create_config_watcher used)  # noqa: ERA001
