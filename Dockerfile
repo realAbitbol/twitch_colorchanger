@@ -7,9 +7,10 @@ LABEL org.opencontainers.image.title="twitch-colorchanger" \
       org.opencontainers.image.source="https://github.com/realAbitbol/twitch_colorchanger" \
       maintainer="Twitch ColorChanger Bot"
 
-# Create non-root user (explicit IDs for reproducibility)
+# Create non-root user (explicit IDs for reproducibility) and install tini as minimal init
 RUN addgroup -g 1000 -S appgroup \
- && adduser -u 1000 -S appuser -G appgroup
+ && adduser -u 1000 -S appuser -G appgroup \
+ && apk add --no-cache tini
 
 WORKDIR /app
 
@@ -46,5 +47,6 @@ VOLUME ["/app/config"]
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD python -m src.main --health-check || exit 1
 
-# Default command
+# Use tini as PID 1 to handle signals & reap zombies (safer long-running operation)
+ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["python", "-m", "src.main"]
