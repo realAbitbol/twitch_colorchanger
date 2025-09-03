@@ -121,8 +121,12 @@ class BotLogger:
 
     @staticmethod
     def _build_prefix(user: str | None, channel: str | None) -> str:
+        # Build raw label then pad to fixed width for alignment
         user_label = user or "system"
-        return f"[{user_label}#{channel}]" if channel else f"[{user_label}]"
+        core = f"{user_label}#{channel}" if channel else user_label
+        # Choose a width that fits typical 'username#channel' combos
+        padded = core.ljust(24)[:24]
+        return f"[{padded}]"
 
     @staticmethod
     def _build_debug_message(
