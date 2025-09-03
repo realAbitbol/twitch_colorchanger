@@ -639,6 +639,16 @@ EVENT_TEMPLATES: dict[tuple[str, str], str] = {
         "bot",
         "normalized_channels_save_failed",
     ): "Failed to save normalized channels user={user}: {error}",
+    ("bot", "auto_color_disabled"): "Automatic color change disabled user={user}",
+    ("bot", "auto_color_enabled"): "Automatic color change enabled user={user}",
+    (
+        "bot",
+        "persist_disable_failed",
+    ): "Failed to persist disable flag user={user}: {error}",
+    (
+        "bot",
+        "persist_enable_failed",
+    ): "Failed to persist enable flag user={user}: {error}",
     ("bot", "color_change_timeout"): "Color change timeout user={user}",
     (
         "bot",
