@@ -23,6 +23,7 @@ The Twitch Color Changer Bot automatically changes a user's Twitch chat color af
 11. **Channel Deduplication**: Automatically removes duplicate channels and persists clean configuration
 12. **Connection Health Monitoring**: 600-second ping intervals with 300-second activity timeouts
 13. **Visible Connection Status**: Real-time ping/pong logging for transparency
+14. **Per-User Runtime Toggle**: Enable or disable automatic color changes at runtime via chat commands (`ccd` / `cce`) with persisted state
 
 ### Color Change Flow
 
@@ -40,6 +41,23 @@ Statistics updated
 - **Visible Status**: Real-time ping/pong messages with username identification
 - **Channel Join Management**: 30-second timeouts with retry logic (max 2 attempts)
 - **Multi-Channel Support**: Joins multiple channels with confirmation tracking
+
+### Runtime Chat Commands
+
+Provides in-chat, per-user control of the automatic color cycling feature. Commands are only acted upon when sent by the bot's own authenticated user (messages from other users are ignored).
+
+| Command | Effect |
+|---------|--------|
+| `ccd`   | Disable automatic color changes for that user (writes `"enabled": false` to config) |
+| `cce`   | Enable automatic color changes for that user (writes `"enabled": true` to config)  |
+
+Behavior Characteristics:
+
+- State persists across restarts (stored in configuration file)
+- Default is enabled (`true`) if the field is absent (backwards compatible)
+- Disabling suppresses outbound Twitch color API calls but keeps IRC connection, statistics, and token tasks active
+- Changes are logged through structured events (`auto_color_disabled`, `auto_color_enabled`)
+- Commands never affect other configured users
 
 ## Token Lifecycle Management
 
@@ -98,12 +116,26 @@ Bot polls for completion → Receives tokens → Saves to config → Continues s
       "refresh_token": "refresh_token",
       "client_id": "twitch_client_id",
       "client_secret": "client_secret",
-      "channels": ["channel1", "channel2"],
-      "is_prime_or_turbo": true
+  "channels": ["channel1", "channel2"],
+  "is_prime_or_turbo": true,
+  "enabled": true
     }
   ]
 }
 ```
+
+#### Enabled Flag (`enabled`)
+
+Optional per-user boolean controlling whether automatic color changes are performed.
+
+Key points:
+
+- If omitted, defaults to `true` (maintains behavior for legacy configs)
+- When set to `false`, the bot still connects, watches IRC, refreshes tokens, and gathers statistics but skips color change requests
+- Modified at runtime by chat commands `ccd` (disable) and `cce` (enable)
+- Persisted immediately (asynchronously) to configuration upon change to survive restarts
+
+Use cases: temporarily pause during events, testing sessions, reducing API usage, or diagnosing issues without removing the user entry.
 
 ### Environment Variable Support
 
