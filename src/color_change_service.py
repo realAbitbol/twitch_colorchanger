@@ -201,7 +201,7 @@ class ColorChangeService:
         return get_random_preset(exclude=self.bot.last_color)
 
     def _record_success(self, color: str, is_preset: bool) -> None:
-        self.bot.colors_changed += 1
+        self.bot.increment_colors_changed()
         self.bot.last_color = color
         logger.log_event(
             "bot",
