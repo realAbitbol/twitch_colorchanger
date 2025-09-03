@@ -14,8 +14,8 @@ from dataclasses import dataclass
 from random import SystemRandom
 from typing import TypeVar
 
-from errors.internal import InternalError
-from logs.logger import logger
+from ..errors.internal import InternalError
+from ..logs.logger import logger
 
 _rand = SystemRandom()
 

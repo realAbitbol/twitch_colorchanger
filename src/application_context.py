@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import time
-from token.manager import TokenManager
 
 import aiohttp
 
-from logs.logger import logger
-from rate.rate_limiter import TwitchRateLimiter
+from .logs.logger import logger
+from .rate.rate_limiter import TwitchRateLimiter
+from .token.manager import TokenManager
+
+# Global reference for emergency cleanup if normal shutdown is interrupted
+GLOBAL_CONTEXT: ApplicationContext | None = None
 
 
 class ApplicationContext:
@@ -54,6 +58,9 @@ class ApplicationContext:
         ctx._session_birth = time.time()
         logger.log_event("context", "session_created")
         ctx.token_manager = TokenManager(ctx.session)
+        # Register globally for atexit fallback
+        global GLOBAL_CONTEXT  # noqa: PLW0603
+        GLOBAL_CONTEXT = ctx
         return ctx
 
     # --------------------------- Lifecycle -------------------------- #
@@ -87,15 +94,7 @@ class ApplicationContext:
                         error=str(e),
                     )
                 self._maintenance_task = None
-            if self.session:
-                try:
-                    await self.session.close()
-                except Exception as e:  # noqa: BLE001
-                    logger.log_event(
-                        "context", "session_close_error", level=40, error=str(e)
-                    )
-                finally:
-                    self.session = None
+            # Stop token manager FIRST so no background task uses session during close
             if self.token_manager:
                 try:
                     await self.token_manager.stop()
@@ -116,10 +115,24 @@ class ApplicationContext:
                         )
                 finally:
                     self.token_manager = None
+            # Now close shared HTTP session
+            if self.session:
+                try:
+                    await self.session.close()
+                except Exception as e:  # noqa: BLE001
+                    logger.log_event(
+                        "context", "session_close_error", level=40, error=str(e)
+                    )
+                finally:
+                    self.session = None
             self._rate_limiters.clear()
             self._started = False
             self._tasks.clear()
             logger.log_event("context", "shutdown")
+            # After clean shutdown remove global reference so atexit won't re-run
+            global GLOBAL_CONTEXT  # noqa: PLW0603
+            if GLOBAL_CONTEXT is self:
+                GLOBAL_CONTEXT = None
 
     # ------------------------- Rate Limiting ------------------------ #
     def get_rate_limiter(
@@ -214,3 +227,36 @@ class ApplicationContext:
                     )
         if stale:
             self.incr("stale_rate_buckets", stale)
+
+
+# -------------------- Atexit Fallback (best-effort) -------------------- #
+def _atexit_close():  # pragma: no cover - process teardown path
+    ctx = GLOBAL_CONTEXT
+    if not ctx:
+        return
+    session = ctx.session
+    if session and not session.closed:
+        try:
+            # Create a temporary loop just to close the session cleanly
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(session.close())
+            finally:
+                loop.close()
+            logger.log_event("context", "session_closed_atexit")
+        except Exception as e:  # noqa: BLE001
+            # Best effort logging; avoid nested silent pass
+            msg = str(e)
+            try:
+                logger.log_event("context", "session_atexit_error", level=30, error=msg)
+            except Exception:
+                # Fallback minimal stderr write (no pass-only block)
+                try:
+                    import sys as _sys
+
+                    _sys.stderr.write(f"[atexit] session close error: {msg}\n")
+                except Exception:
+                    ...  # pragma: no cover
+
+
+atexit.register(_atexit_close)

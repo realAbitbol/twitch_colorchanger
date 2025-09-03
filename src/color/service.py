@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from logs.logger import logger
-from rate.retry_policies import COLOR_CHANGE_RETRY, run_with_retry
-
+from ..logs.logger import logger
+from ..rate.retry_policies import COLOR_CHANGE_RETRY, run_with_retry
 from .models import ColorRequestResult, ColorRequestStatus
 from .utils import TWITCH_PRESET_COLORS, get_random_hex, get_random_preset
 
@@ -171,6 +170,20 @@ class ColorChangeService:
         status_code: int,
         fallback_to_preset: bool,
     ) -> bool:
+        # Defensive guard: if a success (2xx/204) status bubbles here due to
+        # any upstream classification inconsistency, treat it as success
+        # instead of emitting a false failure event (observed 204 case).
+        if 200 <= status_code < 300:
+            logger.log_event(
+                "bot",
+                "color_success_late_classification"
+                if not is_preset
+                else "preset_color_success_late_classification",
+                level=30,
+                user=self.bot.username,
+                status_code=status_code,
+            )
+            return self._on_success(self.bot.last_color or "", is_preset)  # type: ignore[arg-type]
         logger.log_event(
             "bot",
             "color_change_status_failed"

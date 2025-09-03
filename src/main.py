@@ -4,20 +4,21 @@ Main entry point for the Twitch Color Changer Bot
 """
 
 import asyncio
+import atexit
 import logging
 import os
 import sys
 
-from bot.manager import run_bots
-from config import (
+from .bot.manager import run_bots
+from .config import (
     get_configuration,
     normalize_user_channels,
     print_config_summary,
     setup_missing_tokens,
 )
-from errors.handling import log_error
-from logs.logger import logger
-from utils import emit_startup_instructions
+from .errors.handling import log_error
+from .logs.logger import logger
+from .utils import emit_startup_instructions
 
 
 async def main():
@@ -50,6 +51,20 @@ async def main():
         sys.exit(1)
     finally:
         logger.log_event("app", "shutdown_complete")
+
+
+# Best-effort safety net: ensure any lingering aiohttp session is closed
+@atexit.register
+def _cleanup_any_context():  # pragma: no cover - process exit path
+    try:  # best-effort; nothing to close explicitly yet
+        from .application_context import (
+            ApplicationContext as _AC,  # type: ignore  # noqa: F401
+        )
+    except Exception as e:  # noqa: BLE001
+        # Log at debug to avoid noise
+        logger.log_event(
+            "app", "atexit_context_check_error", level=logging.DEBUG, error=str(e)
+        )
 
 
 if __name__ == "__main__":

@@ -11,14 +11,13 @@ from typing import Any
 
 import aiohttp
 
-from application_context import ApplicationContext
-from config.globals import set_global_watcher
-from config.watcher import create_config_watcher
-from constants import HEALTH_MONITOR_INTERVAL, TASK_WATCHDOG_INTERVAL
-from logs.logger import logger
-from manager import HealthMonitor, ManagerStatistics
-from manager.task_watchdog import TaskWatchdog
-
+from ..application_context import ApplicationContext
+from ..config.globals import set_global_watcher
+from ..config.watcher import create_config_watcher
+from ..constants import HEALTH_MONITOR_INTERVAL, TASK_WATCHDOG_INTERVAL
+from ..logs.logger import logger
+from ..manager import HealthMonitor, ManagerStatistics
+from ..manager.task_watchdog import TaskWatchdog
 from .core import TwitchColorBot
 
 _jitter_rng = SystemRandom()
@@ -277,11 +276,14 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
 
     def setup_signal_handlers(self):  # pragma: no cover
         def handler(signum, _frame):  # noqa: D401
+            # Idempotent signal handler: only trigger once
+            if self.shutdown_initiated:
+                return
             logger.log_event(
                 "manager", "signal_shutdown", level=logging.WARNING, signal=signum
             )
             self.shutdown_initiated = True
-            _ = asyncio.create_task(self._stop_all_bots())
+            # We don't directly stop bots here; main loop will detect flag and perform orderly shutdown
 
         signal.signal(signal.SIGINT, handler)
         signal.signal(signal.SIGTERM, handler)
@@ -346,7 +348,7 @@ def _cleanup_watcher(watcher):  # pragma: no cover
 
 
 async def run_bots(users_config: list[dict[str, Any]], config_file: str | None = None):
-    from application_context import ApplicationContext  # local import
+    from ..application_context import ApplicationContext  # local import
 
     context = await ApplicationContext.create()
     await context.start()
@@ -366,11 +368,13 @@ async def run_bots(users_config: list[dict[str, Any]], config_file: str | None =
     finally:
         _cleanup_watcher(watcher)
         await manager._stop_all_bots()
-        from logs.logger import logger as _logger  # local to avoid cycles
+        from ..logs.logger import logger as _logger  # local to avoid cycles
 
         _logger.log_event("app", "context_shutdown_begin")
+        import asyncio as _asyncio
+
         try:
-            await context.shutdown()
+            await _asyncio.shield(context.shutdown())
         except Exception as e:  # noqa: BLE001
             if isinstance(e, asyncio.CancelledError):
                 _logger.log_event(

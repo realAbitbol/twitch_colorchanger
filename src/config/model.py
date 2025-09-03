@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from logs.logger import logger
+from ..logs.logger import logger
 
 
 def _normalize_channels(channels: list[str] | Any) -> tuple[list[str], bool]:

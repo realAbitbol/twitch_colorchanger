@@ -6,7 +6,7 @@ to avoid a name collision (module vs package) introduced during refactor.
 
 from __future__ import annotations
 
-from logs.logger import logger
+from ..logs.logger import logger
 
 __all__ = ["format_duration", "emit_startup_instructions"]
 

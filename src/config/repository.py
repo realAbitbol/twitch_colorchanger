@@ -13,9 +13,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from constants import CONFIG_WRITE_DEBOUNCE
-from logs.logger import logger
-
+from ..constants import CONFIG_WRITE_DEBOUNCE
+from ..logs.logger import logger
 from . import globals as watcher_globals  # type: ignore
 
 

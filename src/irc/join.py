@@ -7,8 +7,8 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from constants import ASYNC_IRC_JOIN_TIMEOUT
-from logs.logger import logger
+from ..constants import ASYNC_IRC_JOIN_TIMEOUT
+from ..logs.logger import logger
 
 if TYPE_CHECKING:  # pragma: no cover
     from .async_irc import AsyncTwitchIRC

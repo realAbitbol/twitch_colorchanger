@@ -6,7 +6,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from logs.logger import logger
+from ..logs.logger import logger
 
 if TYPE_CHECKING:  # pragma: no cover
     from .async_irc import AsyncTwitchIRC

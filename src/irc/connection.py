@@ -8,7 +8,7 @@ import time
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 
-from constants import (
+from ..constants import (
     ASYNC_IRC_RECONNECT_TIMEOUT,
     BACKOFF_BASE_DELAY,
     BACKOFF_JITTER_FACTOR,
@@ -16,7 +16,7 @@ from constants import (
     BACKOFF_MULTIPLIER,
     RECONNECT_DELAY,
 )
-from logs.logger import logger
+from ..logs.logger import logger
 
 if TYPE_CHECKING:  # pragma: no cover
     from .async_irc import AsyncTwitchIRC
