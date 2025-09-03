@@ -113,3 +113,19 @@ NETWORK_PARTITION_THRESHOLD = _get_env_int(
 PARTIAL_CONNECTIVITY_THRESHOLD = _get_env_int(
     "PARTIAL_CONNECTIVITY_THRESHOLD", 180
 )  # 3 minutes for partial connectivity detection
+
+# Token expiry & refresh thresholds (unify scattered literals: 3600s & 300s)
+TOKEN_REFRESH_THRESHOLD_SECONDS = _get_env_int(
+    "TOKEN_REFRESH_THRESHOLD_SECONDS", 3600
+)  # Refresh when <= this many seconds remain (1h default)
+TOKEN_REFRESH_SAFETY_BUFFER_SECONDS = _get_env_int(
+    "TOKEN_REFRESH_SAFETY_BUFFER_SECONDS", 300
+)  # Subtracted from expires_in to schedule earlier refresh
+
+# Token manager scheduling/validation intervals
+TOKEN_MANAGER_VALIDATION_MIN_INTERVAL = _get_env_int(
+    "TOKEN_MANAGER_VALIDATION_MIN_INTERVAL", 30
+)  # Minimum seconds between per-user validation attempts
+TOKEN_MANAGER_BACKGROUND_BASE_SLEEP = _get_env_int(
+    "TOKEN_MANAGER_BACKGROUND_BASE_SLEEP", 60
+)  # Base seconds between proactive refresh loop iterations

@@ -2,336 +2,123 @@
 Configuration management for the Twitch Color Changer bot
 """
 
-import fcntl
-import json
 import logging
 import os
 import sys
-import tempfile
 import time
-from pathlib import Path
+from datetime import datetime
 
-from . import (
-    token_validator,  # Standalone validator module (no circular import)
-    watcher_globals,  # Always available within package
-)
-from .config_validator import get_valid_users
-from .config_validator import validate_user_config as validate_user
+import aiohttp
+
+from .config_repository import ConfigRepository
 from .constants import CONFIG_WRITE_DEBOUNCE
 from .device_flow import DeviceCodeFlow
 from .logger import logger
-
-# Legacy print_log removed after migration; structured logger used throughout
-
-# Constants for repeated messages
+from .token_client import TokenClient, TokenOutcome
+from .user_config_model import UserConfig, normalize_user_list
 
 
 def load_users_from_config(config_file):
-    """Load users from config file"""
-    try:
-        with open(config_file, encoding="utf-8") as f:
-            data = json.load(f)
-            # Support both new multi-user format and legacy single-user format
-            if isinstance(data, dict) and "users" in data:
-                return data["users"]
-            if isinstance(data, list):
-                return data
-            if isinstance(data, dict) and "username" in data:
-                # Legacy single-user format, convert to multi-user
-                return [data]
-            return []
-    except FileNotFoundError:
-        return []
-    except Exception as e:
-        logger.log_event(
-            "config",
-            "load_error",
-            level=logging.ERROR,
-            error=str(e),
-            error_type=type(e).__name__,
-        )
-        return []
+    repo = ConfigRepository(config_file)
+    return repo.load_raw()
 
 
-def _setup_config_directory(config_file):
-    """Set up config directory with proper permissions"""
-    config_dir = os.path.dirname(config_file)
-    if config_dir and not os.path.exists(config_dir):
-        os.makedirs(config_dir, exist_ok=True)
-        # Try to set directory permissions if possible
-        try:
-            # Using 755 for cross-platform readability; not sensitive content
-            # stored here. # nosec B103
-            os.chmod(config_dir, 0o755)  # nosec B103
-        except PermissionError:
-            pass  # Ignore permission errors on directories
-
-
-def _fix_docker_ownership(config_dir, config_file):
-    """Fix ownership for Docker environments running as non-root"""
-    if os.path.exists(config_dir) and os.geteuid() != 0:
-        try:
-            # Try to change ownership of the config directory to current user
-            current_uid = os.getuid()
-            current_gid = os.getgid()
-            os.chown(config_dir, current_uid, current_gid)
-            # Also try to change ownership of existing config file
-            if os.path.exists(config_file):
-                os.chown(config_file, current_uid, current_gid)
-        except OSError:
-            pass  # Ignore if we can't change ownership (e.g., no permission)
-
-
-def _set_file_permissions(config_file):
-    """Set appropriate file permissions"""
-    if os.path.exists(config_file):
-        try:
-            os.chmod(config_file, 0o644)
-        except PermissionError:
-            pass  # Ignore permission errors on existing files
-
-
-def _log_save_operation(users, config_file):
-    """Log the save operation details (debug level)."""
-    logger.log_event(
-        "config",
-        "save_operation_start",
-        level=logging.DEBUG,
-        user_count=len(users),
-        config_file=config_file,
-    )
-    for i, user in enumerate(users, 1):
-        logger.log_event(
-            "config",
-            "save_user_detail",
-            level=logging.DEBUG,
-            index=i,
-            username=user.get("username"),
-            is_prime_or_turbo=user.get("is_prime_or_turbo", "MISSING_FIELD"),
-        )
-
-
-def _log_debug_data(save_data):
-    """Log debug information about the data being saved."""
-    preview = json.dumps(save_data, separators=(",", ":"))
-    if len(preview) > 500:
-        preview = preview[:497] + "..."
-    logger.log_event(
-        "config",
-        "save_json_preview",
-        level=logging.DEBUG,
-        length=len(preview),
-        data=preview,
-    )
-
-
-def _verify_saved_data(config_file):
-    """Verify that the data was saved correctly (debug events)."""
-    try:
-        with open(config_file, encoding="utf-8") as f:
-            verification_data = json.load(f)
-        users_list = verification_data.get("users", [])
-        logger.log_event(
-            "config",
-            "save_verification",
-            level=logging.DEBUG,
-            user_count=len(users_list),
-        )
-        for i, user in enumerate(users_list, 1):
-            logger.log_event(
-                "config",
-                "save_verification_user",
-                level=logging.DEBUG,
-                index=i,
-                username=user.get("username", "NO_USERNAME"),
-                is_prime_or_turbo=user.get("is_prime_or_turbo", "MISSING_FIELD"),
-            )
-    except Exception as verify_error:
-        logger.log_event(
-            "config",
-            "save_atomic_failed",
-            level=logging.ERROR,
-            error_type=type(verify_error).__name__,
-            error=str(verify_error),
-        )
+########################
+# Removed legacy helpers (#setup, #ownership, #permissions, #log_* verification).
+# Functionality replaced by ConfigRepository & structured events elsewhere.
+########################
 
 
 def save_users_to_config(users, config_file):
-    """Save users to config file"""
+    # Normalize channel lists & usernames
+    normalized_users, changed = normalize_user_list(users)
+    repo = ConfigRepository(config_file)
+    wrote = repo.save_users(normalized_users)
+    if wrote:
+        repo.verify_readback()
+    else:
+        if changed:
+            # Normalization changed data but checksum prevented write - force write
+            # because original order differences may have produced same checksum
+            repo._last_checksum = None  # reset checksum
+            repo.save_users(normalized_users)
+            repo.verify_readback()
+    time.sleep(CONFIG_WRITE_DEBOUNCE)
+
+
+def update_user_in_config(user_config_dict, config_file):
+    """Update or insert a user's configuration using the UserConfig model.
+
+    1. Build UserConfig from incoming dict
+    2. Normalize (username + channels)
+    3. Basic validate (structure only)
+    4. Merge with existing if present, else append
+    5. Persist via repository (with checksum skip)
+    """
     try:
-        # Pause watcher during bot-initiated changes
-        try:
-            watcher_globals.pause_config_watcher()
-        except Exception:  # nosec B110
-            pass  # Watcher not initialized - expected in some contexts
+        uc = UserConfig.from_dict(user_config_dict)
+        changed = uc.normalize()
+        if not uc.validate():
+            return _log_update_invalid(uc)
 
-        # Ensure all users have is_prime_or_turbo field before saving
-        for user in users:
-            if "is_prime_or_turbo" not in user:
-                user["is_prime_or_turbo"] = True  # Default value
-                logger.log_event(
-                    "config",
-                    "added_missing_is_prime_or_turbo",
-                    level=logging.DEBUG,
-                    username=user.get("username", "Unknown"),
-                    value=user["is_prime_or_turbo"],
-                )
-
-        # Set up directory and permissions
-        _setup_config_directory(config_file)
-        config_dir = os.path.dirname(config_file)
-        _fix_docker_ownership(config_dir, config_file)
-        _set_file_permissions(config_file)
-
-        # Log operation
-        _log_save_operation(users, config_file)
-
-        # Prepare and save data
-        save_data = {"users": users}
-        _log_debug_data(save_data)
-
-        # ATOMIC SAVE WITH FILE LOCKING
-        config_path = Path(config_file)
-        lock_file = None
-        temp_path = None
-
-        try:
-            # 1. Create lock file for cross-process coordination
-            lock_file_path = config_path.with_suffix(".lock")
-            with open(lock_file_path, "w", encoding="utf-8") as lock_file:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)  # Exclusive lock
-
-                # 2. Write to temporary file in same directory (ensures atomic rename)
-                with tempfile.NamedTemporaryFile(
-                    mode="w",
-                    dir=config_path.parent,
-                    prefix=f".{config_path.name}.",
-                    suffix=".tmp",
-                    delete=False,
-                    encoding="utf-8",
-                ) as temp_file:
-                    json.dump(save_data, temp_file, indent=2)
-                    temp_file.flush()
-                    os.fsync(temp_file.fileno())  # Force write to disk
-                    temp_path = temp_file.name
-
-                # 3. Set secure permissions
-                os.chmod(temp_path, 0o600)
-
-                # 4. Atomic rename (the critical moment)
-                os.rename(temp_path, config_file)
-
-                logger.log_event(
-                    "config",
-                    "save_atomic_success",
-                    config_file=config_file,
-                )
-
-        except Exception as save_error:
-            # Cleanup temp file on error
-            if temp_path and os.path.exists(temp_path):
-                os.unlink(temp_path)
-            logger.log_event(
-                "config",
-                "save_atomic_failed",
-                level=logging.ERROR,
-                error=str(save_error),
-                error_type=type(save_error).__name__,
-            )
-            raise
-
-        finally:
-            # Cleanup lock file
-            try:
-                os.unlink(lock_file_path)
-            except OSError:
-                pass
-
-        # Verify the save
-        _verify_saved_data(config_file)
-
-        # Add delay before resuming watcher to avoid detecting our own change
-        time.sleep(CONFIG_WRITE_DEBOUNCE)
-
-    except Exception as e:
-        logger.log_event(
-            "config",
-            "save_failed",
-            level=logging.ERROR,
-            error=str(e),
-            error_type=type(e).__name__,
-        )
-        raise
-    finally:
-        # Always resume watcher
-        try:
-            watcher_globals.resume_config_watcher()
-        except Exception:  # nosec B110
-            pass  # Watcher not initialized - expected in some contexts
-
-
-def update_user_in_config(user_config, config_file):
-    """Update a specific user's configuration in the config file"""
-    try:
         users = load_users_from_config(config_file)
-        updated = False
+        users, replaced = _merge_user(users, uc)
 
-        # Ensure the user_config has is_prime_or_turbo field
-        if "is_prime_or_turbo" not in user_config:
-            user_config["is_prime_or_turbo"] = True  # Default value
-            logger.log_event(
-                "config",
-                "added_missing_is_prime_or_turbo",
-                level=logging.DEBUG,
-                username=user_config.get("username", "Unknown"),
-                value=user_config["is_prime_or_turbo"],
-            )
-
-        # Find and update existing user
-        for i, user in enumerate(users):
-            if user.get("username") == user_config["username"]:
-                # Create a new config with proper field order
-                merged_config = {
-                    "username": user_config.get("username", user.get("username")),
-                    "client_id": user_config.get("client_id", user.get("client_id")),
-                    "client_secret": user_config.get(
-                        "client_secret", user.get("client_secret")
-                    ),
-                    "access_token": user_config.get(
-                        "access_token", user.get("access_token")
-                    ),
-                    "refresh_token": user_config.get(
-                        "refresh_token", user.get("refresh_token")
-                    ),
-                    "channels": user_config.get("channels", user.get("channels", [])),
-                    "is_prime_or_turbo": user_config.get(
-                        "is_prime_or_turbo", user.get("is_prime_or_turbo", True)
-                    ),
-                }
-                # Remove any None values to keep config clean
-                merged_config = {
-                    k: v for k, v in merged_config.items() if v is not None
-                }
-                users[i] = merged_config
-                updated = True
-                break
-
-        # If user not found, add them
-        if not updated:
-            users.append(user_config)
+        if not replaced:
+            users.append(uc.to_dict())
 
         save_users_to_config(users, config_file)
+        if changed:
+            _log_update_normalized(uc)
         return True
-    except Exception as e:
-        logger.log_event(
-            "config",
-            "update_user_failed",
-            level=logging.ERROR,
-            error=str(e),
-            error_type=type(e).__name__,
-            username=user_config.get("username"),
-        )
+    except Exception as e:  # noqa: BLE001
+        _log_update_failed(e, user_config_dict)
         return False
+
+
+def _merge_user(users, uc: UserConfig):  # Helper to merge existing user
+    uname = uc.username.lower()
+    for i, existing in enumerate(users):
+        if existing.get("username", "").strip().lower() == uname:
+            merged = existing.copy()
+            for k, v in uc.to_dict().items():
+                if v is not None:
+                    merged[k] = v
+            users[i] = {k: v for k, v in merged.items() if v is not None}
+            return users, True
+    return users, False
+
+
+def _log_update_invalid(uc: UserConfig):
+    logger.log_event(
+        "config",
+        "update_user_invalid",
+        level=logging.WARNING,
+        username=uc.username or "Unknown",
+    )
+    return False
+
+
+def _log_update_normalized(uc: UserConfig):
+    logger.log_event(
+        "config",
+        "update_user_normalized",
+        username=uc.username,
+        channel_count=len(uc.channels),
+    )
+
+
+def _log_update_failed(e: Exception, user_config_dict):
+    logger.log_event(
+        "config",
+        "update_user_failed",
+        level=logging.ERROR,
+        error=str(e),
+        error_type=type(e).__name__,
+        username=user_config_dict.get("username")
+        if isinstance(user_config_dict, dict)
+        else None,
+    )
 
 
 def disable_random_colors_for_user(username, config_file):
@@ -372,18 +159,57 @@ def disable_random_colors_for_user(username, config_file):
         return False
 
 
-def validate_user_config(user_config):
-    """Validate that user configuration has required fields - Simplified version"""
-    return validate_user(user_config)
+def _validate_and_filter_users(raw_users):
+    """Return list of valid user dicts from raw list."""
+    placeholders = {
+        "test",
+        "placeholder",
+        "your_token_here",
+        "fake_token",
+        "example_token_twenty_chars",
+    }
+
+    def auth_ok(u: UserConfig) -> bool:
+        access = u.access_token or ""
+        token_valid = (
+            access and len(access) >= 20 and access.lower() not in placeholders
+        )
+        client_valid = (
+            (u.client_id and u.client_secret)
+            and len(u.client_id) >= 10  # type: ignore[arg-type]
+            and len(u.client_secret) >= 10  # type: ignore[arg-type]
+        )
+        return bool(token_valid or client_valid)
+
+    def channels_ok(u: UserConfig) -> bool:
+        chs = u.channels
+        if not chs or not isinstance(chs, list):
+            return False
+        return all(isinstance(c, str) and len(c.strip()) >= 3 for c in chs)
+
+    valid: list[dict] = []
+    seen: set[str] = set()
+    for item in raw_users:
+        if not isinstance(item, dict):
+            continue
+        uc = UserConfig.from_dict(item)
+        uname = uc.username.lower()
+        if (
+            not (3 <= len(uname) <= 25)
+            or not auth_ok(uc)
+            or not channels_ok(uc)
+            or uname in seen
+        ):
+            continue
+        seen.add(uname)
+        valid.append(uc.to_dict())
+    return valid
 
 
 def get_configuration():
     """Get configuration from config file only"""
     config_file = os.environ.get("TWITCH_CONF_FILE", "twitch_colorchanger.conf")
-
-    # Load configuration from file
     users = load_users_from_config(config_file)
-
     if not users:
         logger.log_event(
             "config", "no_config_file", level=logging.ERROR, config_file=config_file
@@ -395,21 +221,13 @@ def get_configuration():
             sample="twitch_colorchanger.conf.sample",
         )
         sys.exit(1)
-
-    # Validate users
-    valid_users = get_valid_users(users)
-
+    valid_users = _validate_and_filter_users(users)
     if not valid_users:
         logger.log_event(
             "config", "no_valid_users", level=logging.ERROR, config_file=config_file
         )
         sys.exit(1)
-
-    logger.log_event(
-        "config",
-        "valid_users_found",
-        user_count=len(valid_users),
-    )
+    logger.log_event("config", "valid_users_found", user_count=len(valid_users))
     return valid_users
 
 
@@ -429,77 +247,22 @@ def print_config_summary(users):
         )
 
 
-def normalize_channels(channels):
-    """
-    Normalize channel list: lowercase, remove #, sort, and deduplicate
-
-    Args:
-        channels: List of channel names
-
-    Returns:
-        Tuple of (normalized_channels, was_changed)
-    """
-    if not isinstance(channels, list):
-        return [], True
-
-    # Normalize: lowercase, remove #, deduplicate, and sort
-    normalized = sorted(
-        dict.fromkeys(
-            ch.lower().strip().lstrip("#") for ch in channels if ch and ch.strip()
-        )
-    )
-
-    # Check if normalization made any changes
-    was_changed = normalized != channels
-
-    return normalized, was_changed
+########################
+# Legacy normalize_channels removed; use UserConfig normalization instead.
+########################
 
 
 def normalize_user_channels(users, config_file):
-    """
-    Normalize channels for all users and save if any changes were made
-
-    Args:
-        users: List of user configurations
-        config_file: Path to config file
-
-    Returns:
-        Tuple of (updated_users, any_changes_made)
-    """
-    updated_users = []
-    any_changes = False
-
-    for user in users:
-        user_copy = user.copy()
-        original_channels = user_copy.get("channels", [])
-
-        normalized_channels, was_changed = normalize_channels(original_channels)
-        user_copy["channels"] = normalized_channels
-
-        if was_changed:
-            any_changes = True
-            logger.log_event(
-                "config",
-                "channel_normalization_change",
-                username=user_copy.get("username"),
-                original_count=len(original_channels),
-                new_count=len(normalized_channels),
-                original=original_channels,
-                new=normalized_channels,
-            )
-
-        updated_users.append(user_copy)
-
-    # Save if any changes were made
+    normalized_users, any_changes = normalize_user_list(users)
     if any_changes:
         try:
-            save_users_to_config(updated_users, config_file)
+            save_users_to_config(normalized_users, config_file)
             logger.log_event(
                 "config",
                 "channel_normalization_saved",
-                user_count=len(updated_users),
+                user_count=len(normalized_users),
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.log_event(
                 "config",
                 "channel_normalization_save_failed",
@@ -507,8 +270,7 @@ def normalize_user_channels(users, config_file):
                 error=str(e),
                 error_type=type(e).__name__,
             )
-
-    return updated_users, any_changes
+    return normalized_users, any_changes
 
 
 async def setup_missing_tokens(users, config_file):
@@ -561,14 +323,79 @@ async def _setup_user_tokens(user):
 
 
 async def _validate_or_refresh_tokens(user):
-    """
-    Validate existing tokens or refresh them using the standalone token validator.
-    This avoids circular imports between config.py and bot.py.
-    """
+    """Validate or refresh tokens via TokenClient with minimal branching."""
+    username = user.get("username", "Unknown")
+
+    access_token = user.get("access_token")
+    client_id = user.get("client_id")
+    client_secret = user.get("client_secret")
+    refresh_token = user.get("refresh_token")
+
+    if not access_token:
+        return _token_validation_fail(user, username, "validation_missing_access_token")
+    if not client_id or not client_secret:
+        return _token_validation_fail(
+            user,
+            username,
+            "validation_missing_client_credentials",
+            has_client_id=bool(client_id),
+            has_client_secret=bool(client_secret),
+        )
+
     try:
-        return await token_validator.validate_user_tokens(user)
-    except Exception:
+        async with aiohttp.ClientSession() as session:
+            client = TokenClient(str(client_id), str(client_secret), session)
+            outcome_obj = await client.ensure_fresh(
+                username,
+                str(access_token),
+                str(refresh_token) if refresh_token else None,
+                None,
+                force_refresh=False,
+            )
+        return _handle_token_client_outcome(user, username, outcome_obj)
+    except Exception as e:  # noqa: BLE001
+        logger.log_event(
+            "token",
+            "validation_error",
+            level=logging.ERROR,
+            user=username,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
         return {"valid": False, "user": user, "updated": False}
+
+
+def _handle_token_client_outcome(
+    user: dict, username: str, outcome_obj
+):  # Helper extracted
+    if outcome_obj.outcome == TokenOutcome.VALID:
+        if outcome_obj.expiry:
+            remaining = int((outcome_obj.expiry - datetime.now()).total_seconds())
+            hours, minutes = divmod(max(remaining, 0) // 60, 60)
+            duration_str = f"{hours}h {minutes}m" if hours else f"{minutes}m"
+            logger.log_event(
+                "token",
+                "validation_valid",
+                user=username,
+                expires_in_seconds=remaining,
+                human_remaining=duration_str,
+            )
+        return {"valid": True, "user": user, "updated": False}
+    if outcome_obj.outcome == TokenOutcome.REFRESHED:
+        if outcome_obj.access_token:
+            user["access_token"] = outcome_obj.access_token
+        if outcome_obj.refresh_token:
+            user["refresh_token"] = outcome_obj.refresh_token
+        logger.log_event("token", "validation_refreshed", user=username)
+        return {"valid": True, "user": user, "updated": True}
+    logger.log_event("token", "validation_failed", level=logging.ERROR, user=username)
+    return {"valid": False, "user": user, "updated": False}
+
+
+def _token_validation_fail(user: dict, username: str, event: str, **extra):
+    """Log a validation failure event and return a standard failure structure."""
+    logger.log_event("token", event, level=logging.WARNING, user=username, **extra)
+    return {"valid": False, "user": user, "updated": False}
 
 
 async def _get_new_tokens_via_device_flow(user, client_id, client_secret):
@@ -615,10 +442,43 @@ async def _get_new_tokens_via_device_flow(user, client_id, client_secret):
 
 
 async def _validate_new_tokens(user):
-    """Validate newly obtained tokens."""
+    """Validate newly obtained tokens via TokenClient."""
+    username = user.get("username", "Unknown")
+    required_keys = ["client_id", "client_secret", "access_token", "refresh_token"]
+    for key in required_keys:
+        if key not in user:
+            logger.log_event(
+                "token",
+                "new_token_validation_missing_field",
+                level=logging.ERROR,
+                user=username,
+                field=key,
+            )
+            return {"valid": False, "user": user}
     try:
-        return await token_validator.validate_new_tokens(user)
-    except Exception:
+        async with aiohttp.ClientSession() as session:
+            client = TokenClient(
+                str(user["client_id"]),
+                str(user["client_secret"]),
+                session,
+            )
+            result = await client.validate(username, str(user["access_token"]))
+        if result.outcome == TokenOutcome.VALID:
+            logger.log_event("token", "new_validation_success", user=username)
+            return {"valid": True, "user": user}
+        logger.log_event(
+            "token", "new_validation_failed", level=logging.WARNING, user=username
+        )
+        return {"valid": False, "user": user}
+    except Exception as e:  # noqa: BLE001
+        logger.log_event(
+            "token",
+            "new_validation_exception",
+            level=logging.ERROR,
+            user=username,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
         return {"valid": False, "user": user}
 
 

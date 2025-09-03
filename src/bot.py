@@ -14,16 +14,13 @@ import aiohttp
 
 from .adaptive_scheduler import AdaptiveScheduler
 from .async_irc import AsyncTwitchIRC
-from .config import (
-    disable_random_colors_for_user,
-    normalize_channels,
-    update_user_in_config,
-)
+from .config import disable_random_colors_for_user, update_user_in_config
 from .constants import NETWORK_PARTITION_THRESHOLD, PARTIAL_CONNECTIVITY_THRESHOLD
 from .error_handling import APIError, simple_retry
 from .logger import logger
 from .rate_limiter import get_rate_limiter
 from .token_manager import get_token_manager
+from .user_config_model import normalize_channels_list
 
 
 # Local color helpers (previously in colors.py)
@@ -250,7 +247,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         logger.log_event("bot", "using_async_irc", user=self.username)
         self.irc = AsyncTwitchIRC()
 
-        normalized_channels, was_changed = normalize_channels(self.channels)
+        normalized_channels, was_changed = normalize_channels_list(self.channels)
         if was_changed:
             logger.log_event(
                 "bot",
