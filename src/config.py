@@ -6,15 +6,10 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime
-
-import aiohttp
 
 from .config_repository import ConfigRepository
 from .constants import CONFIG_WRITE_DEBOUNCE
-from .device_flow import DeviceCodeFlow
 from .logger import logger
-from .token_client import TokenClient, TokenOutcome
 from .user_config_model import UserConfig, normalize_user_list
 
 
@@ -273,213 +268,33 @@ def normalize_user_channels(users, config_file):
     return normalized_users, any_changes
 
 
-async def setup_missing_tokens(users, config_file):
-    """
-    Automatically setup tokens for users that don't have them or can't renew them.
-    Returns updated users list with new tokens.
-    """
-    updated_users = []
-    needs_config_save = False
+async def setup_missing_tokens(users, config_file, dry_run: bool = False):
+    """Provision tokens for users needing refresh or creation using TokenProvisioner.
 
+    dry_run: if True, only logs decisions; no mutation or file writes.
+    """
+    from .token_provisioner import TokenProvisioner  # local import to avoid cycles
+
+    provisioner = TokenProvisioner(dry_run=dry_run)
+    updated_users: list[dict] = []
+    any_updates = False
     for user in users:
-        user_result = await _setup_user_tokens(user)
-        updated_users.append(user_result["user"])
-        if user_result["tokens_updated"]:
-            needs_config_save = True
-
-    # Save config if any tokens were updated
-    if needs_config_save:
+        result = await provisioner.provision(user)
+        updated_users.append(result.user)
+        if result.updated:
+            any_updates = True
+    if any_updates and not dry_run:
         _save_updated_config(updated_users, config_file)
-
     return updated_users
 
 
-async def _setup_user_tokens(user):
-    """Setup tokens for a single user. Returns dict with user and update status."""
-    username = user.get("username", "Unknown")
-    client_id = user.get("client_id", "")
-    client_secret = user.get("client_secret", "")
-
-    # Check if user has basic credentials
-    if not client_id or not client_secret:
-        logger.log_event(
-            "config",
-            "token_setup_validation_failed",  # reuse existing token setup validation failed template
-            level=logging.ERROR,
-            username=username,
-        )
-        return {"user": user, "tokens_updated": False}
-
-    # Check if tokens exist and are valid/renewable
-    tokens_result = await _validate_or_refresh_tokens(user)
-    if tokens_result["valid"]:
-        return {
-            "user": tokens_result["user"],
-            "tokens_updated": tokens_result["updated"],
-        }
-
-    # Need new tokens via device flow
-    return await _get_new_tokens_via_device_flow(user, client_id, client_secret)
+## Legacy token validation/refresh helpers removed (now handled by TokenProvisioner).
 
 
-async def _validate_or_refresh_tokens(user):
-    """Validate or refresh tokens via TokenClient with minimal branching."""
-    username = user.get("username", "Unknown")
-
-    access_token = user.get("access_token")
-    client_id = user.get("client_id")
-    client_secret = user.get("client_secret")
-    refresh_token = user.get("refresh_token")
-
-    if not access_token:
-        return _token_validation_fail(user, username, "validation_missing_access_token")
-    if not client_id or not client_secret:
-        return _token_validation_fail(
-            user,
-            username,
-            "validation_missing_client_credentials",
-            has_client_id=bool(client_id),
-            has_client_secret=bool(client_secret),
-        )
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            client = TokenClient(str(client_id), str(client_secret), session)
-            outcome_obj = await client.ensure_fresh(
-                username,
-                str(access_token),
-                str(refresh_token) if refresh_token else None,
-                None,
-                force_refresh=False,
-            )
-        return _handle_token_client_outcome(user, username, outcome_obj)
-    except Exception as e:  # noqa: BLE001
-        logger.log_event(
-            "token",
-            "validation_error",
-            level=logging.ERROR,
-            user=username,
-            error=str(e),
-            error_type=type(e).__name__,
-        )
-        return {"valid": False, "user": user, "updated": False}
+## Legacy _get_new_tokens_via_device_flow removed (provision now centralized).  # noqa: ERA001
 
 
-def _handle_token_client_outcome(
-    user: dict, username: str, outcome_obj
-):  # Helper extracted
-    if outcome_obj.outcome == TokenOutcome.VALID:
-        if outcome_obj.expiry:
-            remaining = int((outcome_obj.expiry - datetime.now()).total_seconds())
-            hours, minutes = divmod(max(remaining, 0) // 60, 60)
-            duration_str = f"{hours}h {minutes}m" if hours else f"{minutes}m"
-            logger.log_event(
-                "token",
-                "validation_valid",
-                user=username,
-                expires_in_seconds=remaining,
-                human_remaining=duration_str,
-            )
-        return {"valid": True, "user": user, "updated": False}
-    if outcome_obj.outcome == TokenOutcome.REFRESHED:
-        if outcome_obj.access_token:
-            user["access_token"] = outcome_obj.access_token
-        if outcome_obj.refresh_token:
-            user["refresh_token"] = outcome_obj.refresh_token
-        logger.log_event("token", "validation_refreshed", user=username)
-        return {"valid": True, "user": user, "updated": True}
-    logger.log_event("token", "validation_failed", level=logging.ERROR, user=username)
-    return {"valid": False, "user": user, "updated": False}
-
-
-def _token_validation_fail(user: dict, username: str, event: str, **extra):
-    """Log a validation failure event and return a standard failure structure."""
-    logger.log_event("token", event, level=logging.WARNING, user=username, **extra)
-    return {"valid": False, "user": user, "updated": False}
-
-
-async def _get_new_tokens_via_device_flow(user, client_id, client_secret):
-    """Get new tokens using device flow and ensure they're saved to config."""
-    username = user.get("username", "Unknown")
-    logger.log_event("config", "token_setup_start", username=username)
-
-    device_flow = DeviceCodeFlow(client_id, client_secret)
-    try:
-        token_result = await device_flow.get_user_tokens(username)
-        if token_result:
-            new_access_token, new_refresh_token = token_result
-            user["access_token"] = new_access_token
-            user["refresh_token"] = new_refresh_token
-
-            # Immediately validate the new tokens to ensure they work
-            # and get expiry information for proactive refresh
-            validation_result = await _validate_new_tokens(user)
-            if validation_result["valid"]:
-                logger.log_event("config", "token_setup_success", username=username)
-                return {"user": validation_result["user"], "tokens_updated": True}
-            logger.log_event(
-                "config",
-                "token_setup_validation_failed",
-                level=logging.WARNING,
-                username=username,
-            )
-            # Still save them, might work later
-            return {"user": user, "tokens_updated": True}
-        logger.log_event(
-            "config", "token_setup_failed", level=logging.ERROR, username=username
-        )
-        return {"user": user, "tokens_updated": False}
-    except Exception as e:
-        logger.log_event(
-            "config",
-            "token_setup_exception",
-            level=logging.ERROR,
-            username=username,
-            error=str(e),
-            error_type=type(e).__name__,
-        )
-        return {"user": user, "tokens_updated": False}
-
-
-async def _validate_new_tokens(user):
-    """Validate newly obtained tokens via TokenClient."""
-    username = user.get("username", "Unknown")
-    required_keys = ["client_id", "client_secret", "access_token", "refresh_token"]
-    for key in required_keys:
-        if key not in user:
-            logger.log_event(
-                "token",
-                "new_token_validation_missing_field",
-                level=logging.ERROR,
-                user=username,
-                field=key,
-            )
-            return {"valid": False, "user": user}
-    try:
-        async with aiohttp.ClientSession() as session:
-            client = TokenClient(
-                str(user["client_id"]),
-                str(user["client_secret"]),
-                session,
-            )
-            result = await client.validate(username, str(user["access_token"]))
-        if result.outcome == TokenOutcome.VALID:
-            logger.log_event("token", "new_validation_success", user=username)
-            return {"valid": True, "user": user}
-        logger.log_event(
-            "token", "new_validation_failed", level=logging.WARNING, user=username
-        )
-        return {"valid": False, "user": user}
-    except Exception as e:  # noqa: BLE001
-        logger.log_event(
-            "token",
-            "new_validation_exception",
-            level=logging.ERROR,
-            user=username,
-            error=str(e),
-            error_type=type(e).__name__,
-        )
-        return {"valid": False, "user": user}
+## Legacy _validate_new_tokens removed (handled inside TokenProvisioner or token_client).  # noqa: ERA001
 
 
 def _save_updated_config(updated_users, config_file):

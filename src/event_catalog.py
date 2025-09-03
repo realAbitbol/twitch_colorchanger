@@ -722,4 +722,53 @@ EVENT_TEMPLATES: dict[tuple[str, str], str] = {
         "bot",
         "irc_auth_refresh_success",
     ): "Token refreshed after IRC auth failure user={user}",
+    # Token provisioner events
+    (
+        "token_provision",
+        "start",
+    ): "Starting token provision username={username} dry_run={dry_run}",
+    (
+        "token_provision",
+        "missing_credentials",
+    ): "Missing client credentials username={username}",
+    (
+        "token_provision",
+        "valid",
+    ): "Access token already valid username={username} expires_in={expires_in_seconds}s",
+    (
+        "token_provision",
+        "refreshed",
+    ): "Access token refreshed username={username}",
+    (
+        "token_provision",
+        "dry_run_refresh_skipped",
+    ): "Dry-run: would refresh token username={username}",
+    (
+        "token_provision",
+        "needs_device_flow",
+    ): "Needs device flow username={username}",
+    (
+        "token_provision",
+        "dry_run_device_flow_needed",
+    ): "Dry-run: would start device flow username={username}",
+    (
+        "token_provision",
+        "device_flow_start",
+    ): "Starting device flow username={username}",
+    (
+        "token_provision",
+        "device_flow_obtained",
+    ): "Device flow obtained new tokens username={username}",
+    (
+        "token_provision",
+        "device_flow_failed",
+    ): "Device flow failed username={username}",
+    (
+        "token_provision",
+        "device_flow_exception",
+    ): "Device flow exception username={username} {error_type} {error}",
+    (
+        "token_provision",
+        "validate_exception",
+    ): "Validation exception username={username} {error_type} {error}",
 }
