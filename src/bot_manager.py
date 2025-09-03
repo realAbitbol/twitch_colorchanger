@@ -1,6 +1,6 @@
-"""
-Bot manager for handling multiple Twitch bots
-"""
+"""Bot manager for handling multiple Twitch bots with structured logging."""
+
+from __future__ import annotations
 
 import asyncio
 import os
@@ -11,395 +11,277 @@ from typing import Any
 import aiohttp
 
 from .bot import TwitchColorBot
-from .colors import BColors
 from .config_watcher import create_config_watcher
 from .constants import HEALTH_MONITOR_INTERVAL, TASK_WATCHDOG_INTERVAL
-from .utils import print_log
+from .logger import logger
 from .watcher_globals import set_global_watcher
 
-# SystemRandom for non-cryptographic jitter to satisfy Bandit B311
-_jitter_rng = SystemRandom()
+_jitter_rng = SystemRandom()  # Non-crypto jitter rng
 
 
 class BotManager:  # pylint: disable=too-many-instance-attributes
-    """Manages multiple Twitch bots"""
+    """Manages multiple Twitch bots (start/stop/health/restart)."""
 
-    def __init__(self, users_config: list[dict[str, Any]], config_file: str = None):
+    def __init__(
+        self, users_config: list[dict[str, Any]], config_file: str | None = None
+    ):
         self.users_config = users_config
         self.config_file = config_file
-        self.bots: list[Any] = []
-        self.tasks: list[Any] = []
+        self.bots: list[TwitchColorBot] = []
+        self.tasks: list[asyncio.Task] = []
         self.running = False
         self.shutdown_initiated = False
         self.restart_requested = False
         self.new_config: list[dict[str, Any]] | None = None
-
-        # Protection against concurrent health operations
         self._health_check_in_progress = False
-
-        # Shared HTTP session for all bots
         self.http_session: aiohttp.ClientSession | None = None
 
-    async def _start_all_bots(self):
-        """Start all bots and return success status"""
-        print_log(f"🚀 Starting {len(self.users_config)} bot(s)...", BColors.HEADER)
-
-        # Create shared HTTP session
-        print_log("🌐 Creating shared HTTP session...", BColors.OKCYAN)
+    # ---------------- Lifecycle -----------------
+    async def _start_all_bots(self) -> bool:
+        logger.info("Starting bots", count=len(self.users_config))
+        logger.info("Creating shared HTTP session")
         self.http_session = aiohttp.ClientSession()
 
         for user_config in self.users_config:
             try:
                 bot = self._create_bot(user_config)
-                if bot:
-                    self.bots.append(bot)
-
-            except Exception as e:
-                print_log(
-                    f"❌ Failed to create bot for user {user_config['username']}: {e}",
-                    BColors.FAIL,
+                self.bots.append(bot)
+            except Exception as e:  # noqa: BLE001
+                logger.error(
+                    f"Failed to create bot: {e}",
+                    user=user_config.get("username"),
                 )
-                continue
 
         if not self.bots:
-            print_log("❌ No bots could be started!", BColors.FAIL)
+            logger.error("No bots created - aborting start")
             return False
 
-        # Start all bot tasks
-        print_log(f"🎯 Launching {len(self.bots)} bot task(s)...", BColors.OKGREEN)
-
+        logger.info("Launching bot tasks", tasks=len(self.bots))
         for bot in self.bots:
-            task = asyncio.create_task(bot.start())
-            self.tasks.append(task)
+            self.tasks.append(asyncio.create_task(bot.start()))
 
-        # Give a small delay to let bots initialize
-        await asyncio.sleep(1)
-
+        await asyncio.sleep(1)  # allow initialization
         self.running = True
-        self.shutdown_initiated = False  # Reset shutdown flag for new run
-
-        # Start health monitoring
+        self.shutdown_initiated = False
         self._start_health_monitoring()
         self._start_task_watchdog()
-
-        print_log("✅ All bots started successfully!", BColors.OKGREEN)
+        logger.info("All bots started successfully")
         return True
 
     def _create_bot(self, user_config: dict[str, Any]) -> TwitchColorBot:
-        """Create a bot instance from user configuration"""
-        username = user_config["username"]
-        token = user_config["access_token"]
-
         if not self.http_session:
-            raise ValueError("HTTP session must be created before creating bots")
-
-        try:
-            bot = TwitchColorBot(
-                token=token,
-                refresh_token=user_config.get("refresh_token", ""),
-                client_id=user_config.get("client_id", ""),
-                client_secret=user_config.get("client_secret", ""),
-                nick=username,
-                channels=user_config["channels"],
-                http_session=self.http_session,  # Required shared HTTP session
-                is_prime_or_turbo=user_config.get("is_prime_or_turbo", True),
-                config_file=self.config_file,
-                user_id=None,  # Will be fetched by the bot itself
-            )
-
-            print_log(f"✅ Bot created for {username}", BColors.OKGREEN)
-            return bot
-
-        except Exception as e:
-            print_log(f"❌ Failed to create bot for {username}: {e}", BColors.FAIL)
-            raise
+            raise RuntimeError("HTTP session not initialized")
+        username = user_config["username"]
+        bot = TwitchColorBot(
+            token=user_config["access_token"],
+            refresh_token=user_config.get("refresh_token", ""),
+            client_id=user_config.get("client_id", ""),
+            client_secret=user_config.get("client_secret", ""),
+            nick=username,
+            channels=user_config["channels"],
+            http_session=self.http_session,
+            is_prime_or_turbo=user_config.get("is_prime_or_turbo", True),
+            config_file=self.config_file,
+            user_id=None,
+        )
+        logger.info("Bot created", user=username)
+        return bot
 
     async def _stop_all_bots(self):
-        """Stop all running bots"""
         if not self.running:
             return
-
-        print_log("\n🛑 Stopping all bots...", BColors.WARNING)
-
-        # Cancel all tasks
+        logger.warning("Stopping all bots")
         self._cancel_all_tasks()
-
-        # Close all bots
         self._close_all_bots()
-
-        # Close shared HTTP session
         if self.http_session:
-            print_log("🌐 Closing shared HTTP session...", BColors.OKCYAN)
-            await self.http_session.close()
-            self.http_session = None
-
-        # Wait for tasks to finish cancellation
+            try:
+                await self.http_session.close()
+            finally:
+                self.http_session = None
         await self._wait_for_task_completion()
-
         self.running = False
-        print_log("✅ All bots stopped", BColors.OKGREEN)
+        logger.info("All bots stopped")
 
     def _cancel_all_tasks(self):
-        """Cancel all running tasks"""
         for i, task in enumerate(self.tasks):
             try:
                 if task and not task.done():
                     task.cancel()
-                    print_log(f"✅ Cancelled task {i + 1}", BColors.OKGREEN)
-            except Exception as e:
-                print_log(f"⚠️ Error cancelling task {i + 1}: {e}", BColors.WARNING)
+                    logger.info("Cancelled task", index=i)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Error cancelling task {i}: {e}")
 
     def _close_all_bots(self):
-        """Close all bot connections"""
         for i, bot in enumerate(self.bots):
             try:
-                if bot:
-                    bot.close()
-                    print_log(f"✅ Closed bot {i + 1}", BColors.OKGREEN)
-            except Exception as e:
-                print_log(f"⚠️ Error closing bot {i + 1}: {e}", BColors.WARNING)
+                bot.close()
+                logger.info("Closed bot", index=i, user=bot.username)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    f"Error closing bot {i}: {e}", user=getattr(bot, "username", None)
+                )
 
     async def _wait_for_task_completion(self):
-        """Wait for all tasks to complete"""
-        if self.tasks:
-            try:
-                # Wait for all tasks with proper exception handling
-                results = await asyncio.gather(*self.tasks, return_exceptions=True)
+        if not self.tasks:
+            return
+        try:
+            results = await asyncio.gather(*self.tasks, return_exceptions=True)
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.warning(
+                        f"Task {i} finished with exception: {result}", index=i
+                    )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Error waiting for task completion: {e}")
+        finally:
+            self.tasks.clear()
 
-                # Log any exceptions from tasks
-                for i, result in enumerate(results):
-                    if isinstance(result, Exception):
-                        print_log(
-                            f"⚠️ Task {i} finished with exception: {result}",
-                            BColors.WARNING,
-                        )
-
-            except Exception as e:
-                print_log(f"⚠️ Error waiting for task completion: {e}", BColors.WARNING)
-            finally:
-                # Clear the task list to prevent memory leaks
-                self.tasks.clear()
-
+    # --------------- Public control ---------------
     def stop(self):
-        """Public method to stop the bot manager"""
         self.shutdown_initiated = True
-        # Create a task to stop bots (don't await in sync context)
-        if hasattr(asyncio, "_get_running_loop"):
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._stop_all_bots())
-            except RuntimeError:
-                # No running loop, this is fine for testing
-                pass
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._stop_all_bots())
+        except RuntimeError:
+            pass
 
     def request_restart(self, new_users_config: list[dict[str, Any]]):
-        """Request a restart with new configuration"""
-        print_log("🔄 Config change detected, restarting bots...", BColors.OKCYAN)
+        logger.info("Config change detected - scheduling restart")
         self.new_config = new_users_config
         self.restart_requested = True
 
-    async def _restart_with_new_config(self):
-        """Restart bots with new configuration"""
+    async def _restart_with_new_config(self) -> bool:
         if not self.new_config:
             return False
-
-        print_log("🔄 Restarting bots with new configuration...", BColors.OKCYAN)
-
-        # Save current statistics before stopping bots
-        saved_stats = self._save_statistics()
-
-        # Stop current bots
+        logger.info("Restarting with new configuration")
+        saved = self._save_statistics()
         await self._stop_all_bots()
-
-        # Clear old state
         self.bots.clear()
         self.tasks.clear()
-
-        # Update configuration
         old_count = len(self.users_config)
         self.users_config = self.new_config
         new_count = len(self.users_config)
-
-        print_log(f"📊 Config updated: {old_count} → {new_count} users", BColors.OKCYAN)
-
-        # Start with new config
+        logger.info("Config updated", old_users=old_count, new_users=new_count)
         success = await self._start_all_bots()
-
-        # Restore statistics for users that still exist
         if success:
-            self._restore_statistics(saved_stats)
-
-        # Reset restart state
+            self._restore_statistics(saved)
         self.restart_requested = False
         self.new_config = None
-
         return success
 
+    # --------------- Health monitoring ---------------
     async def _monitor_bot_health(self):
-        """Monitor bot health and attempt reconnections if needed"""
         while self.running and not self.shutdown_initiated:
             try:
-                # Add jitter to prevent synchronized health checks across multiple instances
-                jitter = _jitter_rng.uniform(0.8, 1.2)  # ±20% jitter (non-crypto)
-                sleep_time = HEALTH_MONITOR_INTERVAL * jitter
-                await asyncio.sleep(sleep_time)
-
+                jitter = _jitter_rng.uniform(0.8, 1.2)
+                await asyncio.sleep(HEALTH_MONITOR_INTERVAL * jitter)
                 if not self.running or self.shutdown_initiated:
                     break
-
-                print_log("🔍 Performing regular bot health check...", BColors.OKCYAN)
+                logger.debug("Health check tick")
                 await self._perform_health_check()
-
             except asyncio.CancelledError:
-                print_log("🔍 Health monitoring cancelled", BColors.WARNING)
-                raise  # Re-raise CancelledError
-            except Exception as e:
-                print_log(f"❌ Error during health check: {e}", BColors.FAIL)
-                # Also add jitter to error recovery sleep
-                error_sleep = 60 * _jitter_rng.uniform(
-                    0.5, 1.5
-                )  # 30-90 seconds (jitter)
-                await asyncio.sleep(error_sleep)
+                logger.warning("Health monitoring cancelled")
+                raise
+            except Exception as e:  # noqa: BLE001
+                logger.error(f"Health monitor error: {e}")
+                await asyncio.sleep(60 * _jitter_rng.uniform(0.5, 1.5))
 
     async def _perform_health_check(self):
-        """Perform the actual health check logic"""
-        # Prevent concurrent health checks
         if self._health_check_in_progress:
-            print_log("⚠️ Health check already in progress, skipping", BColors.WARNING)
+            logger.debug("Health check already running - skip")
             return
-
         self._health_check_in_progress = True
         try:
-            unhealthy_bots = self._identify_unhealthy_bots()
-
-            if unhealthy_bots:
-                await self._reconnect_unhealthy_bots(unhealthy_bots)
+            unhealthy = self._identify_unhealthy_bots()
+            if unhealthy:
+                await self._reconnect_unhealthy_bots(unhealthy)
             else:
-                print_log("✅ All bots are healthy", BColors.OKGREEN)
+                logger.info("All bots healthy")
         finally:
             self._health_check_in_progress = False
 
     async def _monitor_task_health(self):
-        """Monitor individual task health and detect hanging tasks"""
         while self.running and not self.shutdown_initiated:
             try:
-                # Add jitter to task watchdog timing
-                jitter = _jitter_rng.uniform(
-                    0.7, 1.3
-                )  # ±30% jitter for task monitoring (non-crypto)
-                sleep_time = TASK_WATCHDOG_INTERVAL * jitter
-                await asyncio.sleep(sleep_time)
-
+                jitter = _jitter_rng.uniform(0.7, 1.3)
+                await asyncio.sleep(TASK_WATCHDOG_INTERVAL * jitter)
                 if not self.running or self.shutdown_initiated:
                     break
-
-                print_log("🐕 Performing task watchdog check...", BColors.OKCYAN)
+                logger.debug("Task watchdog tick")
                 self._check_task_health()
-
             except asyncio.CancelledError:
-                print_log("🐕 Task watchdog cancelled", BColors.WARNING)
-                raise  # Re-raise CancelledError
-            except Exception as e:
-                print_log(f"❌ Error during task watchdog: {e}", BColors.FAIL)
-                await asyncio.sleep(30)  # Wait 30 seconds before trying again
+                logger.warning("Task watchdog cancelled")
+                raise
+            except Exception as e:  # noqa: BLE001
+                logger.error(f"Task watchdog error: {e}")
+                await asyncio.sleep(30)
 
     def _check_task_health(self):
-        """Check health of individual tasks"""
-        dead_tasks = []
-        alive_tasks = []
-
+        dead = []
+        alive = []
         for i, task in enumerate(self.tasks):
             if task.done():
                 if task.exception():
-                    print_log(
-                        f"⚠️ Task {i} died with exception: {task.exception()}",
-                        BColors.WARNING,
-                    )
+                    logger.warning(f"Task {i} exception: {task.exception()}", index=i)
                 else:
-                    print_log(f"ℹ️ Task {i} completed normally", BColors.OKCYAN)
-                dead_tasks.append(i)
+                    logger.info("Task completed", index=i)
+                dead.append(i)
             else:
-                alive_tasks.append(task)
-
-        # Replace task list with only alive tasks
-        if dead_tasks:
-            self.tasks = alive_tasks
-            print_log(
-                f"⚠️ Found {len(dead_tasks)} dead tasks, removed them", BColors.WARNING
-            )
+                alive.append(task)
+        if dead:
+            self.tasks = alive
+            logger.warning("Removed dead tasks", count=len(dead))
         else:
-            print_log("✅ All tasks are alive", BColors.OKGREEN)
+            logger.debug("All tasks alive")
 
-    def _identify_unhealthy_bots(self):
-        """Identify bots that appear unhealthy"""
-        unhealthy_bots = []
+    def _identify_unhealthy_bots(self) -> list[TwitchColorBot]:
+        unhealthy: list[TwitchColorBot] = []
         for bot in self.bots:
             try:
-                # Check if bot and IRC connection exist and are unhealthy
-                if bot and bot.irc and not bot.irc.is_healthy():
-                    unhealthy_bots.append(bot)
+                if bot.irc and not bot.irc.is_healthy():
+                    unhealthy.append(bot)
                     self._log_bot_health_issues(bot)
-            except Exception as e:
-                print_log(
-                    f"⚠️ Error checking health for bot {getattr(bot, 'username', 'unknown')}: {e}",
-                    BColors.WARNING,
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    f"Health check error for bot: {e}",
+                    user=getattr(bot, "username", None),
                 )
-                # Consider this bot unhealthy if we can't check its health
-                if bot:
-                    unhealthy_bots.append(bot)
-        return unhealthy_bots
+                unhealthy.append(bot)
+        return unhealthy
 
-    def _log_bot_health_issues(self, bot):
-        """Log health issues for a specific bot"""
-        print_log(f"⚠️ Bot {bot.username} appears unhealthy", BColors.WARNING)
-
-        # Safely get connection stats
+    def _log_bot_health_issues(self, bot: TwitchColorBot):
+        logger.warning("Bot unhealthy", user=bot.username)
         if bot.irc:
             try:
                 stats = bot.irc.get_connection_stats()
-                print_log(
-                    f"📊 {bot.username} health stats: "
-                    f"time_since_activity={stats['time_since_activity']:.1f}s, "
-                    f"connected={stats['connected']}, "
-                    f"running={stats['running']}",
-                    BColors.WARNING,
+                logger.warning(
+                    "Bot health stats",
+                    user=bot.username,
+                    time_since_activity=f"{stats['time_since_activity']:.1f}s",
+                    connected=stats["connected"],
+                    running=stats["running"],
                 )
-            except Exception as e:
-                print_log(
-                    f"⚠️ {bot.username}: Error getting connection stats: {e}",
-                    BColors.WARNING,
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    f"Error getting connection stats: {e}", user=bot.username
                 )
         else:
-            print_log(
-                f"📊 {bot.username} health stats: IRC connection is None",
-                BColors.WARNING,
-            )
+            logger.warning("IRC connection is None", user=bot.username)
 
-    async def _reconnect_unhealthy_bots(self, unhealthy_bots):
-        """Attempt to reconnect all unhealthy bots"""
-        print_log(
-            f"🔧 Attempting to reconnect {len(unhealthy_bots)} unhealthy bot(s)...",
-            BColors.WARNING,
-        )
-
-        for bot in unhealthy_bots:
+    async def _reconnect_unhealthy_bots(self, bots: list[TwitchColorBot]):
+        logger.warning("Reconnecting unhealthy bots", count=len(bots))
+        for bot in bots:
             success = await self._attempt_bot_reconnection(bot)
             if success:
-                print_log(
-                    f"✅ Successfully reconnected {bot.username}", BColors.OKGREEN
-                )
+                logger.info("Reconnected bot", user=bot.username)
             else:
-                print_log(f"❌ Failed to reconnect {bot.username}", BColors.FAIL)
+                logger.error("Failed to reconnect bot", user=bot.username)
 
-    async def _attempt_bot_reconnection(self, bot) -> bool:
-        """Attempt to reconnect a bot's IRC connection"""
+    async def _attempt_bot_reconnection(self, bot: TwitchColorBot) -> bool:
         try:
             if not bot.irc:
-                print_log(
-                    f"❌ {bot.username}: No IRC connection to reconnect", BColors.FAIL
-                )
+                logger.error("No IRC connection to reconnect", user=bot.username)
                 return False
-
             lock = self._get_bot_reconnect_lock(bot)
             async with lock:
                 if self._bot_became_healthy(bot):
@@ -411,299 +293,211 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                     return False
                 return await self._wait_for_health(bot)
         except Exception as e:  # noqa: BLE001
-            print_log(f"❌ Error reconnecting {bot.username}: {e}", BColors.FAIL)
+            logger.error(f"Reconnection error: {e}", user=bot.username)
             return False
 
-    def _get_bot_reconnect_lock(self, bot):
+    def _get_bot_reconnect_lock(self, bot: TwitchColorBot):
         if not hasattr(bot, "_reconnect_lock"):
             import asyncio as _asyncio
 
             bot._reconnect_lock = _asyncio.Lock()  # type: ignore[attr-defined]
         return bot._reconnect_lock  # type: ignore[attr-defined]
 
-    def _bot_became_healthy(self, bot) -> bool:
+    def _bot_became_healthy(self, bot: TwitchColorBot) -> bool:
         try:
             if bot.irc and bot.irc.is_healthy():
-                print_log(
-                    f"ℹ️ {bot.username}: Bot became healthy before reconnect attempt",
-                    BColors.OKCYAN,
-                )
+                logger.info("Bot became healthy before reconnect", user=bot.username)
                 return True
         except Exception as e:  # noqa: BLE001
-            # Log and continue; health re-check will proceed via full path
-            print_log(
-                f"⚠️ {getattr(bot, 'username', 'unknown')}: Error while pre-checking health: {e}",
-                BColors.WARNING,
-            )
+            logger.warning(f"Pre-check health error: {e}", user=bot.username)
         return False
 
-    async def _cancel_stale_listener(self, bot):
-        if not hasattr(bot, "irc_task") or not bot.irc_task:
+    async def _cancel_stale_listener(self, bot: TwitchColorBot):
+        if not hasattr(bot, "irc_task") or not bot.irc_task:  # type: ignore[attr-defined]
             return
         try:
-            if not bot.irc_task.done():
-                bot.irc_task.cancel()
+            if not bot.irc_task.done():  # type: ignore[attr-defined]
+                bot.irc_task.cancel()  # type: ignore[attr-defined]
                 try:
-                    await asyncio.wait_for(bot.irc_task, timeout=1.5)
+                    await asyncio.wait_for(bot.irc_task, timeout=1.5)  # type: ignore[attr-defined]
                 except (TimeoutError, asyncio.CancelledError):
                     pass
-        except Exception as ce:  # noqa: BLE001
-            print_log(
-                f"⚠️ {bot.username}: Error cancelling old listener: {ce}",
-                BColors.WARNING,
-            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Error cancelling old listener: {e}", user=bot.username)
 
-    async def _force_bot_reconnect(self, bot) -> bool:
+    async def _force_bot_reconnect(self, bot: TwitchColorBot) -> bool:
+        if not bot.irc:
+            logger.error("No IRC instance present for reconnect", user=bot.username)
+            return False
         success = await bot.irc.force_reconnect()
         if not success:
-            print_log(f"❌ {bot.username}: IRC reconnection failed", BColors.FAIL)
+            logger.error("IRC reconnection failed", user=bot.username)
             return False
-        # Start listener immediately after base reconnection
         try:
-            if hasattr(bot, "irc_task") and bot.irc_task and not bot.irc_task.done():
-                bot.irc_task.cancel()
-        except Exception:  # nosec B110
-            pass  # Intentionally ignoring task cancellation errors
-        bot.irc_task = asyncio.create_task(bot.irc.listen())  # type: ignore[attr-defined]
-        # Rejoin remaining channels (skip first) without blocking health entirely
-        for channel in bot.irc.channels[1:]:
+            if getattr(bot, "irc_task", None) is not None and not bot.irc_task.done():  # type: ignore[attr-defined]
+                bot.irc_task.cancel()  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "Old listener cancellation raised non-critical exception",
+                user=bot.username,
+            )
+        if bot.irc:
+            bot.irc_task = asyncio.create_task(bot.irc.listen())  # type: ignore[attr-defined]
+        for channel in bot.irc.channels[1:] if bot.irc else []:
             try:
-                await bot.irc.join_channel(channel)
-            except Exception as je:  # noqa: BLE001
-                print_log(
-                    f"⚠️ {bot.username}: Failed to rejoin {channel}: {je}",
-                    BColors.WARNING,
+                if bot.irc:
+                    await bot.irc.join_channel(channel)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    f"Failed rejoin channel: {e}", user=bot.username, channel=channel
                 )
         return True
 
-    def _start_fresh_listener(self, bot) -> bool:
+    def _start_fresh_listener(self, bot: TwitchColorBot) -> bool:
         try:
+            if not bot.irc:
+                logger.error(
+                    "Cannot start listener without IRC instance", user=bot.username
+                )
+                return False
             bot.irc_task = asyncio.create_task(bot.irc.listen())  # type: ignore[attr-defined]
             return True
-        except Exception as e_create:  # noqa: BLE001
-            print_log(
-                f"❌ {bot.username}: Failed to start listener after reconnect: {e_create}",
-                BColors.FAIL,
-            )
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Listener start failed: {e}", user=bot.username)
             return False
 
-    async def _wait_for_health(self, bot) -> bool:
-        healthy = False
-        for _ in range(30):  # up to ~3s
+    async def _wait_for_health(self, bot: TwitchColorBot) -> bool:
+        for _ in range(30):  # ~3s
             await asyncio.sleep(0.1)
             try:
                 if bot.irc and bot.irc.is_healthy():
-                    healthy = True
-                    break
+                    return True
             except Exception:  # noqa: BLE001
                 break
-        if healthy:
-            return True
-        print_log(
-            f"⚠️ {bot.username}: Reconnected but health still not confirmed after timeout",
-            BColors.WARNING,
-        )
+        logger.warning("Health not confirmed after reconnect", user=bot.username)
         return False
 
     def _start_health_monitoring(self):
-        """Start the health monitoring task"""
         if self.running:
-            health_task = asyncio.create_task(self._monitor_bot_health())
-            self.tasks.append(health_task)
-            print_log("🔍 Started bot health monitoring", BColors.OKCYAN)
-            return health_task
-        return None
+            task = asyncio.create_task(self._monitor_bot_health())
+            self.tasks.append(task)
+            logger.info("Started health monitor")
 
     def _start_task_watchdog(self):
-        """Start the task watchdog monitoring"""
         if self.running:
-            watchdog_task = asyncio.create_task(self._monitor_task_health())
-            self.tasks.append(watchdog_task)
-            print_log("🐕 Started task watchdog monitoring", BColors.OKCYAN)
-            return watchdog_task
-        return None
+            task = asyncio.create_task(self._monitor_task_health())
+            self.tasks.append(task)
+            logger.info("Started task watchdog")
 
+    # --------------- Statistics ---------------
     def _save_statistics(self) -> dict[str, dict[str, int]]:
-        """Save current bot statistics"""
-        stats = {}
+        stats: dict[str, dict[str, int]] = {}
         for bot in self.bots:
             stats[bot.username] = {
                 "messages_sent": bot.messages_sent,
                 "colors_changed": bot.colors_changed,
             }
-        print_log(
-            f"💾 Saved statistics for {len(stats)} bot(s)",
-            BColors.OKCYAN,
-            debug_only=True,
-        )
+        logger.debug("Saved statistics", bots=len(stats))
         return stats
 
-    def _restore_statistics(self, saved_stats: dict[str, dict[str, int]]):
-        """Restore bot statistics after restart"""
-        restored_count = 0
+    def _restore_statistics(self, saved: dict[str, dict[str, int]]):
+        restored = 0
         for bot in self.bots:
-            if bot.username in saved_stats:
-                bot.messages_sent = saved_stats[bot.username]["messages_sent"]
-                bot.colors_changed = saved_stats[bot.username]["colors_changed"]
-                restored_count += 1
+            if bot.username in saved:
+                bot.messages_sent = saved[bot.username]["messages_sent"]
+                bot.colors_changed = saved[bot.username]["colors_changed"]
+                restored += 1
+        if restored:
+            logger.debug("Restored statistics", bots=restored)
 
-        if restored_count > 0:
-            print_log(
-                f"🔄 Restored statistics for {restored_count} bot(s)",
-                BColors.OKGREEN,
-                debug_only=True,
-            )
-
-    def print_statistics(self):
-        """Print statistics for all bots"""
+    def print_statistics(self):  # keep method signature (used externally)
         if not self.bots:
             return
-
-        print_log("\n" + "=" * 60, BColors.PURPLE)
-        print_log("📊 OVERALL STATISTICS", BColors.PURPLE)
-        print_log("=" * 60, BColors.PURPLE)
-
         total_messages = sum(bot.messages_sent for bot in self.bots)
         total_colors = sum(bot.colors_changed for bot in self.bots)
-
-        print_log(f"👥 Total bots: {len(self.bots)}")
-        print_log(f"📩 Total messages: {total_messages}")
-        print_log(f"🎨 Total color changes: {total_colors}")
-
-        # Individual bot stats
+        logger.info(
+            "Aggregate statistics",
+            bots=len(self.bots),
+            total_messages=total_messages,
+            total_color_changes=total_colors,
+        )
         for bot in self.bots:
             bot.print_statistics()
 
-    def setup_signal_handlers(self):
-        """Setup signal handlers for graceful shutdown"""
-
-        def signal_handler(signum, _frame):
-            print_log(
-                f"\n🔔 Received signal {signum}, initiating graceful shutdown...",
-                BColors.WARNING,
-            )
+    # --------------- Signals ---------------
+    def setup_signal_handlers(self):  # pragma: no cover - system interaction
+        def handler(signum, _frame):  # noqa: D401
+            logger.warning("Signal received - initiating shutdown", signal=signum)
             self.shutdown_initiated = True
-            # Save the task to prevent garbage collection (intentionally not awaited
-            # in signal handler)
             _ = asyncio.create_task(self._stop_all_bots())
 
-        # Handle SIGINT (Ctrl+C) and SIGTERM
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGINT, handler)
+        signal.signal(signal.SIGTERM, handler)
 
 
-async def _setup_config_watcher(manager: BotManager, config_file: str = None):
-    """Setup config file watcher if available"""
+async def _setup_config_watcher(manager: BotManager, config_file: str | None):
     if not config_file or not os.path.exists(config_file):
         return None
-
     try:
-        # Create restart callback that the watcher will call
-        def restart_callback(new_config):
+
+        def restart_cb(new_config):
             manager.request_restart(new_config)
 
-        watcher = await create_config_watcher(config_file, restart_callback)
-
-        # Register the watcher globally so config updates can pause it
+        watcher = await create_config_watcher(config_file, restart_cb)
         set_global_watcher(watcher)
-
-        print_log(f"👀 Config file watcher enabled for: {config_file}", BColors.OKCYAN)
+        logger.info("Config watcher enabled", file=config_file)
         return watcher
-
     except ImportError:
-        print_log(
-            "⚠️ Config file watching not available "
-            "(install 'watchdog' package for this feature)",
-            BColors.WARNING,
-        )
+        logger.warning("Config watching unavailable - install watchdog")
         return None
-    except Exception as e:
-        print_log(f"⚠️ Failed to start config watcher: {e}", BColors.WARNING)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Config watcher start failed: {e}")
         return None
 
 
 async def _run_main_loop(manager: BotManager):
-    """Run the main bot loop handling restarts and monitoring"""
     while manager.running:
         await asyncio.sleep(1)
-
-        # Check for shutdown
         if manager.shutdown_initiated:
-            print_log("\n🛑 Shutdown initiated, stopping bots...", BColors.WARNING)
+            logger.warning("Shutdown initiated - stopping bots")
             await manager._stop_all_bots()
             break
-
-        # Check for restart requests
         if manager.restart_requested:
-            success = await manager._restart_with_new_config()
-            if not success:
-                print_log(
-                    "❌ Failed to restart bots, continuing with previous configuration",
-                    BColors.FAIL,
-                )
+            ok = await manager._restart_with_new_config()
+            if not ok:
+                logger.error("Restart failed - keeping previous config")
             continue
-
-        # Check if all tasks have completed
         if all(task.done() for task in manager.tasks):
-            # All tasks completed unexpectedly - likely an error
-            print_log("\n⚠️ All bot tasks have completed unexpectedly", BColors.WARNING)
-            print_log(
-                "💡 This usually means authentication failed or connection issues",
-                BColors.OKCYAN,
-            )
-            print_log(
-                "🔧 Please verify your Twitch API credentials are valid", BColors.OKCYAN
-            )
+            logger.warning("All bot tasks completed unexpectedly")
+            logger.info("Likely authentication or connection issue")
             break
 
 
-def _cleanup_watcher(watcher):
-    """Clean up config watcher and global references"""
+def _cleanup_watcher(watcher):  # pragma: no cover
     if watcher:
         watcher.stop()
-
-    # Clear global watcher reference
     try:
         set_global_watcher(None)
     except (ImportError, AttributeError):
         pass
 
 
-async def run_bots(users_config: list[dict[str, Any]], config_file: str = None):
-    """Main function to run all bots with config file watching"""
+async def run_bots(users_config: list[dict[str, Any]], config_file: str | None = None):
     manager = BotManager(users_config, config_file)
-
-    # Setup signal handlers for graceful shutdown
     manager.setup_signal_handlers()
-
-    # Setup config watcher
     watcher = await _setup_config_watcher(manager, config_file)
-
     try:
-        # Start all bots
         success = await manager._start_all_bots()
         if not success:
             return
-
-        print_log("\n🎮 Bots are running! Press Ctrl+C to stop.", BColors.HEADER)
-        print_log(
-            "💬 Start chatting in your channels to see color changes!", BColors.OKBLUE
-        )
-        print_log(
-            "⚠️ Note: If bots exit quickly, check your Twitch credentials",
-            BColors.WARNING,
-        )
-
-        # Run main loop
+        logger.info("Bots running - press Ctrl+C to stop")
         await _run_main_loop(manager)
-
-    except KeyboardInterrupt:
-        print_log("\n⌨️ Keyboard interrupt received", BColors.WARNING)
-    except Exception as e:
-        print_log(f"❌ Fatal error: {e}", BColors.FAIL)
+    except KeyboardInterrupt:  # noqa: PERF203
+        logger.warning("Keyboard interrupt")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Fatal error: {e}")
     finally:
-        # Cleanup
         _cleanup_watcher(watcher)
         await manager._stop_all_bots()
         manager.print_statistics()
-        print_log("\n👋 Goodbye!", BColors.OKBLUE)
+        logger.info("Goodbye")

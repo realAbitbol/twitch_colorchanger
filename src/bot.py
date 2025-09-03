@@ -7,13 +7,12 @@ import json
 import os
 import time
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 import aiohttp
 
 from .adaptive_scheduler import AdaptiveScheduler
 from .async_irc import AsyncTwitchIRC
-from .colors import BColors, generate_random_hex_color, get_different_twitch_color
 from .config import (
     disable_random_colors_for_user,
     normalize_channels,
@@ -23,8 +22,77 @@ from .constants import NETWORK_PARTITION_THRESHOLD, PARTIAL_CONNECTIVITY_THRESHO
 from .error_handling import APIError, simple_retry
 from .logger import logger
 from .rate_limiter import get_rate_limiter
-from .token_service import TokenService, TokenStatus
-from .utils import print_log
+from .token_manager import get_token_manager
+
+
+# Local color helpers (previously in colors.py)
+def _twitch_preset_colors():
+    return [
+        "blue",
+        "blue_violet",
+        "cadet_blue",
+        "chocolate",
+        "coral",
+        "dodger_blue",
+        "firebrick",
+        "golden_rod",
+        "green",
+        "hot_pink",
+        "orange_red",
+        "red",
+        "sea_green",
+        "spring_green",
+        "yellow_green",
+    ]
+
+
+def get_different_twitch_color(exclude_color=None):
+    colors = _twitch_preset_colors()
+    if exclude_color is None or len(colors) <= 1:
+        import random  # nosec B311
+
+        return random.choice(colors)  # nosec B311
+    available = [c for c in colors if c != exclude_color]
+    import random  # nosec B311
+
+    return random.choice(available)  # nosec B311
+
+
+def generate_random_hex_color(exclude_color=None):
+    import random  # nosec B311
+
+    max_attempts = 10
+    attempts = 0
+    while attempts < max_attempts:
+        hue = random.randint(0, 359)  # nosec B311
+        saturation = random.randint(60, 100)  # nosec B311
+        lightness = random.randint(35, 75)  # nosec B311
+        c = (1 - abs(2 * lightness / 100 - 1)) * saturation / 100
+        x = c * (1 - abs((hue / 60) % 2 - 1))
+        m = lightness / 100 - c / 2
+        if 0 <= hue < 60:
+            r, g, b = c, x, 0
+        elif 60 <= hue < 120:
+            r, g, b = x, c, 0
+        elif 120 <= hue < 180:
+            r, g, b = 0, c, x
+        elif 180 <= hue < 240:
+            r, g, b = 0, x, c
+        elif 240 <= hue < 300:
+            r, g, b = x, 0, c
+        else:
+            r, g, b = c, 0, x
+        r = int((r + m) * 255)
+        g = int((g + m) * 255)
+        b = int((b + m) * 255)
+        color = f"#{r:02x}{g:02x}{b:02x}"
+        if exclude_color is None or color != exclude_color:
+            return color
+        attempts += 1
+    return color
+
+
+# print_log fully migrated to structured logger; legacy import removed
 
 # Constants
 CHAT_COLOR_ENDPOINT = "chat/color"
@@ -101,9 +169,8 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 "http_session is required - bots must use shared HTTP session"
             )
         self.http_session = http_session
-
-        # Token service for unified token management (required)
-        self.token_service = TokenService(client_id, client_secret, http_session)
+        # Central token manager (singleton) initialized on start()
+        self.token_manager = None  # Set during start()
 
         # Bot settings
         self.channels = channels
@@ -121,7 +188,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         self.messages_sent = 0
         self.colors_changed = 0
 
-        # Network partition detection
+        # Network partition detection / health tracking
         self.last_successful_connection = time.time()
         self.connection_failure_start: float | None = None
 
@@ -131,35 +198,50 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         self.consecutive_refresh_failures = 0
 
         # Color tracking to avoid repeating the same color
-        self.last_color = None
+        self.last_color: str | None = None
 
         # Rate limiter for API requests
         self.rate_limiter = get_rate_limiter(self.client_id, self.username)
 
-        # Adaptive scheduler for task management
+        # Adaptive scheduler (currently mostly idle, reserved for future tasks)
         self.scheduler = AdaptiveScheduler()
 
     async def start(self):
         """Start the bot"""
-        print_log(f"🚀 Starting bot for {self.username}", BColors.OKBLUE)
+        logger.info(f"🚀 Starting bot for {self.username}", user=self.username)
         self.running = True
-        # Validate token and refresh only if needed
-        print_log(f"🔍 {self.username}: Checking token validity...", BColors.OKCYAN)
-        await self._check_and_refresh_token()
+        # Register with centralized TokenManager and ensure token freshness
+        logger.info(
+            f"🔍 {self.username}: Registering with token manager...", user=self.username
+        )
+        self.token_manager = get_token_manager(self.http_session)
+        # Initial registration (expiry unknown yet)
+        self.token_manager.register_user(
+            username=self.username,
+            access_token=self.access_token,
+            refresh_token=self.refresh_token,
+            client_id=self.client_id,
+            client_secret=self.client_secret,
+            expiry=self.token_expiry,
+        )
+        await self.token_manager.start()
+        fresh = await self.token_manager.get_fresh_token(self.username)
+        if fresh:
+            self.access_token = fresh
 
         # Fetch user_id if not set
         if not self.user_id:
             user_info = await self._get_user_info()
             if user_info and "id" in user_info:
                 self.user_id = user_info["id"]
-                print_log(
+                logger.info(
                     f"✅ {self.username}: Retrieved user_id: {self.user_id}",
-                    BColors.OKGREEN,
+                    user=self.username,
                 )
             else:
-                print_log(
+                logger.error(
                     f"❌ {self.username}: Failed to retrieve user_id",
-                    BColors.FAIL,
+                    user=self.username,
                 )
                 return
 
@@ -167,13 +249,13 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         current_color = await self._get_current_color()
         if current_color:
             self.last_color = current_color
-            print_log(
+            logger.info(
                 f"✅ {self.username}: Initialized with current color: {current_color}",
-                BColors.OKGREEN,
+                user=self.username,
             )
 
         # Create IRC connection using async IRC client
-        print_log(f"🚀 {self.username}: Using async IRC client", BColors.OKCYAN)
+        logger.info(f"🚀 {self.username}: Using async IRC client", user=self.username)
         self.irc = AsyncTwitchIRC()
 
         # Normalize channels using centralized function
@@ -181,10 +263,10 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
 
         # Check if normalization changed the channels list
         if was_changed:
-            print_log(
+            logger.info(
                 f"📝 {self.username}: Normalized channels: "
                 f"{len(self.channels)} → {len(normalized_channels)}",
-                BColors.OKBLUE,
+                user=self.username,
             )
             self.channels = normalized_channels
 
@@ -196,19 +278,26 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         # Set up all channels in IRC object before connecting
         self.irc.channels = normalized_channels.copy()
 
-        # Set up message handler BEFORE connecting to avoid race condition
+        # Set up message & auth failure handlers BEFORE connecting
         self.irc.set_message_handler(self.handle_irc_message)
+        try:
+            self.irc.set_auth_failure_callback(self._on_irc_auth_failure)  # type: ignore[attr-defined]
+        except AttributeError:
+            pass  # Older IRC class version without auth callback
 
         # Connect to IRC with the first channel (now async)
         if not await self.irc.connect(
             self.access_token, self.username, normalized_channels[0]
         ):
-            print_log(f"❌ {self.username}: Failed to connect to IRC", BColors.FAIL)
+            logger.error(
+                f"❌ {self.username}: Failed to connect to IRC", user=self.username
+            )
             return
 
         # Start IRC listening task immediately after connection
-        print_log(
-            f"👂 {self.username}: Starting async message listener...", BColors.OKCYAN
+        logger.info(
+            f"👂 {self.username}: Starting async message listener...",
+            user=self.username,
         )
         self.irc_task = asyncio.create_task(self.irc.listen())
 
@@ -218,55 +307,20 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         ]:  # Skip first channel, already joined in connect
             await self.irc.join_channel(channel)
 
-        # Start adaptive scheduler
+        # Start scheduler (currently idle) for future extensibility
         await self.scheduler.start()
-
-        # Schedule token monitoring tasks
-        await self.scheduler.schedule_recurring(
-            callback=self._check_irc_health,
-            name="irc_health_check",
-            interval=120,  # Every 2 minutes
-            priority=1,  # High priority
-        )
-
-        # Add scheduler health monitoring
-        await self.scheduler.schedule_recurring(
-            callback=self._check_scheduler_health,
-            name="scheduler_health_check",
-            interval=300,  # Every 5 minutes
-            priority=3,  # Lower priority
-        )
-
-        # Calculate initial token check interval based on expiry
-        initial_token_interval = 300  # Default 5 minutes
-        if self.token_service and self.token_expiry:
-            initial_token_interval = self.token_service.next_check_delay(
-                self.token_expiry
-            )
-            print_log(
-                f"📅 {self.username}: Initial token check in {initial_token_interval / 60:.1f}m",
-                BColors.OKCYAN,
-                debug_only=True,
-            )
-
-        await self.scheduler.schedule_recurring(
-            callback=self._adaptive_token_check,
-            name="token_check",
-            interval=initial_token_interval,  # Adaptive interval based on token expiry
-            priority=2,  # Lower priority than IRC health
-        )
 
         try:
             # Wait for IRC task to complete (scheduler runs independently)
             await self.irc_task
         except KeyboardInterrupt:
-            print_log("🛑 Shutting down bot...", BColors.WARNING)
+            logger.warning("🛑 Shutting down bot...", user=self.username)
         finally:
             await self.stop()
 
     async def stop(self):
         """Stop the bot"""
-        print_log(f"⏹️ Stopping bot for {self.username}", BColors.WARNING)
+        logger.warning(f"⏹️ Stopping bot for {self.username}", user=self.username)
         self.running = False
 
         # Stop scheduler
@@ -299,7 +353,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             try:
                 await self.irc.disconnect()
             except Exception as e:
-                print_log(f"⚠️ Error disconnecting IRC: {e}", BColors.WARNING)
+                logger.warning(f"⚠️ Error disconnecting IRC: {e}", user=self.username)
 
     async def _wait_for_irc_task(self):
         """Wait for IRC task to finish with timeout"""
@@ -307,9 +361,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             try:
                 await asyncio.wait_for(self.irc_task, timeout=2.0)
             except TimeoutError:
-                print_log(
+                logger.warning(
                     f"⚠️ IRC task didn't finish within timeout for {self.username}",
-                    BColors.WARNING,
+                    user=self.username,
                 )
                 # Cancel the task if it's still running
                 self.irc_task.cancel()
@@ -318,7 +372,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 # Re-raise CancelledError as per asyncio best practices
                 raise
             except Exception as e:
-                print_log(f"⚠️ Error waiting for IRC task: {e}", BColors.WARNING)
+                logger.warning(f"⚠️ Error waiting for IRC task: {e}", user=self.username)
 
     async def handle_irc_message(self, sender: str, channel: str, message: str):
         """Handle IRC messages from the async IRC client"""
@@ -331,74 +385,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             # Direct async color change - no more threading complexity!
             await self._change_color()
 
-    async def _adaptive_token_check(self):
-        """Adaptive token check using scheduler-based timing with comprehensive error handling"""
-        try:
-            if not self.running:
-                return
-
-            # Always perform the token check when called
-            success = await self._check_and_refresh_token()
-
-            if not success:
-                print_log(
-                    f"⚠️ {self.username}: Token check failed, will retry more frequently",
-                    BColors.WARNING,
-                )
-                # Use shorter interval on failure for quicker recovery
-                await self.scheduler.reschedule_task("token_check", 60)  # 1 minute
-                return
-
-            # Calculate next check delay based on token expiry and reschedule
-            if self.token_service and self.token_expiry:
-                next_delay = self.token_service.next_check_delay(self.token_expiry)
-
-                # Update scheduler interval for more efficient timing
-                await self.scheduler.reschedule_task("token_check", next_delay)
-
-                print_log(
-                    f"📅 {self.username}: Next token check in {next_delay / 60:.1f}m",
-                    BColors.OKCYAN,
-                    debug_only=True,
-                )
-            else:
-                # Fallback to default interval if no expiry info
-                await self.scheduler.reschedule_task("token_check", 300)  # 5 minutes
-                print_log(
-                    f"⚠️ {self.username}: No token expiry info, using default 5m interval",
-                    BColors.WARNING,
-                    debug_only=True,
-                )
-
-        except asyncio.CancelledError:
-            # Don't log cancelled tasks as errors
-            print_log(
-                f"🚫 {self.username}: Token check cancelled",
-                BColors.WARNING,
-                debug_only=True,
-            )
-            raise  # Re-raise to maintain proper cancellation behavior
-
-        except Exception as e:
-            print_log(
-                f"❌ Error in adaptive token check for {self.username}: {e}",
-                BColors.FAIL,
-            )
-            # Schedule retry with exponential backoff on error
-            error_retry_delay = min(
-                300, 60 * (2 ** getattr(self, "_token_check_failures", 0))
-            )
-            self._token_check_failures = getattr(self, "_token_check_failures", 0) + 1
-
-            # Cap at 5 failures before using max delay
-            if self._token_check_failures > 5:
-                self._token_check_failures = 5
-
-            await self.scheduler.reschedule_task("token_check", error_retry_delay)
-            print_log(
-                f"⏳ {self.username}: Token check will retry in {error_retry_delay}s due to error",
-                BColors.WARNING,
-            )
+    # Removed _adaptive_token_check; token freshness handled on-demand by TokenManager
 
     async def _check_scheduler_health(self):
         """Monitor scheduler health and restart if necessary"""
@@ -406,17 +393,17 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             health = self.scheduler.get_health_status()
 
             if not health["running"]:
-                print_log(
+                logger.error(
                     f"❌ {self.username}: Scheduler not running, attempting restart",
-                    BColors.FAIL,
+                    user=self.username,
                 )
                 await self.scheduler.start()
                 return
 
             if not health["has_scheduler_task"]:
-                print_log(
+                logger.error(
                     f"❌ {self.username}: Scheduler task stopped, attempting restart",
-                    BColors.FAIL,
+                    user=self.username,
                 )
                 await self.scheduler.stop()
                 await self.scheduler.start()
@@ -425,15 +412,15 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             # Check if scheduler is stalled (next task delay is unreasonably high)
             next_delay = health["next_task_delay"]
             if next_delay > 3600:  # More than 1 hour
-                print_log(
+                logger.warning(
                     f"⚠️ {self.username}: Scheduler appears stalled (next task in {next_delay / 60:.1f}m)",
-                    BColors.WARNING,
+                    user=self.username,
                 )
 
         except Exception as e:
-            print_log(
+            logger.error(
                 f"❌ Error checking scheduler health for {self.username}: {e}",
-                BColors.FAIL,
+                user=self.username,
             )
 
     def get_failure_statistics(self) -> dict:
@@ -456,39 +443,41 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
 
         if stats["connected"] and stats["is_healthy"]:
             self.last_successful_connection = current_time
-            if self.connection_failure_start:
+            if self.connection_failure_start is not None:
                 # Connection recovered
                 failure_duration = current_time - self.connection_failure_start
                 if failure_duration > PARTIAL_CONNECTIVITY_THRESHOLD:
-                    print_log(
+                    logger.info(
                         f"✅ {self.username}: Connection recovered after {failure_duration:.1f}s",
-                        BColors.OKGREEN,
+                        user=self.username,
                     )
                 self.connection_failure_start = None
         else:
             # Connection is unhealthy
-            if not self.connection_failure_start:
+            if self.connection_failure_start is None:
                 self.connection_failure_start = current_time
-                print_log(
+                logger.warning(
                     f"⚠️ {self.username}: Connection failure detected",
-                    BColors.WARNING,
+                    user=self.username,
                 )
-
-            failure_duration = current_time - self.connection_failure_start
+            failure_duration = (
+                current_time - self.connection_failure_start
+                if self.connection_failure_start is not None
+                else 0.0
+            )
 
             # Check for partial connectivity (quick failures)
             if failure_duration > PARTIAL_CONNECTIVITY_THRESHOLD:
-                print_log(
+                logger.warning(
                     f"🔄 {self.username}: Partial connectivity detected ({failure_duration:.1f}s)",
-                    BColors.WARNING,
+                    user=self.username,
                 )
 
             # Check for network partition (extended failures)
             if failure_duration > NETWORK_PARTITION_THRESHOLD:
-                print_log(
-                    f"🚨 {self.username}: Network partition detected ({failure_duration:.1f}s) - "
-                    "extended connection failure",
-                    BColors.FAIL,
+                logger.error(
+                    f"🚨 {self.username}: Network partition detected ({failure_duration:.1f}s) - extended connection failure",
+                    user=self.username,
                 )
 
     def _check_irc_health(self):
@@ -515,154 +504,58 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             # Log health status with detailed reasons
             if health_data["healthy"]:
                 activity_time = health_data.get("time_since_activity") or 0.0
-                print_log(
-                    f"🏥 {self.username} IRC health: OK, "
-                    f"state: {health_data['state']}, "
-                    f"activity: {activity_time:.1f}s ago",
-                    BColors.OKBLUE,
-                    debug_only=True,
+                logger.debug(
+                    f"🏥 {self.username} IRC health: OK, state: {health_data['state']}, activity: {activity_time:.1f}s ago",
+                    user=self.username,
                 )
             else:
                 # Show unhealthy reasons
                 reasons_str = ", ".join(health_data["reasons"])
-                print_log(
-                    f"⚠️ {self.username}: IRC unhealthy - {reasons_str}, "
-                    f"state: {health_data['state']}",
-                    BColors.WARNING,
+                logger.warning(
+                    f"⚠️ {self.username}: IRC unhealthy - {reasons_str}, state: {health_data['state']}",
+                    user=self.username,
                 )
 
                 # Log that IRC handles its own reconnection
-                print_log(
+                logger.debug(
                     f"🔄 {self.username}: IRC will handle reconnection automatically",
-                    BColors.WARNING,
-                    debug_only=True,
+                    user=self.username,
                 )
 
         except Exception as e:
-            print_log(
+            logger.warning(
                 f"⚠️ Error checking IRC health for {self.username}: {e}",
-                BColors.WARNING,
+                user=self.username,
             )
 
-    async def _check_and_refresh_token(self, force: bool = False):
-        """Check and refresh token using TokenService"""
-        if not self._validate_token_prerequisites():
+    async def _check_and_refresh_token(
+        self, force: bool = False
+    ):  # Backwards compatibility wrapper
+        if not hasattr(self, "token_manager"):
             return False
-
-        try:
-            (
-                status,
-                new_access_token,
-                new_refresh_token,
-                new_expiry,
-            ) = await self.token_service.validate_and_refresh(
-                self.access_token,
-                self.refresh_token,
-                self.username,
-                self.token_expiry,
-                force,
-            )
-
-            return self._handle_token_status(
-                status, new_access_token, new_refresh_token, new_expiry
-            )
-
-        except Exception as e:
-            print_log(f"❌ {self.username}: Error in token service: {e}", BColors.FAIL)
+        if not self.token_manager:
             return False
+        if force:
+            await self.token_manager.force_refresh(self.username)
+        fresh = await self.token_manager.get_fresh_token(self.username)
+        if fresh:
+            self.access_token = fresh
+            return True
+        return False
 
     def _validate_token_prerequisites(self) -> bool:
-        """Validate that we have the necessary components for token refresh"""
-        if not self.refresh_token:
-            print_log(
-                f"⚠️ {self.username}: No refresh token available",
-                BColors.WARNING,
-            )
-            return False
+        return True  # TokenManager handles validation logic centrally
 
-        if not self.token_service:
-            print_log(
-                f"❌ {self.username}: TokenService not available "
-                "(http_session required)",
-                BColors.FAIL,
-            )
-            return False
-
+    def _handle_token_status(self):  # Deprecated path
         return True
 
-    def _handle_token_status(
-        self,
-        status: "TokenStatus",
-        new_access_token: str | None,
-        new_refresh_token: str | None,
-        new_expiry: Optional["datetime"],
-    ) -> bool:
-        """Handle the result of token validation/refresh with failure tracking"""
-        if status == TokenStatus.VALID:
-            return self._handle_valid_token(new_access_token, new_expiry)
-
-        if status == TokenStatus.REFRESHED:
-            return self._handle_refreshed_token(
-                new_access_token, new_refresh_token, new_expiry
-            )
-
-        # TokenStatus.FAILED - track failure
-        return self._handle_failed_token()
-
-    def _handle_valid_token(
-        self, new_access_token: str | None, new_expiry: Optional["datetime"]
-    ) -> bool:
-        """Handle a valid token status"""
-        # Update expiry even for valid tokens
-        if new_expiry:
-            self.token_expiry = new_expiry
-            self._display_token_expiry()
-        # Update IRC token if we got a new access token from live validation
-        if new_access_token and self.irc and new_access_token != self.access_token:
-            self.access_token = new_access_token
-            self.irc.update_token(new_access_token)
-        # Reset failure counters on success
-        self.consecutive_refresh_failures = 0
+    def _handle_valid_token(self):  # Deprecated
         return True
 
-    def _handle_refreshed_token(
-        self,
-        new_access_token: str | None,
-        new_refresh_token: str | None,
-        new_expiry: Optional["datetime"],
-    ) -> bool:
-        """Handle a refreshed token status"""
-        # Update all token information
-        if new_access_token:
-            self.access_token = new_access_token
-            # Update IRC client with new token for future reconnections
-            if self.irc:
-                self.irc.update_token(new_access_token)
-        if new_refresh_token:
-            self.refresh_token = new_refresh_token
-        if new_expiry:
-            self.token_expiry = new_expiry
-            self._display_token_expiry()
-
-        # Persist changes to config file
-        self._persist_token_changes()
-        # Reset failure counters on success
-        self.consecutive_refresh_failures = 0
+    def _handle_refreshed_token(self):  # Deprecated
         return True
 
-    def _handle_failed_token(self) -> bool:
-        """Handle a failed token status"""
-        self.consecutive_refresh_failures += 1
-        self.token_failure_count += 1
-        self.last_token_failure = time.time()
-
-        # Log critical failures
-        if self.consecutive_refresh_failures >= 3:
-            print_log(
-                f"🚨 {self.username}: CRITICAL - {self.consecutive_refresh_failures} consecutive token refresh failures!",
-                BColors.FAIL,
-            )
-
+    def _handle_failed_token(self):  # Deprecated
         return False
 
     def _display_token_expiry(self):
@@ -673,9 +566,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         time_remaining = self.token_expiry - datetime.now()
 
         if time_remaining.total_seconds() <= 0:
-            print_log(
+            logger.warning(
                 f"⚠️ {self.username}: Token has expired",
-                BColors.WARNING,
+                user=self.username,
             )
         else:
             # Convert to hours and minutes for display
@@ -688,9 +581,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             else:
                 time_str = f"{minutes}m"
 
-            print_log(
+            logger.info(
                 f"⏰ {self.username}: Token expires in {time_str}",
-                BColors.OKCYAN,
+                user=self.username,
             )
 
     async def _get_user_info(self):
@@ -810,27 +703,49 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     def _validate_config_prerequisites(self) -> bool:
         """Validate prerequisites for config persistence"""
         if not hasattr(self, "config_file") or not self.config_file:
-            print_log(
+            logger.warning(
                 f"⚠️ {self.username}: No config file specified, cannot persist tokens",
-                BColors.WARNING,
+                user=self.username,
             )
             return False
 
         if not self.access_token:
-            print_log(
+            logger.warning(
                 f"⚠️ {self.username}: Cannot save empty access token",
-                BColors.WARNING,
+                user=self.username,
             )
             return False
 
         if not self.refresh_token:
-            print_log(
+            logger.warning(
                 f"⚠️ {self.username}: Cannot save empty refresh token",
-                BColors.WARNING,
+                user=self.username,
             )
             return False
 
         return True
+
+    async def _on_irc_auth_failure(self):
+        """Callback invoked when IRC indicates authentication failure."""
+        try:
+            if not hasattr(self, "token_manager"):
+                return
+            refreshed = await self.token_manager.force_refresh(self.username)
+            info = self.token_manager.get_token_info(self.username)
+            if info and info.access_token:
+                self.access_token = info.access_token
+                if self.irc:
+                    self.irc.update_token(info.access_token)
+                if refreshed:
+                    logger.info(
+                        f"🔑 {self.username}: Token refreshed after IRC auth failure",
+                        user=self.username,
+                    )
+        except Exception as e:  # noqa: BLE001
+            logger.error(
+                f"❌ {self.username}: Error handling IRC auth failure: {e}",
+                user=self.username,
+            )
 
     def _build_user_config(self) -> dict:
         """Build user configuration dictionary"""
@@ -850,23 +765,23 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         """Attempt to save config with error handling"""
         try:
             update_user_in_config(user_config, self.config_file)
-            print_log(
+            logger.info(
                 f"💾 {self.username}: Token changes saved to configuration",
-                BColors.OKGREEN,
+                user=self.username,
             )
             return True
 
         except FileNotFoundError:
-            print_log(
+            logger.error(
                 f"❌ {self.username}: Config file not found: {self.config_file}",
-                BColors.FAIL,
+                user=self.username,
             )
             return True  # Don't retry for missing file
 
         except PermissionError:
-            print_log(
+            logger.error(
                 f"❌ {self.username}: Permission denied writing to config file",
-                BColors.FAIL,
+                user=self.username,
             )
             return True  # Don't retry for permission errors
 
@@ -878,9 +793,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     ) -> bool:
         """Handle config save errors with retry logic"""
         if attempt < max_retries - 1:
-            print_log(
+            logger.warning(
                 f"⚠️ {self.username}: Failed to save tokens (attempt {attempt + 1}): {error}, retrying...",
-                BColors.WARNING,
+                user=self.username,
             )
             # Brief delay before retry
             import time
@@ -888,9 +803,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             time.sleep(0.1 * (attempt + 1))
             return False  # Continue retrying
         else:
-            print_log(
+            logger.error(
                 f"❌ {self.username}: Failed to save token changes after {max_retries} attempts: {error}",
-                BColors.FAIL,
+                user=self.username,
             )
             return True  # Stop retrying
 
@@ -908,14 +823,14 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             }
             try:
                 update_user_in_config(user_config, self.config_file)
-                print_log(
+                logger.info(
                     f"💾 {self.username}: Normalized channels saved to configuration",
-                    BColors.OKGREEN,
+                    user=self.username,
                 )
             except Exception as e:
-                print_log(
+                logger.warning(
                     f"⚠️ {self.username}: Failed to save normalized channels: {e}",
-                    BColors.WARNING,
+                    user=self.username,
                 )
 
     async def _change_color(self, hex_color=None):
@@ -1091,9 +1006,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                     )
                 else:
                     logger.warning(
-                        f"Failed to persist random color setting change for {
-                            self.username
-                        }",
+                        f"Failed to persist random color setting change for {self.username}",
                         user=self.username,
                     )
 
@@ -1243,11 +1156,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
 
     def close(self):
         """Close the bot and clean up resources"""
-        print_log(
-            f"🛑 Closing bot for {self.username}",
-            BColors.WARNING,
-            debug_only=False,
-        )
+        logger.info("Closing bot for %s", self.username)
         self.running = False
 
         # Note: Don't set self.irc = None here to avoid race conditions
@@ -1255,8 +1164,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
 
     def print_statistics(self):
         """Print bot statistics"""
-        print_log(
-            f"📊 {self.username}: Messages sent: {self.messages_sent}, Colors changed: {
-                self.colors_changed
-            }"
+        logger.info(
+            "📊 %s: Messages sent: %d, Colors changed: %d",
+            self.username,
+            self.messages_sent,
+            self.colors_changed,
         )

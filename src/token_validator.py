@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 
 from .constants import CONFIG_SAVE_TIMEOUT
-from .logger import BColors, print_log
+from .logger import logger
 
 # Constants
 TWITCH_VALIDATION_ENDPOINT = "https://id.twitch.tv/oauth2/validate"
@@ -49,10 +49,10 @@ class TokenValidator:
             return True, expires_in
 
         except Exception as e:
-            print_log(
-                f"❌ Token validation failed: {e}",
-                BColors.FAIL,
-                debug_only=True,
+            logger.error(
+                "token_validation_exception",
+                error=str(e),
+                error_type=type(e).__name__,
             )
             return False, 0
 
@@ -119,24 +119,23 @@ class TokenValidator:
                     data = response.json()
                     self.access_token = data["access_token"]
                     self.refresh_token = data.get("refresh_token", self.refresh_token)
-                    print_log(
-                        "🔄 Token refreshed successfully",
-                        BColors.OKGREEN,
-                        debug_only=True,
+                    logger.info(
+                        "token_refresh_success",
+                        has_new_refresh_token=self.refresh_token
+                        != data.get("refresh_token", self.refresh_token),
                     )
                     return True
-                print_log(
-                    f"❌ Token refresh failed: {response.status_code}",
-                    BColors.FAIL,
-                    debug_only=True,
+                logger.error(
+                    "token_refresh_failed_status",
+                    status=response.status_code,
                 )
                 return False
 
         except Exception as e:
-            print_log(
-                f"❌ Token refresh error: {e}",
-                BColors.FAIL,
-                debug_only=True,
+            logger.error(
+                "token_refresh_exception",
+                error=str(e),
+                error_type=type(e).__name__,
             )
             return False
 
@@ -172,16 +171,18 @@ async def validate_user_tokens(user: dict[str, Any]) -> dict[str, Any]:
     client_secret = user.get("client_secret")
 
     if not access_token:
-        print_log(
-            f"🔑 {username}: No access token found", BColors.WARNING, debug_only=True
+        logger.warning(
+            "token_validation_missing_access_token",
+            user=username,
         )
         return {"valid": False, "user": user, "updated": False}
 
     if not client_id or not client_secret:
-        print_log(
-            f"🔑 {username}: Missing client credentials",
-            BColors.WARNING,
-            debug_only=True,
+        logger.warning(
+            "token_validation_missing_client_credentials",
+            user=username,
+            has_client_id=bool(client_id),
+            has_client_secret=bool(client_secret),
         )
         return {"valid": False, "user": user, "updated": False}
 
@@ -206,10 +207,9 @@ async def validate_user_tokens(user: dict[str, Any]) -> dict[str, Any]:
                 # Update user config with refreshed tokens
                 user["access_token"] = validator.access_token
                 user["refresh_token"] = validator.refresh_token
-                print_log(
-                    f"🔄 {username}: Token was refreshed during validation",
-                    BColors.OKGREEN,
-                    debug_only=True,
+                logger.info(
+                    "token_validation_refreshed",
+                    user=username,
                 )
             else:
                 # Token was valid without refresh, show remaining duration
@@ -219,22 +219,26 @@ async def validate_user_tokens(user: dict[str, Any]) -> dict[str, Any]:
                     duration_str = f"{hours}h {minutes}m"
                 else:
                     duration_str = f"{minutes}m"
-                print_log(
-                    f"✅ {username}: Token is valid (expires in {duration_str})",
-                    BColors.OKGREEN,
+                logger.info(
+                    "token_validation_valid",
+                    user=username,
+                    expires_in_seconds=expires_in,
+                    human_remaining=duration_str,
                 )
 
             return {"valid": True, "user": user, "updated": updated}
-        print_log(
-            f"❌ {username}: Token validation failed", BColors.FAIL, debug_only=True
+        logger.error(
+            "token_validation_failed",
+            user=username,
         )
         return {"valid": False, "user": user, "updated": False}
 
     except Exception as e:
-        print_log(
-            f"❌ {username}: Token validation error: {e}",
-            BColors.FAIL,
-            debug_only=True,
+        logger.error(
+            "token_validation_error",
+            user=username,
+            error=str(e),
+            error_type=type(e).__name__,
         )
         return {"valid": False, "user": user, "updated": False}
 
@@ -254,10 +258,10 @@ async def validate_new_tokens(user: dict[str, Any]) -> dict[str, Any]:
     required_keys = ["client_id", "client_secret", "access_token", "refresh_token"]
     for key in required_keys:
         if key not in user:
-            print_log(
-                f"❌ New tokens validation error for {username}: Missing {key}",
-                BColors.FAIL,
-                debug_only=True,
+            logger.error(
+                "new_token_validation_missing_field",
+                user=username,
+                field=key,
             )
             return {"valid": False, "user": user}
 
@@ -276,24 +280,23 @@ async def validate_new_tokens(user: dict[str, Any]) -> dict[str, Any]:
             # Update user with any refreshed token information
             user["access_token"] = validator.access_token
             user["refresh_token"] = validator.refresh_token
-            print_log(
-                f"✅ New tokens for {username} validated successfully",
-                BColors.OKGREEN,
-                debug_only=True,
+            logger.info(
+                "new_token_validation_success",
+                user=username,
             )
             return {"valid": True, "user": user}
 
-        print_log(
-            f"⚠️ New tokens for {username} validation failed",
-            BColors.WARNING,
-            debug_only=True,
+        logger.warning(
+            "new_token_validation_failed",
+            user=username,
         )
         return {"valid": False, "user": user}
 
     except Exception as e:
-        print_log(
-            f"❌ New tokens validation error for {username}: {e}",
-            BColors.FAIL,
-            debug_only=True,
+        logger.error(
+            "new_token_validation_exception",
+            user=username,
+            error=str(e),
+            error_type=type(e).__name__,
         )
         return {"valid": False, "user": user}

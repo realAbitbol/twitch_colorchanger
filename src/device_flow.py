@@ -7,8 +7,7 @@ import time
 
 import aiohttp
 
-from .colors import BColors
-from .utils import print_log
+from .logger import logger
 
 
 class DeviceCodeFlow:
@@ -35,18 +34,28 @@ class DeviceCodeFlow:
                 async with session.post(self.device_code_url, data=data) as response:
                     if response.status == 200:
                         result = await response.json()
-                        print_log(
-                            "✅ Device code generated successfully", BColors.OKGREEN
+                        logger.info(
+                            "device_flow_code_success",
+                            client_id=self.client_id,
+                            interval=self.poll_interval,
                         )
                         return result
                     error_data = await response.json()
-                    print_log(
-                        f"❌ Failed to get device code: {error_data}", BColors.FAIL
+                    logger.error(
+                        "device_flow_code_error",
+                        client_id=self.client_id,
+                        error_data=str(error_data),
+                        status=response.status,
                     )
                     return None
 
             except Exception as e:
-                print_log(f"❌ Error requesting device code: {e}", BColors.FAIL)
+                logger.error(
+                    "device_flow_code_exception",
+                    client_id=self.client_id,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
                 return None
 
     async def poll_for_tokens(self, device_code: str, expires_in: int) -> dict | None:
@@ -71,9 +80,11 @@ class DeviceCodeFlow:
                         result = await response.json()
 
                         if response.status == 200:
-                            print_log(
-                                "✅ Authorization successful! Tokens received.",
-                                BColors.OKGREEN,
+                            logger.info(
+                                "device_flow_authorization_success",
+                                client_id=self.client_id,
+                                elapsed=elapsed,
+                                polls=poll_count,
                             )
                             return result
 
@@ -84,20 +95,31 @@ class DeviceCodeFlow:
                             if error_result is not None:
                                 return error_result
                         else:
-                            print_log(
-                                f"❌ Unexpected response: {response.status} - {result}",
-                                BColors.FAIL,
+                            logger.error(
+                                "device_flow_unexpected_response",
+                                status=response.status,
+                                result=str(result),
                             )
                             return None
 
                 except Exception as e:
-                    print_log(f"❌ Error during polling: {e}", BColors.FAIL)
+                    logger.error(
+                        "device_flow_poll_exception",
+                        error=str(e),
+                        error_type=type(e).__name__,
+                        elapsed=elapsed,
+                        polls=poll_count,
+                    )
                     return None
 
                 # Wait before next poll
                 await asyncio.sleep(self.poll_interval)
 
-        print_log(f"❌ Device code flow timed out after {expires_in}s", BColors.FAIL)
+        logger.error(
+            "device_flow_timeout",
+            client_id=self.client_id,
+            expires_in=expires_in,
+        )
         return None
 
     def _handle_polling_error(
@@ -110,45 +132,60 @@ class DeviceCodeFlow:
 
         # Log the full error details for debugging (only for non-pending errors)
         if error != "authorization_pending":
-            print_log(
-                f"🔍 Device flow error details: {result}",
-                BColors.WARNING,
-                debug_only=True,
+            logger.debug(
+                "device_flow_poll_error_details",
+                details=str(result),
             )
 
         if error == "authorization_pending":
             # Still waiting for user authorization
             if poll_count % 6 == 0:  # Show message every 30 seconds
-                print_log(
-                    f"⏳ Still waiting for authorization... ({elapsed}s elapsed)",
-                    BColors.OKCYAN,
+                logger.info(
+                    "device_flow_waiting_authorization",
+                    elapsed=elapsed,
+                    polls=poll_count,
                 )
             return None  # Continue polling
 
         if error == "slow_down":
             # Increase polling interval
             self.poll_interval = min(self.poll_interval + 1, 10)
-            print_log(
-                f"⚠️ Slowing down polling to {self.poll_interval}s",
-                BColors.WARNING,
+            logger.warning(
+                "device_flow_slow_down",
+                new_interval=self.poll_interval,
+                elapsed=elapsed,
+                polls=poll_count,
             )
             return None  # Continue polling
 
         if error == "expired_token":
-            print_log(f"❌ Device code expired after {elapsed}s", BColors.FAIL)
+            logger.error(
+                "device_flow_expired_token",
+                elapsed=elapsed,
+                polls=poll_count,
+            )
             return {}  # Stop polling
 
         if error == "access_denied":
-            print_log("❌ User denied authorization", BColors.FAIL)
+            logger.warning(
+                "device_flow_access_denied",
+                elapsed=elapsed,
+                polls=poll_count,
+            )
             return {}  # Stop polling
 
         # Unknown error
         if error_description:
-            print_log(
-                f"❌ Device flow error: {error} - {error_description}", BColors.FAIL
+            logger.error(
+                "device_flow_error",
+                error=error,
+                description=error_description,
             )
         else:
-            print_log(f"❌ Unknown device flow error: {error}", BColors.FAIL)
+            logger.error(
+                "device_flow_unknown_error",
+                error=error,
+            )
         return {}  # Stop polling
 
     async def get_user_tokens(self, username: str) -> tuple[str, str] | None:
@@ -156,10 +193,10 @@ class DeviceCodeFlow:
         Complete device code flow to get user tokens
         Returns (access_token, refresh_token) on success, None on failure
         """
-        print_log(
-            f"\n🔧 Starting automatic token setup for user: {username}", BColors.HEADER
+        logger.info(
+            "device_flow_start", user=username, poll_interval=self.poll_interval
         )
-        print_log("📱 You will need to authorize this bot on Twitch", BColors.OKCYAN)
+        logger.info("device_flow_authorization_required", user=username)
 
         # Step 1: Request device code
         device_data = await self.request_device_code()
@@ -172,25 +209,25 @@ class DeviceCodeFlow:
         expires_in = device_data["expires_in"]
 
         # Step 2: Display instructions to user
-        print_log("\n" + "=" * 60, BColors.PURPLE)
-        print_log(f"🎯 AUTHORIZATION REQUIRED FOR: {username.upper()}", BColors.PURPLE)
-        print_log("=" * 60, BColors.PURPLE)
-        print_log(f"📱 Visit: {verification_uri}", BColors.OKGREEN)
-        print_log(f"🔑 Enter code: {user_code}", BColors.OKGREEN)
-        print_log(f"⏰ Code expires in: {expires_in // 60} minutes", BColors.WARNING)
-        print_log("=" * 60, BColors.PURPLE)
-        print_log(
-            f"⏳ Waiting for authorization... (checking every {self.poll_interval}s)",
-            BColors.OKCYAN,
+        logger.info(
+            "device_flow_display_instructions",
+            user=username,
+            verification_uri=verification_uri,
+            code=user_code,
+            expires_minutes=expires_in // 60,
+        )
+        logger.info(
+            "device_flow_waiting",
+            user=username,
+            interval=self.poll_interval,
         )
 
         # Step 3: Poll for authorization
         token_data = await self.poll_for_tokens(device_code, expires_in)
         if not token_data:
             return None
-
         access_token = token_data["access_token"]
         refresh_token = token_data.get("refresh_token", "")
 
-        print_log(f"🎉 Successfully obtained tokens for {username}!", BColors.OKGREEN)
+        logger.info("device_flow_tokens_obtained", user=username)
         return access_token, refresh_token

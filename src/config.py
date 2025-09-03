@@ -14,13 +14,13 @@ from . import (
     token_validator,  # Standalone validator module (no circular import)
     watcher_globals,  # Always available within package
 )
-from .colors import BColors
 from .config_validator import get_valid_users
 from .config_validator import validate_user_config as validate_user
 from .constants import CONFIG_WRITE_DEBOUNCE
 from .device_flow import DeviceCodeFlow
 from .logger import logger
-from .utils import print_log
+
+# Legacy print_log removed after migration; structured logger used throughout
 
 # Constants for repeated messages
 
@@ -42,7 +42,7 @@ def load_users_from_config(config_file):
     except FileNotFoundError:
         return []
     except Exception as e:
-        print_log(f"⚠️ Error loading config: {e}", BColors.FAIL)
+        logger.error("config_load_error", error=str(e), error_type=type(e).__name__)
         return []
 
 
@@ -86,25 +86,23 @@ def _set_file_permissions(config_file):
 
 def _log_save_operation(users, config_file):
     """Log the save operation details"""
-    print_log(
-        f"💾 Saving {len(users)} users to {config_file}",
-        BColors.OKBLUE,
-        debug_only=True,
+    logger.debug(
+        "config_save_operation_start", user_count=len(users), config_file=config_file
     )
     for i, user in enumerate(users, 1):
-        print_log(
-            f"  User {i}: {user['username']} -> is_prime_or_turbo: {
-                user.get('is_prime_or_turbo', 'MISSING_FIELD')
-            }",
-            BColors.OKCYAN,
-            debug_only=True,
+        logger.debug(
+            "config_save_user_detail",
+            index=i,
+            username=user.get("username"),
+            is_prime_or_turbo=user.get("is_prime_or_turbo", "MISSING_FIELD"),
         )
 
 
 def _log_debug_data(save_data):
     """Log debug information about the data being saved"""
-    print_log("🔍 DEBUG: Exact JSON being written:", BColors.HEADER, debug_only=True)
-    print_log(json.dumps(save_data, indent=2), BColors.OKCYAN, debug_only=True)
+    logger.debug(
+        "config_save_json_preview", data=json.dumps(save_data, separators=(",", ":"))
+    )
 
 
 def _verify_saved_data(config_file):
@@ -112,25 +110,22 @@ def _verify_saved_data(config_file):
     try:
         with open(config_file, encoding="utf-8") as f:
             verification_data = json.load(f)
-        print_log(
-            f"✅ VERIFICATION: File actually contains {
-                len(verification_data.get('users', []))
-            } users",
-            BColors.OKGREEN,
-            debug_only=True,
+        logger.debug(
+            "config_save_verification",
+            user_count=len(verification_data.get("users", [])),
         )
         for i, user in enumerate(verification_data.get("users", []), 1):
-            username = user.get("username", "NO_USERNAME")
-            is_prime_or_turbo = user.get("is_prime_or_turbo", "MISSING_FIELD")
-            print_log(
-                f"  Verified User {i}: {username} -> "
-                f"is_prime_or_turbo: {is_prime_or_turbo}",
-                BColors.OKGREEN,
-                debug_only=True,
+            logger.debug(
+                "config_save_verification_user",
+                index=i,
+                username=user.get("username", "NO_USERNAME"),
+                is_prime_or_turbo=user.get("is_prime_or_turbo", "MISSING_FIELD"),
             )
     except Exception as verify_error:
-        print_log(
-            f"❌ VERIFICATION FAILED: {verify_error}", BColors.FAIL, debug_only=True
+        logger.error(
+            "config_save_verification_failed",
+            error=str(verify_error),
+            error_type=type(verify_error).__name__,
         )
 
 
@@ -147,12 +142,10 @@ def save_users_to_config(users, config_file):
         for user in users:
             if "is_prime_or_turbo" not in user:
                 user["is_prime_or_turbo"] = True  # Default value
-                print_log(
-                    f"🔧 Added missing is_prime_or_turbo field for {
-                        user.get('username', 'Unknown')
-                    }: {user['is_prime_or_turbo']}",
-                    BColors.OKBLUE,
-                    debug_only=True,
+                logger.debug(
+                    "config_added_missing_is_prime_or_turbo",
+                    username=user.get("username", "Unknown"),
+                    value=user["is_prime_or_turbo"],
                 )
 
         # Set up directory and permissions
@@ -199,13 +192,17 @@ def save_users_to_config(users, config_file):
                 # 4. Atomic rename (the critical moment)
                 os.rename(temp_path, config_file)
 
-                print_log("💾 Configuration saved atomically", BColors.OKGREEN)
+                logger.info("config_save_atomic_success", config_file=config_file)
 
         except Exception as save_error:
             # Cleanup temp file on error
             if temp_path and os.path.exists(temp_path):
                 os.unlink(temp_path)
-            print_log(f"❌ Atomic save failed: {save_error}", BColors.FAIL)
+            logger.error(
+                "config_save_atomic_failed",
+                error=str(save_error),
+                error_type=type(save_error).__name__,
+            )
             raise
 
         finally:
@@ -222,7 +219,7 @@ def save_users_to_config(users, config_file):
         time.sleep(CONFIG_WRITE_DEBOUNCE)
 
     except Exception as e:
-        print_log(f"⚠️ Failed to save configuration: {e}", BColors.FAIL)
+        logger.error("config_save_failed", error=str(e), error_type=type(e).__name__)
         raise
     finally:
         # Always resume watcher
@@ -241,12 +238,10 @@ def update_user_in_config(user_config, config_file):
         # Ensure the user_config has is_prime_or_turbo field
         if "is_prime_or_turbo" not in user_config:
             user_config["is_prime_or_turbo"] = True  # Default value
-            print_log(
-                f"🔧 Added missing is_prime_or_turbo field for {
-                    user_config.get('username', 'Unknown')
-                }: {user_config['is_prime_or_turbo']}",
-                BColors.OKBLUE,
-                debug_only=True,
+            logger.debug(
+                "config_added_missing_is_prime_or_turbo",
+                username=user_config.get("username", "Unknown"),
+                value=user_config["is_prime_or_turbo"],
             )
 
         # Find and update existing user
@@ -285,7 +280,12 @@ def update_user_in_config(user_config, config_file):
         save_users_to_config(users, config_file)
         return True
     except Exception as e:
-        print_log(f"⚠️ Failed to update user configuration: {e}", BColors.FAIL)
+        logger.error(
+            "config_update_user_failed",
+            error=str(e),
+            error_type=type(e).__name__,
+            username=user_config.get("username"),
+        )
         return False
 
 
@@ -293,30 +293,31 @@ def disable_random_colors_for_user(username, config_file):
     """Disable random colors for a specific user due to Turbo/Prime requirement"""
     try:
         users = load_users_from_config(config_file)
-
-        # Find and update the user
+        user_found = False
         for user in users:
             if user.get("username") == username:
-                user["is_prime_or_turbo"] = False
-                print_log(
-                    f"🔧 Disabled random colors for {username} (requires Turbo/Prime)",
-                    BColors.WARNING,
-                )
+                user_found = True
+                if user.get("is_prime_or_turbo") is not False:
+                    user["is_prime_or_turbo"] = False
+                    logger.info(
+                        "config_random_colors_disabled",
+                        username=username,
+                    )
                 break
-        else:
-            # User not found in config - this shouldn't happen but handle gracefully
-            print_log(
-                f"⚠️ User {username} not found in config when trying to "
-                "disable random colors",
-                BColors.WARNING,
+        if not user_found:
+            logger.warning(
+                "config_random_colors_user_not_found",
+                username=username,
             )
             return False
-
         save_users_to_config(users, config_file)
         return True
     except Exception as e:
-        print_log(
-            f"⚠️ Failed to disable random colors for {username}: {e}", BColors.FAIL
+        logger.error(
+            "config_disable_random_colors_failed",
+            username=username,
+            error=str(e),
+            error_type=type(e).__name__,
         )
         return False
 
@@ -334,9 +335,11 @@ def get_configuration():
     users = load_users_from_config(config_file)
 
     if not users:
-        print_log("❌ No configuration file found!", BColors.FAIL)
-        print_log(f"Please create a config file: {config_file}", BColors.FAIL)
-        print_log("Use the sample file: twitch_colorchanger.conf.sample", BColors.FAIL)
+        logger.error("config_no_config_file", config_file=config_file)
+        logger.error(
+            "config_no_config_file_instruction",
+            sample="twitch_colorchanger.conf.sample",
+        )
         sys.exit(1)
 
     # Validate users
@@ -351,21 +354,20 @@ def get_configuration():
 
 
 def print_config_summary(users):
-    """Print a summary of the loaded configuration"""
-    print_log("\n📊 Configuration Summary:", BColors.HEADER)
-    print_log(f"👥 Total Users: {len(users)}", BColors.OKBLUE)
-
+    """Log a summary of the loaded configuration"""
+    logger.info(
+        "config_summary",
+        user_count=len(users),
+    )
     for i, user in enumerate(users, 1):
-        print_log(f"\n👤 User {i}:", BColors.OKCYAN)
-        print_log(f"   Username: {user['username']}")
-        print_log(f"   Channels: {', '.join(user['channels'])}")
-        print_log(
-            f"   Is Prime or Turbo: {
-                'Yes' if user.get('is_prime_or_turbo', True) else 'No'
-            }"
-        )
-        print_log(
-            f"   Has Refresh Token: {'Yes' if user.get('refresh_token') else 'No'}"
+        logger.info(
+            "config_summary_user",
+            index=i,
+            username=user.get("username"),
+            channel_count=len(user.get("channels", [])),
+            channels=",".join(user.get("channels", [])),
+            is_prime_or_turbo=user.get("is_prime_or_turbo", True),
+            has_refresh_token=bool(user.get("refresh_token")),
         )
 
 
@@ -418,13 +420,14 @@ def normalize_user_channels(users, config_file):
 
         if was_changed:
             any_changes = True
-            print_log(
-                f"📝 {user_copy['username']}: Normalized channels "
-                f"({len(original_channels)} → {len(normalized_channels)})",
-                BColors.OKBLUE,
+            logger.info(
+                "config_channel_normalization_change",
+                username=user_copy.get("username"),
+                original_count=len(original_channels),
+                new_count=len(normalized_channels),
+                original=original_channels,
+                new=normalized_channels,
             )
-            print_log(f"   From: {original_channels}", BColors.OKBLUE, debug_only=True)
-            print_log(f"   To: {normalized_channels}", BColors.OKBLUE, debug_only=True)
 
         updated_users.append(user_copy)
 
@@ -432,13 +435,15 @@ def normalize_user_channels(users, config_file):
     if any_changes:
         try:
             save_users_to_config(updated_users, config_file)
-            print_log(
-                "💾 Channel normalization changes saved to configuration",
-                BColors.OKGREEN,
+            logger.info(
+                "config_channel_normalization_saved",
+                user_count=len(updated_users),
             )
         except Exception as e:
-            print_log(
-                f"⚠️ Failed to save channel normalization changes: {e}", BColors.WARNING
+            logger.error(
+                "config_channel_normalization_save_failed",
+                error=str(e),
+                error_type=type(e).__name__,
             )
 
     return updated_users, any_changes
@@ -473,10 +478,11 @@ async def _setup_user_tokens(user):
 
     # Check if user has basic credentials
     if not client_id or not client_secret:
-        print_log(
-            f"❌ User {username} missing client_id or client_secret - "
-            "skipping automatic setup",
-            BColors.FAIL,
+        logger.error(
+            "config_user_missing_basic_credentials",
+            username=username,
+            has_client_id=bool(client_id),
+            has_client_secret=bool(client_secret),
         )
         return {"user": user, "tokens_updated": False}
 
@@ -506,7 +512,7 @@ async def _validate_or_refresh_tokens(user):
 async def _get_new_tokens_via_device_flow(user, client_id, client_secret):
     """Get new tokens using device flow and ensure they're saved to config."""
     username = user.get("username", "Unknown")
-    print_log(f"\n🔑 User {username} needs new tokens", BColors.WARNING)
+    logger.info("config_token_setup_start", username=username)
 
     device_flow = DeviceCodeFlow(client_id, client_secret)
     try:
@@ -520,19 +526,20 @@ async def _get_new_tokens_via_device_flow(user, client_id, client_secret):
             # and get expiry information for proactive refresh
             validation_result = await _validate_new_tokens(user)
             if validation_result["valid"]:
-                success_msg = (
-                    f"✅ Successfully obtained and validated new tokens for {username}"
-                )
-                print_log(success_msg, BColors.OKGREEN)
+                logger.info("config_token_setup_success", username=username)
                 return {"user": validation_result["user"], "tokens_updated": True}
-            warning_msg = f"⚠️ New tokens for {username} failed validation"
-            print_log(warning_msg, BColors.WARNING)
+            logger.warning("config_token_setup_validation_failed", username=username)
             # Still save them, might work later
             return {"user": user, "tokens_updated": True}
-        print_log(f"❌ Failed to obtain tokens for {username}", BColors.FAIL)
+        logger.error("config_token_setup_failed", username=username)
         return {"user": user, "tokens_updated": False}
     except Exception as e:
-        print_log(f"❌ Error during token setup for {username}: {e}", BColors.FAIL)
+        logger.error(
+            "config_token_setup_exception",
+            username=username,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
         return {"user": user, "tokens_updated": False}
 
 
@@ -548,6 +555,10 @@ def _save_updated_config(updated_users, config_file):
     """Save updated configuration to file."""
     try:
         save_users_to_config(updated_users, config_file)
-        print_log("💾 Configuration updated with refreshed tokens", BColors.OKGREEN)
+        logger.info("config_tokens_update_saved", user_count=len(updated_users))
     except Exception as e:
-        print_log(f"❌ Failed to save updated configuration: {e}", BColors.FAIL)
+        logger.error(
+            "config_tokens_update_save_failed",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
