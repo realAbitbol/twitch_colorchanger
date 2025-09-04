@@ -35,7 +35,6 @@ Comprehensive description of runtime behavior, architecture, and operational cha
 - [12. Dependencies & Tooling](#12-dependencies--tooling)
 - [13. Future Enhancements](#13-future-enhancements)
 
-
 ## 1. Project Overview
 
 Automatically changes a user's Twitch chat color after each of their own messages. Supports multiple users, preset & hex colors, robust token lifecycle management, pluggable chat backends (IRC & EventSub), Docker deployment, and live configuration reload.
