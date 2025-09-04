@@ -130,18 +130,161 @@ def extract_references(paths: Iterable[Path]) -> set[tuple[str, str]]:
 
 
 def _extract_file_references(path: Path, refs: set[tuple[str, str]]) -> None:
-    """Populate refs with (domain, action) pairs from a single file."""
     try:
         source = path.read_text(encoding="utf-8", errors="ignore")
-    except (OSError, UnicodeDecodeError):  # unreadable file
+    except (OSError, UnicodeDecodeError):
         return
     tree = _parse_ast(source, path)
     if tree is None:
         _regex_fallback(source, refs)
         return
+
+    parent = _build_parent_map(tree)
+    module_consts = _collect_module_consts(tree)
+    func_consts = _collect_function_consts(tree)
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and _is_log_event_call(node):
+            fn = _nearest_function(node, parent)
+            local_map = func_consts.get(fn) if fn else None
             refs.update(_extract_from_call(node))
+            refs.update(_extract_with_resolution(node, module_consts, local_map))
+
+
+def _build_parent_map(tree: ast.AST) -> dict[ast.AST, ast.AST]:
+    parent: dict[ast.AST, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parent[child] = node
+    return parent
+
+
+def _collect_module_consts(tree: ast.AST) -> dict[str, str]:
+    consts: dict[str, str] = {}
+    for stmt in getattr(tree, "body", []):
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+            tgt = stmt.targets[0]
+            if (
+                isinstance(tgt, ast.Name)
+                and isinstance(stmt.value, ast.Constant)
+                and isinstance(stmt.value.value, str)
+                and tgt.id not in consts
+            ):
+                consts[tgt.id] = stmt.value.value
+    return consts
+
+
+def _collect_function_consts(tree: ast.AST) -> dict[ast.FunctionDef, dict[str, str]]:
+    result: dict[ast.FunctionDef, dict[str, str]] = {}
+    # Iterate over top-level statements (module body) gathering simple function-scope constant assignments.
+    for node in getattr(tree, "body", []) or []:
+        if isinstance(node, ast.FunctionDef):
+            result[node] = _collect_consts_in_function(node)
+        elif isinstance(node, ast.ClassDef):
+            for sub in node.body:
+                if isinstance(sub, ast.FunctionDef):
+                    result[sub] = _collect_consts_in_function(sub)
+    return result
+
+
+def _collect_consts_in_function(fn: ast.FunctionDef) -> dict[str, str]:
+    local: dict[str, str] = {}
+    for stmt in fn.body:
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+            tgt = stmt.targets[0]
+            if (
+                isinstance(tgt, ast.Name)
+                and isinstance(stmt.value, ast.Constant)
+                and isinstance(stmt.value.value, str)
+                and tgt.id not in local
+            ):
+                local[tgt.id] = stmt.value.value
+    return local
+
+
+def _nearest_function(
+    node: ast.AST, parent: dict[ast.AST, ast.AST]
+) -> ast.FunctionDef | None:
+    cur = node
+    while cur in parent:
+        cur = parent[cur]
+        if isinstance(cur, ast.FunctionDef):
+            return cur
+    return None
+
+
+def _extract_with_resolution(
+    call: ast.Call, module_consts: dict[str, str], local_map: dict[str, str] | None
+) -> set[tuple[str, str]]:
+    """Extract (domain, action) considering simple Name indirections.
+
+    Complexity is reduced by decomposing expression selection, resolution,
+    and action collection into discrete helpers.
+    """
+
+    domain_expr, action_expr = _select_domain_and_action_expr(call)
+    if domain_expr is None or action_expr is None:
+        return set()
+
+    domain_val = _resolve_domain_value(domain_expr, module_consts, local_map)
+    if domain_val is None:
+        return set()
+
+    action_values = _collect_action_values(action_expr, module_consts, local_map)
+    if not action_values:
+        return set()
+    return {(domain_val, a) for a in action_values}
+
+
+def _select_domain_and_action_expr(
+    call: ast.Call,
+) -> tuple[ast.AST | None, ast.AST | None]:
+    """Return raw (domain_expr, action_expr) from positional/keyword args."""
+    domain_expr: ast.AST | None = None
+    action_expr: ast.AST | None = None
+    # Positional
+    if call.args:
+        if len(call.args) >= 1:
+            domain_expr = call.args[0]
+        if len(call.args) >= 2:
+            action_expr = call.args[1]
+    # Keyword overrides
+    for kw in call.keywords or []:
+        if kw.arg == "domain":
+            domain_expr = kw.value
+        elif kw.arg == "action":
+            action_expr = kw.value
+    return domain_expr, action_expr
+
+
+def _resolve_domain_value(
+    expr: ast.AST, module_consts: dict[str, str], local_map: dict[str, str] | None
+) -> str | None:
+    if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+        return expr.value
+    if isinstance(expr, ast.Name):
+        if local_map and expr.id in local_map:
+            return local_map[expr.id]
+        return module_consts.get(expr.id)
+    return None
+
+
+def _collect_action_values(
+    action_expr: ast.AST,
+    module_consts: dict[str, str],
+    local_map: dict[str, str] | None,
+) -> set[str]:
+    values: set[str] = set()
+    # Direct name resolution
+    if isinstance(action_expr, ast.Name):
+        name = action_expr.id
+        if local_map and name in local_map:
+            values.add(local_map[name])
+        elif name in module_consts:
+            values.add(module_consts[name])
+    # Literal / IfExp branches
+    values.update(_gather_string_literals(action_expr))
+    return values
 
 
 def _parse_ast(source: str, path: Path) -> ast.AST | None:

@@ -32,6 +32,8 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
     def __init__(self, http_session: aiohttp.ClientSession | None = None) -> None:
         self._session = http_session or aiohttp.ClientSession()
         self._api = TwitchAPI(self._session)
+        # Current WebSocket URL (can change via session_reconnect instruction)
+        self._ws_url: str = EVENTSUB_WS_URL
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._message_handler: MessageHandler | None = None
         self._color_handler: MessageHandler | None = None
@@ -139,7 +141,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
 
     async def _handshake_and_session(self) -> bool:
         try:
-            self._ws = await self._session.ws_connect(EVENTSUB_WS_URL, heartbeat=30)
+            self._ws = await self._session.ws_connect(self._ws_url, heartbeat=30)
             logger.log_event("chat", "eventsub_ws_connected", user=self._username)
             welcome = await asyncio.wait_for(self._ws.receive(), timeout=10)
             if welcome.type != aiohttp.WSMsgType.TEXT:
@@ -270,35 +272,79 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         self._color_handler = handler
 
     async def _handle_text(self, raw: str) -> None:
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            logger.log_event("chat", "eventsub_invalid_json", level=20)
+        data = self._decode_json(raw)
+        if data is None:
             return
-        meta = data.get("metadata", {})
-        mtype = meta.get("message_type")
-        if mtype == "session_keepalive":  # ignore
+        mtype = self._extract_message_type(data)
+        if mtype is None or mtype == "session_keepalive":
+            return
+        if mtype == "session_reconnect":
+            await self._handle_session_reconnect(data)
             return
         if mtype == "notification":
-            payload = data.get("payload", {})
-            sub = payload.get("subscription", {})
-            stype = sub.get("type")
-            if stype == EVENTSUB_CHAT_MESSAGE:
-                event = payload.get("event", {})
-                chatter = event.get("chatter_user_name")
-                channel_login = event.get("broadcaster_user_name")
-                message = self._extract_message_text(event)
-                # Only process messages from our own bot user (mirror IRC backend behavior)
-                if (
-                    chatter
-                    and channel_login
-                    and message is not None
-                    and self._username
-                    and chatter.lower() == self._username
-                ):
-                    await self._dispatch_message(
-                        chatter, channel_login.lower(), message
-                    )
+            await self._handle_notification(data)
+
+    # ---- message handling helpers ----
+    def _decode_json(self, raw: str) -> dict[str, Any] | None:
+        try:
+            obj = json.loads(raw)
+            return obj if isinstance(obj, dict) else None
+        except json.JSONDecodeError:
+            logger.log_event("chat", "eventsub_invalid_json", level=20)
+            return None
+
+    @staticmethod
+    def _extract_message_type(data: dict[str, Any]) -> str | None:
+        meta = data.get("metadata")
+        if isinstance(meta, dict):
+            mt = meta.get("message_type")
+            if isinstance(mt, str):
+                return mt
+        return None
+
+    async def _handle_session_reconnect(self, data: dict[str, Any]) -> None:
+        payload = data.get("payload", {}) if isinstance(data, dict) else {}
+        session_info = payload.get("session", {}) if isinstance(payload, dict) else {}
+        new_url = (
+            session_info.get("reconnect_url")
+            if isinstance(session_info, dict)
+            else None
+        )
+        if isinstance(new_url, str) and new_url.startswith("wss://"):
+            self._ws_url = new_url
+            logger.log_event(
+                "chat", "eventsub_reconnect_instruction", user=self._username
+            )
+            await self._safe_close()
+        else:
+            logger.log_event("chat", "eventsub_reconnect_url_invalid", level=20)
+
+    async def _handle_notification(self, data: dict[str, Any]) -> None:
+        payload = data.get("payload")
+        if not isinstance(payload, dict):
+            return
+        sub = payload.get("subscription")
+        if not isinstance(sub, dict):
+            return
+        stype = sub.get("type")
+        if stype != EVENTSUB_CHAT_MESSAGE:
+            return
+        event = payload.get("event", {})
+        if not isinstance(event, dict):
+            return
+        chatter = event.get("chatter_user_name")
+        channel_login = event.get("broadcaster_user_name")
+        message = self._extract_message_text(event)
+        if (
+            chatter
+            and channel_login
+            and message is not None
+            and self._username
+            and isinstance(chatter, str)
+            and isinstance(channel_login, str)
+            and chatter.lower() == self._username
+        ):
+            await self._dispatch_message(chatter, channel_login.lower(), message)
 
     def _extract_message_text(self, event: dict[str, Any]) -> str | None:
         # event.message = { "text": str, ... }
@@ -532,7 +578,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
     async def _open_and_handshake(self) -> bool:
         """Open WebSocket and parse welcome, setting session id."""
         try:
-            self._ws = await self._session.ws_connect(EVENTSUB_WS_URL, heartbeat=30)
+            self._ws = await self._session.ws_connect(self._ws_url, heartbeat=30)
             welcome = await asyncio.wait_for(self._ws.receive(), timeout=10)
             if welcome.type != aiohttp.WSMsgType.TEXT:
                 return False

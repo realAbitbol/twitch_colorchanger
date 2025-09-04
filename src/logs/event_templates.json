@@ -242,6 +242,8 @@
     "eventsub_no_session_id": "🚫 EventSub no session id",
     "eventsub_reconnect_failed": "❌ EventSub reconnect failed attempt={attempt} backoff={backoff}",
     "eventsub_reconnect_success": "✅ EventSub reconnect success attempt={attempt} channels={channel_count}",
+  "eventsub_reconnect_instruction": "🔄 EventSub session reconnect instruction received (switching URL)",
+  "eventsub_reconnect_url_invalid": "⚠️ EventSub session reconnect URL invalid",
     "eventsub_resubscribe_missing": "🔄 EventSub resubscribed missing count={missing} total={total}",
     "eventsub_stale_detected": "⚠️ EventSub stale socket idle={idle}s",
     "eventsub_sub_list_error": "⚠️ EventSub subscription list error: {error}",
