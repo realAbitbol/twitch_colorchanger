@@ -6,8 +6,9 @@ import asyncio
 import heapq
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
 
 from ..logs.logger import logger
 
@@ -28,11 +29,11 @@ class ScheduledTask:
     ]
 
     next_run: float  # Monotonic timestamp when task should run
-    callback: Callable
+    callback: Callable[..., Any] | Callable[..., Awaitable[Any]]
     name: str
     interval: float | None  # None for one-time tasks
-    args: tuple
-    kwargs: dict
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
     priority: int  # Lower number = higher priority
 
     def __post_init__(self) -> None:
@@ -58,10 +59,15 @@ class AdaptiveScheduler:
     - Memory-efficient with monotonic timing
     """
 
+    scheduler_task: asyncio.Task[Any] | None
+    tasks: list[ScheduledTask]
+    running: bool
+    _lock: asyncio.Lock
+
     def __init__(self) -> None:
-        self.tasks: list[ScheduledTask] = []
+        self.tasks = []
         self.running = False
-        self.scheduler_task: asyncio.Task | None = None
+        self.scheduler_task = None
         self._lock = asyncio.Lock()
 
     async def start(self) -> None:
@@ -73,8 +79,7 @@ class AdaptiveScheduler:
         # Use async context for task creation
         async with self._lock:
             self.scheduler_task = asyncio.create_task(self._run_scheduler())
-
-    logger.log_event("scheduler", "started")
+        logger.log_event("scheduler", "started")
 
     async def stop(self) -> None:
         """Stop the scheduler and cancel all tasks"""
@@ -96,8 +101,7 @@ class AdaptiveScheduler:
         # Clear all tasks
         async with self._lock:
             self.tasks.clear()
-
-    logger.log_event("scheduler", "stopped", level=logging.WARNING)
+        logger.log_event("scheduler", "stopped", level=logging.WARNING)
 
     async def schedule_recurring(  # noqa: D401
         self,

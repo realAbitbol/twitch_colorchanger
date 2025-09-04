@@ -81,7 +81,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         self.enabled = enabled
         self.irc: AsyncTwitchIRC | None = None
         self.running = False
-        self.irc_task: asyncio.Task | None = None
+        self.irc_task: asyncio.Task[Any] | None = None
         self.stats = BotStats()
         # Removed unused connection tracking attributes flagged by dead-code scan.
         # last_successful_connection / connection_failure_start were not referenced.
@@ -512,7 +512,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         return await self._color_service.change_color(hex_color)
 
     async def _perform_color_request(
-        self, params: dict, action: str
+        self, params: dict[str, Any], action: str
     ) -> ColorRequestResult:
         status_code = await self._execute_color_status_request(params, action)
         if isinstance(status_code, ColorRequestResult):  # error short-circuit

@@ -25,7 +25,7 @@ class DeviceCodeFlow:
         self.token_url = "https://id.twitch.tv/oauth2/token"  # noqa: S105  # nosec B105
         self.poll_interval = 5  # seconds
 
-    async def request_device_code(self) -> dict | None:
+    async def request_device_code(self) -> dict[str, Any] | None:
         """Request a device code from Twitch"""
         data = {
             "client_id": self.client_id,
@@ -67,7 +67,9 @@ class DeviceCodeFlow:
                 )
                 return None
 
-    async def poll_for_tokens(self, device_code: str, expires_in: int) -> dict | None:
+    async def poll_for_tokens(
+        self, device_code: str, expires_in: int
+    ) -> dict[str, Any] | None:
         """Poll for token authorization completion"""
         data = {
             "client_id": self.client_id,
@@ -142,8 +144,8 @@ class DeviceCodeFlow:
         return None
 
     def _handle_polling_error(
-        self, result: dict, elapsed: int, poll_count: int
-    ) -> dict | None:
+        self, result: dict[str, Any], elapsed: int, poll_count: int
+    ) -> dict[str, Any] | None:
         """Handle polling errors and return None to continue, or a value to return"""
         # Twitch API returns errors in 'message' field, not 'error'
         error = result.get("message", result.get("error", "unknown"))

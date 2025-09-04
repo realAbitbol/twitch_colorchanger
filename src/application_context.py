@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import atexit
 import time
+from typing import Any
 
 import aiohttp
 
@@ -25,10 +26,10 @@ class ApplicationContext:
     _rate_limiters: dict[str, TwitchRateLimiter]
     _started: bool
     _lock: asyncio.Lock
-    _maintenance_task: asyncio.Task | None
+    _maintenance_task: asyncio.Task[Any] | None
     _session_birth: float | None
     _SESSION_MAX_AGE: int
-    _tasks: dict[str, asyncio.Task]
+    _tasks: dict[str, asyncio.Task[Any]]
     _counters: dict[str, int]
     _maintenance_ticks: int
 
@@ -152,7 +153,7 @@ class ApplicationContext:
         return limiter
 
     # --------------------- Task & Metrics Registry ------------------ #
-    def _register_task(self, name: str, task: asyncio.Task | None) -> None:
+    def _register_task(self, name: str, task: asyncio.Task[Any] | None) -> None:
         if not task:
             return
         self._tasks[name] = task

@@ -243,7 +243,7 @@ class AsyncTwitchIRC:  # pylint: disable=too-many-instance-attributes
     def set_message_handler(self, handler: Callable[[str, str, str], Any]) -> None:
         self.message_handler = handler
 
-    def get_connection_stats(self) -> dict:
+    def get_connection_stats(self) -> dict[str, Any]:
         return self.health_monitor.get_connection_stats()
 
     def is_healthy(self) -> bool:

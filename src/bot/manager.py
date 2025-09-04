@@ -30,6 +30,8 @@ _jitter_rng = SystemRandom()
 
 
 class BotManager:  # pylint: disable=too-many-instance-attributes
+    tasks: list[asyncio.Task[Any]]
+
     def __init__(
         self,
         users_config: list[dict[str, Any]],
@@ -39,7 +41,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         self.users_config = users_config
         self.config_file = config_file
         self.bots: list[TwitchColorBot] = []
-        self.tasks: list[asyncio.Task] = []
+        self.tasks: list[asyncio.Task[Any]] = []
         self.running = False
         self.shutdown_initiated = False
         self.restart_requested = False
