@@ -1,20 +1,68 @@
+# Build system configuration
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# Core project metadata (was missing; added to avoid UNKNOWN package name)
+[project]
+name = "twitch_colorchanger"
+version = "0.1.0"
+description = "Twitch ColorChanger bot"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+keywords = ["twitch", "bot", "color"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = []  # Runtime deps still managed via requirements.txt; can be migrated later.
+
+[project.scripts]
+event-templates-audit = "scripts.event_template_audit:main"
+
+# Optional: development dependency group (empty placeholder for future)
+[project.optional-dependencies]
+dev = []
+
 # MyPy type checking
 [tool.mypy]
 python_version = "3.13"
-warn_return_any = false
+# Stricter typing (incremental strict mode)
+warn_return_any = true
 warn_unused_configs = true
-disallow_untyped_defs = false
-disallow_incomplete_defs = false
-check_untyped_defs = false
-disallow_untyped_decorators = false
-no_implicit_optional = false
-warn_redundant_casts = false
-warn_unused_ignores = false
-warn_no_return = false
-warn_unreachable = false
-strict_equality = false
-ignore_missing_imports = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+ignore_missing_imports = true  # Keep until third-party stubs added
 follow_imports = "silent"
+show_error_codes = true
+pretty = true
+
+# Per-module relaxations (keep legacy modules compiling). Remove over time.
+# Module-specific relaxations (mypy 1.10+ style via overrides)
+[[tool.mypy.overrides]]
+module = ["src.config.watcher"]
+disallow_untyped_defs = false
+check_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = ["src.manager.*"]
+disallow_untyped_defs = false
+check_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = ["src.scheduler.adaptive_scheduler"]
+disallow_untyped_defs = false
+check_untyped_defs = false
 
 # Bandit security linting
 [tool.bandit]
@@ -37,6 +85,9 @@ lint.select = [
     "C4",     # flake8-comprehensions
     "SIM",    # flake8-simplify
     "UP",     # pyupgrade
+    "S",      # security
+    "PERF",   # performance
+    "ASYNC",  # async best practices
 ]
 
 # Ignore specific rules that are too strict for this project
