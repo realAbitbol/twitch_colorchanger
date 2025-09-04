@@ -297,7 +297,9 @@ async def _validate_or_invalidate_scopes(
                 "token",
                 "scopes_missing_invalidate",
                 user=user.get("username"),
-                missing=";".join(missing),
+                # Provide fields expected by template: required, current.
+                required=";".join(sorted(required_scopes)),
+                current=";".join(sorted(scope_set)) if scope_set else "<none>",
             )
             return False
         return True
