@@ -1,6 +1,6 @@
 # Makefile for Twitch ColorChanger Bot Development
 
-.PHONY: help install install-dev lint security check-all check clean build docker-build docker-run dev-setup pre-commit dev-check ci validate-config docs docs-serve profile version check-env ruff-lint ruff-format ruff-check md-format md-check vulture-check
+.PHONY: help install install-dev lint security check-all check clean build docker-build docker-run dev-setup pre-commit dev-check ci validate-config docs docs-serve profile version check-env ruff-lint ruff-format ruff-check md-format md-check vulture-check package-clean
 
 # Default target
 help:
@@ -21,6 +21,7 @@ help:
 	@echo "  docker-build    - Build Docker image"
 	@echo "  docker-run      - Run Docker container"
 	@echo "  validate-config - Validate configuration file"
+	@echo "  package-clean   - Remove build, dist, egg-info and reinstall editable"
 
 # Installation
 install:
@@ -84,6 +85,14 @@ clean:
 	rm -rf .cache/
 	find . -type d -name __pycache__ -delete
 	find . -type f -name "*.pyc" -delete
+	rm -rf build/
+	rm -rf dist/
+	find . -maxdepth 3 -type d -name "*.egg-info" -exec rm -rf {} +
+
+# Packaging cleanup & editable reinstall
+package-clean: clean
+	@echo "Cleaning packaging artifacts and reinstalling in editable mode..."
+	python -m pip install -e .
 
 # Build
 build: clean
