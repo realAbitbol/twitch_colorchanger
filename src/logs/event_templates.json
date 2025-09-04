@@ -367,7 +367,7 @@
   "instructions_header": "📘 Instructions",
   "instructions_how_it_works": "ℹ️ Features",
   "instructions_manual_section": "📝 Manual configuration",
-    "instructions_point": "👉 Instruction: {text}",
+    "instructions_point": "👉 {text}",
   "instructions_security_notice": "🔒 Security notice : Rememeber to never share your client id, client secret or your tokens!",
     "instructions_setup_step": "🪜 Setup step {step}: {text}"
   },
