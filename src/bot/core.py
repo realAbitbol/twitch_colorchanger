@@ -265,7 +265,11 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         if user_info and "id" in user_info:
             self.user_id = user_info["id"]
             logger.log_event(
-                "bot", "user_id_retrieved", user=self.username, user_id=self.user_id
+                "bot",
+                "user_id_retrieved",
+                user=self.username,
+                user_id=self.user_id,
+                level=10,
             )
             return True
         logger.log_event(
@@ -364,7 +368,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                 "bot", "connect_failed", level=logging.ERROR, user=self.username
             )
             return False
-        logger.log_event("bot", "listener_start", user=self.username)
+        logger.log_event("bot", "listener_start", user=self.username, level=10)
         return True
 
     async def _cancel_token_task(self) -> None:  # compatibility no-op

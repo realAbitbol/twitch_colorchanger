@@ -224,7 +224,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                 self._health_monitor = HealthMonitor(self)
             task = self._health_monitor.start()
             self.tasks.append(task)
-            logger.log_event("manager", "started_health_monitor")
+            logger.log_event("manager", "started_health_monitor", level=10)
 
     def _start_task_watchdog(self) -> None:
         if self.running:
@@ -232,7 +232,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                 self._task_watchdog = TaskWatchdog(self)
             task = self._task_watchdog.start()
             self.tasks.append(task)
-            logger.log_event("manager", "started_task_watchdog")
+            logger.log_event("manager", "started_task_watchdog", level=10)
 
     def _save_statistics(self) -> dict[str, dict[str, int]]:
         bots_iter: Iterable[_BotProto] = cast(Iterable["_BotProto"], self.bots)
@@ -271,7 +271,9 @@ async def _setup_config_watcher(manager: BotManager, config_file: str | None) ->
 
         watcher = await create_config_watcher(config_file, restart_cb)
         set_global_watcher(watcher)
-        logger.log_event("manager", "config_watcher_enabled", file=config_file)
+        logger.log_event(
+            "manager", "config_watcher_enabled", file=config_file, level=10
+        )
         return watcher
     except ImportError:
         logger.log_event(

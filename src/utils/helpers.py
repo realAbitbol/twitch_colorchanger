@@ -115,4 +115,9 @@ def emit_startup_instructions() -> None:
         "instructions_point",
         text="Auto-refreshes tokens to minimize re-authorization",
     )
+    logger.log_event(
+        "startup",
+        "instructions_point",
+        text="type 'cdd' to disable or 'cce' to enable in any joined channel.",
+    )
     logger.log_event("startup", "instructions_security_notice")
