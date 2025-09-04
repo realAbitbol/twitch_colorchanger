@@ -42,6 +42,8 @@ class BotLogger:
     def __init__(
         self, name: str = "twitch_colorchanger", log_file: str | None = None
     ) -> None:
+        # Fixed width for event name column when in debug (alignment)
+        self._event_name_width = 32
         self.logger = logging.getLogger(name)
         self.log_file = log_file
         self.logger.handlers.clear()
@@ -145,7 +147,13 @@ class BotLogger:
         ):
             human_text = f"💬 {human_text}"
         context = ", ".join(f"{k}={v}" for k, v in kwargs.items())
-        base = f"{event_name} {prefix}"
+        # Pad / truncate event name to a fixed column for alignment
+        width = 32
+        if len(event_name) <= width:
+            ev = event_name.ljust(width)
+        else:  # truncate but keep rightmost indicator
+            ev = event_name[: width - 1] + "…"
+        base = f"{ev} {prefix}"
         if human_text:
             base = f"{base} {human_text}"
         if context:
