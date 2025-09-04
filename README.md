@@ -576,7 +576,7 @@ Required scopes for EventSub chat path (automatic device flow now requests all o
 | Receive self chat messages over EventSub | `user:read:chat` |
 | Change chat color via Helix | `user:manage:chat_color` |
 
-If your existing tokens are missing `user:read:chat`, trigger re-authorization (delete tokens or remove them from config and restart) so the device flow requests the updated set.
+If any of the required scopes (`chat:read`, `user:read:chat`, `user:manage:chat_color`) are missing from an existing token set, the bot will automatically invalidate them at startup and re-run device authorization. You only need to manually trigger re-authorization if you intentionally removed scopes and want them restored faster (delete token fields from the config and restart).
 
 ##### Broadcaster ID Cache
 
