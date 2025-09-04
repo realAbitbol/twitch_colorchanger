@@ -79,6 +79,8 @@ Only the bot user’s own messages are interpreted. State changes persist to con
 
 ## 3. Chat Backend Abstraction
 
+> Note: EventSub is Twitch's modern, extensible delivery mechanism. While IRC remains functional today, Twitch has historically encouraged migration toward EventSub/WebSocket for richer event delivery. Treat the IRC backend as stable legacy support and EventSub as the forward-looking path likely to outlast any future IRC deprecation.
+
 ### 3.1 Implementations
 
 | Backend  | Status        | Transport                                      | Required Scopes                                    |

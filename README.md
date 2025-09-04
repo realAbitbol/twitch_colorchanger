@@ -560,6 +560,8 @@ python -m src.main
 
 #### Chat Backend Selection
 
+> EventSub is Twitch's more modern WebSocket-based event system. IRC is still supported but considered legacy for new feature growth. The bot keeps IRC for reliability and broad compatibility, while EventSub positions you for any future Twitch shift away from IRC.
+
 You can switch the underlying chat transport without changing your user config structure (the bot already loads `client_id` and `client_secret` from the config file):
 
 ```bash
