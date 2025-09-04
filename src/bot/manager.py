@@ -73,7 +73,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         if not self.bots:
             logger.log_event("manager", "no_bots", level=logging.ERROR)
             return False
-        logger.log_event("manager", "launch_tasks", tasks=len(self.bots))
+        logger.log_event("manager", "launch_tasks", tasks=len(self.bots), level=10)
         for bot in self.bots:
             self.tasks.append(asyncio.create_task(bot.start()))
         await asyncio.sleep(1)
@@ -81,7 +81,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         self.shutdown_initiated = False
         self._start_health_monitoring()
         self._start_task_watchdog()
-        logger.log_event("manager", "all_started")
+        logger.log_event("manager", "all_started", level=10)
         return True
 
     def _create_bot(self, user_config: dict[str, Any]) -> TwitchColorBot:
@@ -102,7 +102,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             user_id=None,
             enabled=user_config.get("enabled", True),
         )
-        logger.log_event("manager", "bot_created", user=username)
+        logger.log_event("manager", "bot_created", user=username, level=10)
         return bot
 
     async def _stop_all_bots(self) -> None:

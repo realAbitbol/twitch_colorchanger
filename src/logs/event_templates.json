@@ -250,7 +250,7 @@
     "eventsub_subscribe_error": "💥 EventSub subscribe error channel={channel}",
     "eventsub_subscribe_non_202": "⚠️ EventSub subscribe non-202 status={status} channel={channel}",
     "eventsub_subscribe_unauthorized": "🚫 EventSub subscribe unauthorized channel={channel} count={count}",
-    "eventsub_subscribed": "✅ EventSub subscribed channel={channel}",
+  "eventsub_subscribed": "✅ {user} joined #{channel}",
     "eventsub_subscription_check_error": "⚠️ EventSub subscription check error: {error}",
     "eventsub_token_invalid": "🚫 EventSub token invalid source={source} channel={channel}",
     "eventsub_token_scopes": "🧪 EventSub token scopes scopes={scopes}",

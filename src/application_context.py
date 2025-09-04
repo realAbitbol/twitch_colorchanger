@@ -57,7 +57,7 @@ class ApplicationContext:
         logger.log_event("context", "creating")
         ctx.session = aiohttp.ClientSession()
         ctx._session_birth = time.time()
-        logger.log_event("context", "session_created")
+        logger.log_event("context", "session_created", level=10)
         ctx.token_manager = TokenManager(ctx.session)
         # Register globally for atexit fallback
         global GLOBAL_CONTEXT  # noqa: PLW0603
@@ -76,7 +76,7 @@ class ApplicationContext:
                         "token_refresh", self.token_manager.background_task
                     )
             self._started = True
-            logger.log_event("context", "start")
+            logger.log_event("context", "start", level=10)
             self._maintenance_task = asyncio.create_task(self._maintenance_loop())
             self._register_task("maintenance", self._maintenance_task)
 
@@ -148,7 +148,11 @@ class ApplicationContext:
             limiter = TwitchRateLimiter(client_id, username)
             self._rate_limiters[key] = limiter
             logger.log_event(
-                "context", "rate_limiter_created", client_id=client_id, user=username
+                "context",
+                "rate_limiter_created",
+                client_id=client_id,
+                user=username,
+                level=10,
             )
         return limiter
 
@@ -157,7 +161,7 @@ class ApplicationContext:
         if not task:
             return
         self._tasks[name] = task
-        logger.log_event("context", "task_registered", task=name)
+        logger.log_event("context", "task_registered", task=name, level=10)
 
     def task_snapshot(self) -> list[dict[str, str]]:
         # Currently unused (kept for potential future diagnostics). If still unused,
