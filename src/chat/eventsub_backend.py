@@ -288,7 +288,14 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                 chatter = event.get("chatter_user_name")
                 channel_login = event.get("broadcaster_user_name")
                 message = self._extract_message_text(event)
-                if chatter and channel_login and message is not None:
+                # Only process messages from our own bot user (mirror IRC backend behavior)
+                if (
+                    chatter
+                    and channel_login
+                    and message is not None
+                    and self._username
+                    and chatter.lower() == self._username
+                ):
                     await self._dispatch_message(
                         chatter, channel_login.lower(), message
                     )
@@ -305,6 +312,19 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
     async def _dispatch_message(
         self, username: str, channel: str, message: str
     ) -> None:
+        # Emit unified log event (reuse irc_privmsg naming) with IRC-style human text
+        try:
+            human = f"{username}: {message}"
+            logger.log_event(
+                "irc",
+                "privmsg",
+                user=username,
+                channel=channel,
+                human=human,
+                backend="eventsub",
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.log_event("chat", "eventsub_log_emit_error", level=10, error=str(e))
         if self._message_handler:
             try:
                 maybe = self._message_handler(username, channel, message)
