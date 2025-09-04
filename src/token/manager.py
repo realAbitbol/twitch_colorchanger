@@ -20,6 +20,7 @@ from ..constants import (
     TOKEN_REFRESH_THRESHOLD_SECONDS,
 )
 from ..logs.logger import logger
+from ..utils import format_duration
 from .client import TokenClient, TokenOutcome, TokenResult
 
 T = TypeVar("T")
@@ -45,6 +46,7 @@ class TokenInfo:
     state: TokenState = TokenState.FRESH
     refresh_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     last_validation: float = 0
+    forced_unknown_attempts: int = 0  # count of forced refreshes due to unknown expiry
 
 
 class TokenManager:
@@ -354,15 +356,24 @@ class TokenManager:
 
     async def _background_refresh_loop(self) -> None:
         base = TOKEN_MANAGER_BACKGROUND_BASE_SLEEP
+        last_loop = time.time()
         while self.running:
             try:
+                now = time.time()
+                drift = now - last_loop
+                drifted = drift > (base * 3)
+                if drifted:
+                    self.logger.log_event(
+                        "token_manager",
+                        "loop_drift_detected",
+                        drift_seconds=int(drift),
+                        base_sleep=base,
+                    )
                 for username, info in self.tokens.items():
-                    remaining = self._remaining_seconds(info)
-                    if remaining is None or remaining < 0:
-                        info.state = TokenState.EXPIRED
-                        continue
-                    if remaining < TOKEN_REFRESH_THRESHOLD_SECONDS:
-                        await self.ensure_fresh(username)
+                    await self._process_single_background(
+                        username, info, force_proactive=drifted
+                    )
+                last_loop = now
                 await asyncio.sleep(base * _jitter_rng.uniform(0.5, 1.5))
             except asyncio.CancelledError:
                 raise
@@ -374,3 +385,90 @@ class TokenManager:
                     error=str(e),
                 )
                 await asyncio.sleep(base * 2)
+
+    async def _process_single_background(
+        self, username: str, info: TokenInfo, *, force_proactive: bool = False
+    ) -> None:
+        """Handle refresh/validation logic for a single user (extracted to reduce complexity)."""
+        remaining = self._remaining_seconds(info)
+        # Emit remaining time every cycle for observability (even when no refresh triggered).
+        if remaining is None:
+            self.logger.log_event(
+                "token_manager",
+                "remaining_time",
+                level=logging.INFO,
+                user=username,
+                remaining=None,
+            )
+        else:
+            self.logger.log_event(
+                "token_manager",
+                "remaining_time",
+                level=logging.INFO,
+                user=username,
+                remaining_seconds=int(remaining),
+                human=format_duration(int(max(0, remaining))),
+            )
+        if remaining is None:
+            await self._handle_unknown_expiry(username)
+            return
+        if remaining < 0:
+            info.state = TokenState.EXPIRED
+            self.logger.log_event(
+                "token_manager",
+                "unexpected_expired_state",
+                user=username,
+                remaining=remaining,
+            )
+            await self.ensure_fresh(username, force_refresh=True)
+            return
+        trigger_threshold = TOKEN_REFRESH_THRESHOLD_SECONDS
+        # If the loop drifted, give ourselves more headroom by doubling threshold.
+        if force_proactive:
+            trigger_threshold *= 2
+        if remaining < trigger_threshold:
+            await self.ensure_fresh(username)
+
+    async def _handle_unknown_expiry(self, username: str) -> None:
+        """Resolve unknown expiry with capped forced refresh attempts (max 3)."""
+        outcome = await self.ensure_fresh(username, force_refresh=False)
+        info_ref = self.tokens.get(username)
+        if not info_ref:
+            return
+        if info_ref.expiry is None:
+            if info_ref.forced_unknown_attempts < 3:
+                info_ref.forced_unknown_attempts += 1
+                forced = await self.ensure_fresh(username, force_refresh=True)
+                if forced == TokenOutcome.FAILED:
+                    self.logger.log_event(
+                        "token_manager",
+                        "expiry_unknown_forced_refresh_failed",
+                        user=username,
+                        attempt=info_ref.forced_unknown_attempts,
+                        max_attempts=3,
+                    )
+                else:
+                    self.logger.log_event(
+                        "token_manager",
+                        "expiry_unknown_forced_refresh_success",
+                        user=username,
+                        attempt=info_ref.forced_unknown_attempts,
+                        max_attempts=3,
+                    )
+            else:
+                self.logger.log_event(
+                    "token_manager",
+                    "expiry_unknown_forced_refresh_exhausted",
+                    level=logging.WARNING,
+                    user=username,
+                    max_attempts=3,
+                )
+        else:
+            if info_ref.forced_unknown_attempts:
+                info_ref.forced_unknown_attempts = 0
+        if outcome == TokenOutcome.FAILED and info_ref.expiry is None:
+            self.logger.log_event(
+                "token_manager",
+                "expiry_unknown_validation_failed",
+                user=username,
+            )

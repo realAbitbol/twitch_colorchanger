@@ -42,7 +42,7 @@ class TaskWatchdog:
 
     def _check_task_health(self) -> None:
         dead: list[int] = []
-        alive: list[asyncio.Task] = []
+        alive: list[asyncio.Task[Any]] = []
         for i, task in enumerate(self.manager.tasks):
             if task.done():
                 if task.exception():
