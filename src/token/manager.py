@@ -109,9 +109,75 @@ class TokenManager:
             finally:
                 self.background_task = None
         self.running = True
+        # Initial validation pass before launching background loop (extract to helper for complexity control).
+        await self._initial_validation_pass()
         self.background_task = asyncio.create_task(self._background_refresh_loop())
         self.logger.log_event("token_manager", "start")
         await asyncio.sleep(0)
+
+    async def _initial_validation_pass(self) -> None:
+        """Validate all known tokens once at startup.
+
+        Strategy:
+        - If expiry unknown: record skipped (handled later by unknown-expiry logic).
+        - Else validate remotely; if remaining < proactive threshold (1h) refresh.
+        - If validation fails: force refresh.
+        """
+        if not self.tokens:
+            return
+        for username, info in self.tokens.items():
+            await self._initial_validate_user(username, info)
+
+    async def _initial_validate_user(self, username: str, info: TokenInfo) -> None:
+        try:
+            if info.expiry is None:
+                self.logger.log_event(
+                    "token_manager",
+                    "startup_validation_skipped_unknown_expiry",
+                    user=username,
+                )
+                return
+            outcome = await self.validate(username)
+            remaining = self._remaining_seconds(info)
+            if outcome == TokenOutcome.VALID and remaining is not None:
+                if remaining < TOKEN_REFRESH_THRESHOLD_SECONDS:
+                    ref = await self.ensure_fresh(username)
+                    # Inline the conditional action so the audit tool (AST walker)
+                    # can statically discover both template literals; previously this
+                    # used a variable which made the two variants appear "unused".
+                    self.logger.log_event(
+                        "token_manager",
+                        "startup_validated_and_refreshed"
+                        if ref == TokenOutcome.REFRESHED
+                        else "startup_validated_within_threshold",
+                        user=username,
+                        remaining=int(remaining),
+                        refresh_outcome=ref.value,
+                    )
+                else:
+                    self.logger.log_event(
+                        "token_manager",
+                        "startup_validated_ok",
+                        user=username,
+                        remaining=int(remaining),
+                    )
+            else:
+                ref = await self.ensure_fresh(username, force_refresh=True)
+                self.logger.log_event(
+                    "token_manager",
+                    "startup_validation_forced_refresh",
+                    user=username,
+                    refresh_outcome=ref.value,
+                )
+        except Exception as e:  # noqa: BLE001
+            self.logger.log_event(
+                "token_manager",
+                "startup_validation_error",
+                user=username,
+                error=str(e),
+                error_type=type(e).__name__,
+                level=logging.DEBUG,
+            )
 
     async def stop(self) -> None:
         if not self.running:
