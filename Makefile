@@ -37,8 +37,8 @@ lint:
 	.venv/bin/python -m ruff check src/
 	@echo "Running mypy..."
 	.venv/bin/python -m mypy src/
-	@echo "Running bandit..."
-	.venv/bin/python -m bandit -r src/
+	@echo "Running bandit (security scan)..."
+	.venv/bin/python -m bandit -q -r src/ scripts/ || true
 
 # Vulture dead code detection
 vulture-check:
@@ -69,7 +69,7 @@ md-check:
 	.venv/bin/python -m mdformat --check README.md FUNCTIONAL_DOCUMENTATION.md
 
 security:
-	.venv/bin/python -m bandit -r src/
+	.venv/bin/python -m bandit -q -r src/ scripts/
 
 # Comprehensive checks
 check-all: ruff-check lint vulture-check security
