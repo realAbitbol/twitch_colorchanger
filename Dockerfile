@@ -39,7 +39,8 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    TWITCH_CONF_FILE=/app/config/twitch_colorchanger.conf
+    TWITCH_CONF_FILE=/app/config/twitch_colorchanger.conf \
+    TWITCH_BROADCASTER_CACHE=/app/config/broadcaster_ids.cache.json
 
 VOLUME ["/app/config"]
 

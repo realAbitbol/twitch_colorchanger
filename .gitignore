@@ -4,6 +4,7 @@ docker-compose.*.yml
 docker-compose-*.yml
 twitch_colorchanger.conf
 twitch_colorchanger.conf.bak.*
+broadcaster_ids.cache.json
 
 # VS Code
 .vscode/
