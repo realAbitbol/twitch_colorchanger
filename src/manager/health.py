@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from secrets import SystemRandom
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..constants import HEALTH_MONITOR_INTERVAL
 from ..logs.logger import logger
@@ -21,7 +21,7 @@ class HealthMonitor:
         self.manager = manager
         self._in_progress = False
 
-    def start(self) -> asyncio.Task:
+    def start(self) -> asyncio.Task[Any]:
         return asyncio.create_task(self._loop())
 
     async def _loop(self) -> None:  # pragma: no cover (timing heavy)

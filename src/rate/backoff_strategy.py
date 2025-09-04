@@ -17,7 +17,9 @@ class AdaptiveBackoff:
         self._count = 0
         self._rng = SystemRandom()
 
-    def snapshot(self) -> dict:  # pragma: no cover (simple accessor)
+    # (Removed deprecated typing.Dict import per Ruff UP035)
+
+    def snapshot(self) -> dict[str, float | int]:  # pragma: no cover (simple accessor)
         return {
             "delay": self._delay,
             "until": self._until,

@@ -25,7 +25,7 @@ __all__ = [
 # --- Debounced batching infrastructure ---
 
 _PENDING: dict[str, dict[str, Any]] = {}
-_FLUSH_TASK: asyncio.Task | None = None
+_FLUSH_TASK: asyncio.Task[Any] | None = None
 _LOCK = asyncio.Lock()
 _DEBOUNCE_SECONDS = 0.25  # adjustable small delay to coalesce bursts
 

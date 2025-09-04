@@ -28,9 +28,14 @@ class SimpleFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:  # noqa: D401 (simple override)
         msg = record.getMessage()
-        color = self.LEVEL_COLORS.get(record.levelno, "") if self.enable_color else ""
-        reset = self.RESET if self.enable_color else ""
-        return f"{color}{record.levelname}{reset} {msg}"
+        # Fixed width for level names so the following prefix column aligns.
+        # Longest built-in level name: 'CRITICAL' (8 chars).
+        raw_level = record.levelname.ljust(8)
+        if self.enable_color:
+            color = self.LEVEL_COLORS.get(record.levelno, "")
+            reset = self.RESET
+            return f"{color}{raw_level}{reset} {msg}"
+        return f"{raw_level} {msg}"
 
 
 class BotLogger:
@@ -132,6 +137,13 @@ class BotLogger:
     def _build_debug_message(
         event_name: str, prefix: str, human_text: str | None, kwargs: dict[str, object]
     ) -> str:
+        # Chat message beautification: add emoji for PRIVMSG events if missing.
+        if (
+            event_name == "irc_privmsg"
+            and human_text
+            and not human_text.startswith("💬")
+        ):
+            human_text = f"💬 {human_text}"
         context = ", ".join(f"{k}={v}" for k, v in kwargs.items())
         base = f"{event_name} {prefix}"
         if human_text:
@@ -144,6 +156,13 @@ class BotLogger:
     def _build_concise_message(
         event_name: str, prefix: str, human_text: str | None, channel: str | None
     ) -> str:
+        # Chat message beautification: add emoji for PRIVMSG events if missing.
+        if (
+            event_name == "irc_privmsg"
+            and human_text
+            and not human_text.startswith("💬")
+        ):
+            human_text = f"💬 {human_text}"
         core = human_text or event_name
         msg = f"{prefix} {core}"
         if channel and event_name.endswith("privmsg") and f"#{channel}" not in prefix:

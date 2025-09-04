@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from secrets import SystemRandom
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..constants import TASK_WATCHDOG_INTERVAL
 from ..logs.logger import logger
@@ -19,7 +19,7 @@ class TaskWatchdog:
     def __init__(self, manager: BotManager) -> None:
         self.manager = manager
 
-    def start(self) -> asyncio.Task:
+    def start(self) -> asyncio.Task[Any]:
         return asyncio.create_task(self._loop())
 
     async def _loop(self) -> None:  # pragma: no cover (timing heavy)

@@ -240,7 +240,7 @@ async def setup_missing_tokens(
 
     from ..token.provisioner import TokenProvisioner  # local import
 
-    updated_users: list[dict] = []
+    updated_users: list[dict[str, Any]] = []
     any_updates = False
     async with aiohttp.ClientSession() as session:
         provisioner = TokenProvisioner(session)

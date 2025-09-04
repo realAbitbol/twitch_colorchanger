@@ -49,6 +49,7 @@ class TokenInfo:
 
 class TokenManager:
     _instance = None  # Simple singleton; not thread-safe by design (single event loop).
+    background_task: asyncio.Task[Any] | None
 
     def __new__(cls, http_session: aiohttp.ClientSession) -> TokenManager:
         if cls._instance is None:
@@ -63,7 +64,7 @@ class TokenManager:
         # Core state
         self.http_session = http_session
         self.tokens: dict[str, TokenInfo] = {}
-        self.background_task: asyncio.Task | None = None
+        self.background_task: asyncio.Task[Any] | None = None
         self.running = False
         self.logger = logger
         self._client_cache: dict[tuple[str, str], TokenClient] = {}
