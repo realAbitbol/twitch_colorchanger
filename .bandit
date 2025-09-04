@@ -1,7 +1,7 @@
 [bandit]
-# Skip assert_used (B101) already set via pyproject? Keeping here for clarity.
+# Keep skipping assert_used (B101) if present in tests; adjust as needed.
 skips = B101
-# Exclude virtual environment, build artifacts, tests
-exclude = .venv,build,dist,tests
-# Targets (optional documentation)
-targets = src,scripts
+# Only exclude virtual environment so we scan src, scripts, tests, and root-level code.
+exclude = .venv,.git,.mypy_cache,.ruff_cache,.pytest_cache,.vscode,.github
+# Targets: allow root recursion (bandit -r .), but document typical source dirs.
+targets = src,scripts,tests
