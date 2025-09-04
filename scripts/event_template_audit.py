@@ -6,6 +6,8 @@ Moved to scripts/ directory.
 from __future__ import annotations
 
 import argparse
+import ast
+import importlib.util
 import json
 import re
 import sys
@@ -13,12 +15,35 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.event_catalog import EVENT_TEMPLATES, reload_event_templates
+# Manually load event_catalog without creating a top-level 'src' package import that
+# causes our 'token' package to shadow the stdlib 'token' during early import graph.
+_SRC = Path(__file__).resolve().parent.parent / "src"
+_CATALOG = _SRC / "logs" / "event_catalog.py"
+_spec = importlib.util.spec_from_file_location("logs.event_catalog", _CATALOG)
+if _spec is None or _spec.loader is None:  # pragma: no cover - defensive
+    print("Failed to load event catalog spec", file=sys.stderr)
+    EVENT_TEMPLATES: dict[tuple[str, str], str] = {}
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent / "src"
-SRC_ROOT = PROJECT_ROOT
-TEMPLATES_JSON = PROJECT_ROOT / "event_templates.json"
+    def reload_event_templates() -> None:
+        """Fallback no-op when catalog can't be loaded."""
+        pass
+else:
+    _mod = importlib.util.module_from_spec(_spec)
+    # exec_module is dynamically typed; acceptable to suppress type checking locally
+    _spec.loader.exec_module(_mod)
+    loaded = getattr(_mod, "EVENT_TEMPLATES", {})
+    if isinstance(loaded, dict):
+        EVENT_TEMPLATES = loaded
+    else:  # pragma: no cover - unexpected shape
+        EVENT_TEMPLATES = {}
+    reload_event_templates = getattr(_mod, "reload_event_templates", lambda: None)
 
+PROJECT_ROOT = _SRC
+SRC_ROOT = _SRC
+TEMPLATES_JSON = _SRC / "logs" / "event_templates.json"
+
+# Legacy regex (kept only as fallback for extremely small edge cases). AST-based
+# extraction below is authoritative and captures ternary (IfExp) branches.
 _RE_POSITIONAL = re.compile(
     r"logger\.log_event\(\s*(['\"])(?P<domain>[^'\"]+)\1\s*,\s*(['\"])(?P<action>[^'\"]+)\3"
 )
@@ -35,18 +60,102 @@ def iter_python_files(root: Path) -> Iterable[Path]:
         yield path
 
 
+def _gather_string_literals(expr: ast.AST) -> set[str]:
+    """Return all string literal values contained in expr.
+
+    Supports:
+      - ast.Constant (str)
+      - ast.JoinedStr (f-strings) -> ignored (dynamic)
+      - ast.IfExp: recursively gather from body/orelse
+    """
+    out: set[str] = set()
+    if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+        out.add(expr.value)
+    elif isinstance(expr, ast.IfExp):  # ternary expression
+        out.update(_gather_string_literals(expr.body))
+        out.update(_gather_string_literals(expr.orelse))
+    # Other expression kinds (Name, Attribute, Call, etc.) are dynamic -> skipped.
+    return out
+
+
+def _is_log_event_call(node: ast.Call) -> bool:
+    """Heuristically determine if call is *.log_event (logger or self.logger)."""
+    func = node.func
+    if isinstance(func, ast.Attribute) and func.attr == "log_event":
+        return True
+    return False
+
+
+def _extract_from_call(node: ast.Call) -> set[tuple[str, str]]:
+    pairs: set[tuple[str, str]] = set()
+    domain_expr: ast.AST | None = None
+    action_expr: ast.AST | None = None
+    # Positional arguments
+    if node.args:
+        if len(node.args) >= 1:
+            domain_expr = node.args[0]
+        if len(node.args) >= 2:
+            action_expr = node.args[1]
+    # Keywords override / supplement
+    for kw in node.keywords or []:
+        if kw.arg == "domain":
+            domain_expr = kw.value
+        elif kw.arg == "action":
+            action_expr = kw.value
+    # Extract concrete domain
+    if not (
+        domain_expr
+        and isinstance(domain_expr, ast.Constant)
+        and isinstance(domain_expr.value, str)
+    ):
+        return pairs
+    domain = domain_expr.value
+    if not action_expr:
+        return pairs
+    for action in _gather_string_literals(action_expr):
+        pairs.add((domain, action))
+    return pairs
+
+
 def extract_references(paths: Iterable[Path]) -> set[tuple[str, str]]:
+    """Extract (domain, action) pairs via AST parsing.
+
+    Falls back to regex scan only if AST parsing fails for a file (syntax error).
+    Captures all branches of ternary expressions used for the action argument.
+    """
     refs: set[tuple[str, str]] = set()
     for path in paths:
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except (OSError, UnicodeDecodeError):
-            continue
-        for m in _RE_POSITIONAL.finditer(text):
-            refs.add((m.group("domain"), m.group("action")))
-        for m in _RE_KEYWORD.finditer(text):
-            refs.add((m.group("domain"), m.group("action")))
+        _extract_file_references(path, refs)
     return refs
+
+
+def _extract_file_references(path: Path, refs: set[tuple[str, str]]) -> None:
+    """Populate refs with (domain, action) pairs from a single file."""
+    try:
+        source = path.read_text(encoding="utf-8", errors="ignore")
+    except (OSError, UnicodeDecodeError):  # unreadable file
+        return
+    tree = _parse_ast(source, path)
+    if tree is None:
+        _regex_fallback(source, refs)
+        return
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and _is_log_event_call(node):
+            refs.update(_extract_from_call(node))
+
+
+def _parse_ast(source: str, path: Path) -> ast.AST | None:
+    try:
+        return ast.parse(source, filename=str(path))
+    except SyntaxError:
+        return None
+
+
+def _regex_fallback(source: str, refs: set[tuple[str, str]]) -> None:
+    for m in _RE_POSITIONAL.finditer(source):
+        refs.add((m.group("domain"), m.group("action")))
+    for m in _RE_KEYWORD.finditer(source):
+        refs.add((m.group("domain"), m.group("action")))
 
 
 def load_templates_from_json() -> set[tuple[str, str]]:
