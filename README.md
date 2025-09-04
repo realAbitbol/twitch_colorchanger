@@ -46,10 +46,7 @@ Automatically change your Twitch username color after each message you send in c
     - [General Environment Variables](#general-environment-variables)
     - [Internal Configuration Constants](#internal-configuration-constants)
     - [Environment Variable Usage Examples](#environment-variable-usage-examples)
-  - [Chat Backend Selection](#chat-backend-selection)
-  - [Runtime Configuration Changes](#runtime-configuration-changes)
-  - [Docker Configuration](#docker-configuration)
-  - [Debug Mode](#debug-mode)
+    - [Chat Backend Selection](#chat-backend-selection)
 - [Troubleshooting](#troubleshooting)
   - [Startup Script Issues](#startup-script-issues)
   - [Configuration Issues](#configuration-issues)
@@ -313,7 +310,7 @@ services:
   twitch-colorchanger:
     # Use either Docker Hub or GitHub Container Registry
     image: damastah/twitch-colorchanger:latest
-    # Alternative: image: ghcr.io/realabitbol/twitch-colorchanger:latest
+    # Alternative: image: ghcr.io/realabitbol/twitch_colorchanger:latest
     volumes:
       - ./config:/app/config
     restart: unless-stopped
@@ -526,6 +523,40 @@ All internal timing and behavior constants can be overridden via environment var
 
 #### Environment Variable Usage Examples
 
+Increase network resilience for unstable connections:
+
+```bash
+export NETWORK_PARTITION_THRESHOLD=1800  # 30 minutes instead of 15
+export PARTIAL_CONNECTIVITY_THRESHOLD=300  # 5 minutes instead of 3
+export CONNECTION_RETRY_TIMEOUT=1200     # 20 minutes instead of 10
+python -m src.main
+```
+
+Faster response times for stable networks:
+
+```bash
+export CONFIG_SAVE_TIMEOUT=5.0           # 5 seconds instead of 10
+export RELOAD_WATCH_DELAY=1.0            # 1 second instead of 2
+export HEALTH_MONITOR_INTERVAL=120       # 2 minutes instead of 5
+python -m src.main
+```
+
+Docker usage with environment overrides:
+
+```bash
+docker run -e NETWORK_PARTITION_THRESHOLD=1800 \
+           -e CONFIG_SAVE_TIMEOUT=5.0 \
+           damastah/twitch-colorchanger:latest
+```
+
+Error handling: Invalid values show warnings and fall back to defaults:
+
+```bash
+export NETWORK_PARTITION_THRESHOLD=invalid
+python -m src.main
+# Output: Warning: Invalid integer value for NETWORK_PARTITION_THRESHOLD='invalid', using default 900
+```
+
 #### Chat Backend Selection
 
 You can switch the underlying chat transport without changing your user config structure (the bot already loads `client_id` and `client_secret` from the config file):
@@ -537,147 +568,39 @@ TWITCH_CHAT_BACKEND=eventsub   # experimental EventSub WebSocket backend
 
 When using `eventsub` the backend automatically reuses the per-user `client_id` from the configuration file (no extra environment variable needed). The backend subscribes to `channel.chat.message` events filtered to messages from the bot user only (parity with IRC behavior). If anything fails during setup it will log errors; revert to `irc` if unstable.
 
-Scopes: device-flow now grants `chat:read`, `user:read:chat`, and `user:manage:chat_color` (satisfies EventSub chat subscription requirements). If you generated tokens earlier without `user:read:chat`, regenerate them.
+Required scopes for EventSub chat path (automatic device flow now requests all of these):
+
+| Purpose | Scope |
+|---------|-------|
+| Read chat (IRC / EventSub) | `chat:read` |
+| Receive self chat messages over EventSub | `user:read:chat` |
+| Change chat color via Helix | `user:manage:chat_color` |
+
+If your existing tokens are missing `user:read:chat`, trigger re-authorization (delete tokens or remove them from config and restart) so the device flow requests the updated set.
+
+##### Broadcaster ID Cache
+
+The EventSub backend resolves channel names to broadcaster IDs and caches them in `broadcaster_ids.cache.json` inside the mounted config directory. Persist the directory (`./config:/app/config`) so repeated container runs do not re-hit Helix unnecessarily. Override path with `TWITCH_BROADCASTER_CACHE` if needed.
+
+##### Resilience Mechanics (EventSub)
+
+| Mechanism | Description |
+|-----------|-------------|
+| Stale Detection | ~70s with no heartbeat/message triggers reconnect |
+| Reconnect Backoff | Exponential (1s → 2s → 4s … capped at 60s) + secrets-based jitter |
+| Fast Audit | 60–120s after reconnect: verifies expected subscriptions |
+| Normal Audit | Every 600s + 0–120s jitter: reconciles subscriptions |
+| Missing Subscriptions | Automatically re-subscribed (`eventsub_resubscribe_missing`) |
+| Early Invalid Token | Repeated 401s mark token invalid early (`eventsub_token_invalid`) |
+| Missing Scopes | 403 + scope diff emits `eventsub_missing_scopes` and halts subs |
+
+All EventSub chat messages are normalized to the same log template (`irc.privmsg`) with an added `backend=eventsub` tag. Only the bot's own messages are processed (mirrors IRC handling) to keep color change triggers consistent and reduce noise.
+
+Fallback behavior: if `TWITCH_CHAT_BACKEND=eventsub` is set but the backend fails to initialize, the bot logs the failure and continues with IRC (stable path).
 
 Open issues with logs (`DEBUG=true`) if you encounter problems—feedback helps stabilize the EventSub path.
 
-**Increase network resilience for unstable connections:**
-
-```bash
-export NETWORK_PARTITION_THRESHOLD=1800  # 30 minutes instead of 15
-export PARTIAL_CONNECTIVITY_THRESHOLD=300  # 5 minutes instead of 3
-export CONNECTION_RETRY_TIMEOUT=1200     # 20 minutes instead of 10
-python -m src.main
-```
-
-**Faster response times for stable networks:**
-
-```bash
-export CONFIG_SAVE_TIMEOUT=5.0           # 5 seconds instead of 10
-export RELOAD_WATCH_DELAY=1.0            # 1 second instead of 2
-export HEALTH_MONITOR_INTERVAL=120       # 2 minutes instead of 5
-python -m src.main
-```
-
-**Docker usage with environment overrides:**
-
-```bash
-docker run -e NETWORK_PARTITION_THRESHOLD=1800 \
-           -e CONFIG_SAVE_TIMEOUT=5.0 \
-           damastah/twitch-colorchanger:latest
-```
-
-**Error handling:** Invalid values show warnings and fall back to defaults:
-
-```bash
-export NETWORK_PARTITION_THRESHOLD=invalid
-python -m src.main
-# Output: Warning: Invalid integer value for NETWORK_PARTITION_THRESHOLD='invalid', using default 900
-```
-
-### Runtime Configuration Changes
-
-The bot automatically watches for changes to the configuration file and restarts with the new settings **without requiring manual intervention**. This feature enables:
-
-- **Adding new users**: Simply add a new user to the `users` array in the config file
-- **Removing users**: Delete or comment out users from the config file
-- **Updating settings**: Modify any user settings (channels, colors, etc.) and they'll take effect immediately
-- **Zero downtime**: Bots restart automatically when valid config changes are detected
-
-**Requirements:**
-
-- Install the `watchdog` package: `pip install watchdog` (included in `requirements.txt`)
-- Config file must contain valid JSON with at least one valid user
-
-**Example workflow:**
-
-1. Start the bot: `python -m src.main`
-2. Edit `twitch_colorchanger.conf` in your editor
-3. Save the file - bots automatically restart with new config
-4. Check the console output for restart confirmation
-
-**Note:** Invalid configuration changes are ignored with warnings logged to console. Bot-initiated updates (like token refreshes) do not trigger restarts to prevent infinite loops.
-
-### Docker Configuration
-
-The container is built on **Python Alpine Linux** for optimal security and performance:
-
-- **Enhanced Security**: Alpine's security-focused design with minimal attack surface
-- **Reduced Size**: ~50MB image size vs ~300MB for standard Python images
-- **Non-root Execution**: Runs as `appuser` (UID 1000) for additional security hardening
-- **Production Ready**: Designed for secure containerized deployment
-
-Mount your config directory (recommended — keeps main conf, backups, and broadcaster cache together):
-
-```bash
-mkdir -p config && cp twitch_colorchanger.conf.sample config/twitch_colorchanger.conf
-docker run -v $PWD/config:/app/config damastah/twitch-colorchanger:latest
-```
-
-**Important**: The config file must be readable and writable by the container for token management:
-
-```bash
-# Make config directory contents accessible by container user (UID 1000)
-chmod 664 config/twitch_colorchanger.conf
-```
-
-This allows the bot to:
-
-- Read your configuration on startup
-- Save new tokens from automatic authorization
-- Update tokens during refresh operations
-
-### Debug Mode
-
-Enable detailed logging for troubleshooting:
-
-```bash
-# Local debugging
-DEBUG=true python -m src.main
-
-# Docker with debug logging
-docker run -e DEBUG=true damastah/twitch-colorchanger:latest
-```
-
-**Debug Output Includes:**
-
-- Config file watching events
-- Token refresh operations
-- Rate limiting details
-- IRC message parsing
-- Bot restart confirmations
-
-### Monitoring Live Configuration
-
-Watch for these console messages to monitor config changes:
-
-```text
-👀 Config file watcher enabled for: twitch_colorchanger.conf
-📁 Config file changed: /path/to/twitch_colorchanger.conf
-✅ Config validation passed - 2 valid user(s)
-🔄 Config change detected, restarting bots...
-📊 Config updated: 1 → 2 users
-```
-
-**Troubleshooting Config Watching:**
-
-- **No watcher messages**: Install `watchdog` package: `pip install watchdog`
-- **Changes ignored**: Check JSON syntax and ensure at least one valid user
-- **Infinite restarts**: Bot token updates are filtered out automatically
-- **File permissions**: Ensure config file is readable by the application
-
 ---
-
-### Channel Join Reliability
-
-Each channel JOIN waits for confirmation (numeric 366). If not received within 30 seconds a single retry is issued (max 2 attempts). Final failure is logged after the second timeout.
-
-### Token Strategy
-
-On startup the bot forces a token refresh (if a refresh token exists) for a full validity window. A background task then runs every 10 minutes:
-
-- If expiry is known and < 1 hour → refresh
-- If no expiry is tracked → validate via a lightweight users endpoint call, refresh on failure
 
 ## Troubleshooting
 

@@ -1,365 +1,238 @@
-# Twitch Color Changer Bot - Functional Documentation
+# Twitch Color Changer Bot – Functional Documentation
 
-This document describes the functional capabilities and behavior of the Twitch Color Changer Bot as implemented in the current codebase.
+Comprehensive description of runtime behavior, architecture, and operational characteristics (IRC + EventSub backends). Requires **Python 3.13+**.
 
-## Project Overview
+---
 
-The Twitch Color Changer Bot automatically changes a user's Twitch chat color after every message they send. It supports multiple users simultaneously, both random hex colors (Prime/Turbo users) and preset Twitch colors (standard users), robust token lifecycle management, efficient IRC connectivity, Docker deployment, and live configuration reload.
+## Table of Contents
 
-## Core Functionality
+- [1. Project Overview](#1-project-overview)
+- [2. Core Functionality](#2-core-functionality)
+  - [2.1 Primary Features](#21-primary-features)
+  - [2.2 Color Change Flow](#22-color-change-flow)
+  - [2.3 Runtime Chat Commands](#23-runtime-chat-commands)
+- [3. Chat Backend Abstraction](#3-chat-backend-abstraction)
+  - [3.1 Implementations](#31-implementations)
+  - [3.2 Interface Responsibilities](#32-interface-responsibilities)
+  - [3.3 Design Rationale](#33-design-rationale)
+- [4. IRC Backend Summary](#4-irc-backend-summary)
+- [5. EventSub Backend (Experimental)](#5-eventsub-backend-experimental)
+  - [5.1 Transport & Session](#51-transport--session)
+  - [5.2 Subscriptions](#52-subscriptions)
+  - [5.3 Message Handling](#53-message-handling)
+  - [5.4 Resilience](#54-resilience)
+  - [5.5 Broadcaster ID Cache](#55-broadcaster-id-cache)
+  - [5.6 Limitations](#56-limitations)
+- [6. Token Lifecycle Management](#6-token-lifecycle-management)
+  - [Device Flow Sequence](#device-flow-sequence)
+- [7. Configuration System](#7-configuration-system)
+- [8. Multi-Bot Orchestration](#8-multi-bot-orchestration)
+- [9. Logging & Observability](#9-logging--observability)
+  - [9.1 Event Template Catalog (Recent Notables)](#91-event-template-catalog-recent-notables)
+  - [9.2 Security & Resilience Updates](#92-security--resilience-updates)
+- [10. Deployment Architecture](#10-deployment-architecture)
+- [11. Performance Characteristics](#11-performance-characteristics)
+- [12. Dependencies & Tooling](#12-dependencies--tooling)
+- [13. Future Enhancements](#13-future-enhancements)
 
-### Primary Features
 
-1. **Automatic Color Changing**: Immediate color change triggered after each user's own message
-2. **Multi-User Support**: Multiple concurrent bot instances running in one process
-3. **Dual Color Modes**: Random hex colors (#RRGGBB) for Prime/Turbo users, preset Twitch colors for standard users
-4. **Smart Turbo/Prime Detection**: Automatic fallback to preset colors when hex colors fail, with persistent settings
-5. **Color Avoidance**: Never repeats the same color consecutively
-6. **Current Color Detection**: Fetches current Twitch color on startup to ensure first change is different
-7. **Token Management**: Automatic token refresh with proactive expiry checking (600-second intervals)
-8. **IRC Connection**: Custom IRC client with health monitoring and automatic reconnection
-9. **Docker Support**: Multi-architecture container images with simplified deployment
-10. **Live Configuration Reload**: Automatic bot restart when config file changes externally
-11. **Channel Deduplication**: Automatically removes duplicate channels and persists clean configuration
-12. **Connection Health Monitoring**: 600-second ping intervals with 300-second activity timeouts
-13. **Visible Connection Status**: Real-time ping/pong logging for transparency
-14. **Per-User Runtime Toggle**: Enable or disable automatic color changes at runtime via chat commands (`ccd` / `cce`) with persisted state
+## 1. Project Overview
 
-### Color Change Flow
+Automatically changes a user's Twitch chat color after each of their own messages. Supports multiple users, preset & hex colors, robust token lifecycle management, pluggable chat backends (IRC & EventSub), Docker deployment, and live configuration reload.
+
+## 2. Core Functionality
+
+### 2.1 Primary Features
+
+1. Automatic color change after each own message
+2. Multi-user concurrent operation (independent bot instances)
+3. Preset + random hex colors (Prime/Turbo users get true hex)
+4. Smart Turbo/Prime detection with persistent fallback
+5. No immediate repeat color (avoids last applied value)
+6. Startup current color discovery (first change guaranteed different)
+7. Proactive token refresh + validation (pre-expiry)
+8. IRC backend with health & reconnection
+9. EventSub backend (experimental) with resilient subscriptions
+10. Live configuration reload (watchdog + debounce)
+11. Channel deduplication & persistence
+12. Structured event logging & event template catalog audit
+13. Per-user runtime enable/disable commands (`ccd` / `cce`)
+14. Directory-based persistence (config + timestamped backups + broadcaster ID cache)
+
+### 2.2 Color Change Flow
 
 ```text
-User sends message → IRC client receives → Bot detects own message →
-Generate new color (avoiding current) → API call to Twitch → Color changed →
-Statistics updated
+Own message detected
+  → Select new color (≠ current)
+    → PUT /helix/chat/color
+      → Log success/failure
+        → Update stats
 ```
 
-### IRC Connection Management
-
-- **Health Monitoring**: Tracks server activity with 300-second timeout
-- **Ping Intervals**: Expects server pings every 600 seconds
-- **Automatic Reconnection**: Force reconnects on stale connections
-- **Visible Status**: Real-time ping/pong messages with username identification
-- **Channel Join Management**: 30-second timeouts with retry logic (max 2 attempts)
-- **Multi-Channel Support**: Joins multiple channels with confirmation tracking
-
-### Runtime Chat Commands
-
-Provides in-chat, per-user control of the automatic color cycling feature. Commands are only acted upon when sent by the bot's own authenticated user (messages from other users are ignored).
+### 2.3 Runtime Chat Commands
 
 | Command | Effect |
 |---------|--------|
-| `ccd`   | Disable automatic color changes for that user (writes `"enabled": false` to config) |
-| `cce`   | Enable automatic color changes for that user (writes `"enabled": true` to config)  |
+| `ccd` | Disable automatic color changes for that user (`enabled=false`) |
+| `cce` | Enable automatic color changes (`enabled=true`) |
 
-Behavior Characteristics:
+Only the bot user’s own messages are interpreted. State changes persist to config immediately.
 
-- State persists across restarts (stored in configuration file)
-- Default is enabled (`true`) if the field is absent (backwards compatible)
-- Disabling suppresses outbound Twitch color API calls but keeps IRC connection, statistics, and token tasks active
-- Changes are logged through structured events (`auto_color_disabled`, `auto_color_enabled`)
-- Commands never affect other configured users
+## 3. Chat Backend Abstraction
 
-## Token Lifecycle Management
+### 3.1 Implementations
 
-### Automatic Token Setup
+| Backend  | Status        | Transport                                      | Required Scopes                                    |
+|----------|---------------|------------------------------------------------|----------------------------------------------------|
+| IRC      | Stable        | Raw IRC TCP                                    | `chat:read` (implicit)                             |
+| EventSub | Experimental  | EventSub WebSocket (`channel.chat.message` v1) | `chat:read`, `user:read:chat`, `user:manage:chat_color` |
 
-- **Device Flow Integration**: Uses OAuth Device Authorization Grant for automatic token generation
-- **Missing Token Detection**: Automatically detects users without valid tokens on startup
-- **Unattended Authorization**: User authorizes once via browser, bot handles all polling and token retrieval
-- **Smart Fallback**: Only triggers device flow when existing tokens are invalid or can't be refreshed
-- **Config Integration**: Automatically saves new tokens to configuration file
+Select via `TWITCH_CHAT_BACKEND=irc|eventsub` (defaults to `irc`; invalid → fallback).
 
-### Device Flow Process
+### 3.2 Interface Responsibilities
+
+`connect`, `join_channel`, `listen`, `disconnect`, `update_token`, `set_message_handler`, `set_color_change_handler`.
+
+### 3.3 Design Rationale
+
+Both backends emit only *self* messages to maximize signal quality and enforce parity. Unified logging template (`irc.privmsg`) keeps downstream tooling stable.
+
+## 4. IRC Backend Summary
+
+Standard Twitch IRC client: authentication, capabilities (membership/tags/commands), JOIN confirmation (366), 30s join timeout + retry, stale detection (activity timeout + server ping expectations), forced reconnect logic, and per-channel state tracking.
+
+## 5. EventSub Backend (Experimental)
+
+### 5.1 Transport & Session
+
+- WebSocket URL: `wss://eventsub.wss.twitch.tv/ws`
+- Welcome frame yields `session.id`
+- Heartbeat handled by library (30s) – stale if ~70s silence
+- One WebSocket per configured bot user
+
+### 5.2 Subscriptions
+
+- Event Type: `channel.chat.message` (v1)
+- Condition: `{ broadcaster_user_id, user_id }` restricts delivery to bot user inside each target channel
+- Expected set = all configured channels for the bot user
+- Missing scopes → `eventsub_missing_scopes` and early token invalidation path
+
+### 5.3 Message Handling
+
+- Filter: process only if `chatter_user_name` == bot username (case-insensitive)
+- Normalize to IRC-equivalent log event (`irc.privmsg`) with `backend=eventsub`
+- Extract `message.text` and broadcaster context for color trigger pipeline
+
+### 5.4 Resilience
+
+| Mechanism            | Details |
+|----------------------|---------|
+| Stale Detection      | ~70s inactivity → forced reconnect |
+| Reconnect Backoff    | Exponential (1s → 2s → 4s ... cap 60s) + secrets-based jitter |
+| Fast Audit           | 60–120s after reconnect verifies all subscriptions |
+| Normal Audit         | Every 600s + 0–120s jitter, reconciles missing subscriptions |
+| Resubscribe          | Missing channels resubscribed (`eventsub_resubscribe_missing`) |
+| Early Invalid Token  | Two 401 subscribe attempts OR 401 on list → `eventsub_token_invalid` |
+| Missing Scopes       | 403 subscribe + set diff → `eventsub_missing_scopes` |
+
+### 5.5 Broadcaster ID Cache
+
+File: `broadcaster_ids.cache.json` in config directory (override via `TWITCH_BROADCASTER_CACHE`).
+
+- Reduces repeated Helix lookups for user → ID resolution
+- Updated on successful new channel resolution
+- Persisted & loaded at startup; gracefully skip corrupt file
+
+### 5.6 Limitations
+
+- Only self messages (design choice for parity & performance)
+- Experimental: fall back to IRC if instability observed
+- One WebSocket per user (not multiplexed across users—simplifies isolation)
+
+## 6. Token Lifecycle Management
+
+- Device Flow provisioning on demand for missing/invalid tokens
+- Startup scope validation (fast detection of revoked scope sets)
+- Proactive refresh (<1h remaining) every 10m cycle
+- Forced refresh at startup ensures fresh window
+- Refresh failure → validation fallback → device flow fallback
+- Invalidation events (`eventsub_token_invalid`, also generic token invalid logs) annotated with source (refresh, validation, EventSub 401, etc.)
+- Scope diff detection triggers early invalidation (prevents wasted retries)
+
+### Device Flow Sequence
 
 ```text
-Bot startup → Check token validity → If invalid/missing → Generate device code →
-Display authorization URL + code → User authorizes in browser →
-Bot polls for completion → Receives tokens → Saves to config → Continues startup
+Startup → Existing tokens checked
+  ├─ Valid → continue
+  ├─ Refresh fails / invalid → Device flow start
+       → Display user_code + verification_uri
+       → Poll until approved or times out
+       → Store access & refresh tokens → proceed
 ```
 
-### Startup Behavior
+## 7. Configuration System
 
-- **Token Validation**: Checks existing tokens first before triggering device flow
-- **Force Refresh**: Attempts token refresh at startup to ensure fresh 4-hour window
-- **Device Flow Fallback**: Only used when validation and refresh both fail
-- **Config Persistence**: Automatically updates config with new tokens
-- **User ID Retrieval**: Fetches user ID from Twitch API for operations
-- **Current Color Detection**: Retrieves current color to avoid immediate repetition
-- **Channel Deduplication**: Removes duplicate channels and persists clean configuration
-- **IRC Connection**: Establishes connection and joins all configured channels
+- Multi-user JSON file (array under `users`)
+- Live reload (watchdog) with debounce & self-change suppression
+- Timestamped backup files on changes
+- Automatic legacy single-user → multi-user conversion
+- Channel deduplication + persistence
+- `enabled` flag defaults to `true`; runtime toggles persist
+- Environment overrides (advanced / container) for file path (`TWITCH_CONF_FILE`) and cache path
 
-### Periodic Maintenance
+## 8. Multi-Bot Orchestration
 
-- **600-Second Checks**: Validates tokens every 600 seconds (10 minutes)
-- **Proactive Refresh**: Refreshes when <1 hour remaining
-- **Force Refresh at Startup**: Ensures fresh 4-hour token window on bot start
-- **Fallback Validation**: API validation if expiry time unknown
-- **Config Persistence**: Updates config file with new tokens
+- Each user = isolated async task (backend, token task, color scheduler)
+- Central manager supervises tasks & coordinates graceful shutdown
+- Health-check mode (`--health-check`) performs lightweight readiness probe
+- Failure isolation: one bot crash does not terminate others (unless systemic)
 
-### Error Handling
+## 9. Logging & Observability
 
-- **Automatic Retry**: Exponential backoff for temporary failures
-- **Token Invalidation**: Handles revoked or expired tokens gracefully
-- **Device Flow Recovery**: Falls back to device flow for completely invalid tokens
-- **Fallback Strategy**: Continues operation with available valid tokens
-
-## Configuration System
+- Structured events; event name padded to fixed width for column alignment
+- Unified message template: `irc.privmsg` across both backends (`backend` tag differentiates)
+- Dedicated events for reconnects, audits, scope evaluation, token invalidation sources
+- Event template audit script validates all emitted events appear in catalog
 
-### Multi-User Configuration Format
+### 9.1 Event Template Catalog (Recent Notables)
 
-```json
-{
-  "users": [
-    {
-      "username": "streamername",
-      "access_token": "oauth_token",
-      "refresh_token": "refresh_token",
-      "client_id": "twitch_client_id",
-      "client_secret": "client_secret",
-  "channels": ["channel1", "channel2"],
-  "is_prime_or_turbo": true,
-  "enabled": true
-    }
-  ]
-}
-```
+`eventsub_ws_connected`, `eventsub_subscribed`, `eventsub_resubscribe_missing`, `eventsub_token_scopes`, `eventsub_token_invalid`, `eventsub_missing_scopes`, `eventsub_reconnect_success`, `eventsub_reconnect_failed`, `eventsub_stale_detected`, `auto_color_enabled`, `auto_color_disabled`.
 
-#### Enabled Flag (`enabled`)
+### 9.2 Security & Resilience Updates
 
-Optional per-user boolean controlling whether automatic color changes are performed.
+- Secrets-based jitter to reduce correlated reconnects
+- Removal of silent `pass` exception blocks—explicit logging instead
+- Early invalidation of degraded tokens (reduces wasted subscription churn)
+- Scope comparison logging for diagnostic clarity
 
-Key points:
+## 10. Deployment Architecture
 
-- If omitted, defaults to `true` (maintains behavior for legacy configs)
-- When set to `false`, the bot still connects, watches IRC, refreshes tokens, and gathers statistics but skips color change requests
-- Modified at runtime by chat commands `ccd` (disable) and `cce` (enable)
-- Persisted immediately (asynchronously) to configuration upon change to survive restarts
+- Docker multi-arch images (Alpine base, non-root execution)
+- Recommended volume: `./config:/app/config` (config + backups + broadcaster cache)
+- Backend selection via environment variable
+- Health check route uses lightweight startup argument
+- Graceful shutdown on signals; persistent state saved pre-exit
 
-Use cases: temporarily pause during events, testing sessions, reducing API usage, or diagnosing issues without removing the user entry.
+## 11. Performance Characteristics
 
-### Environment Variable Support
+- Memory: ~30–40 MB per active bot (dominated by Python runtime + aiohttp buffers)
+- CPU: Minimal; event-driven I/O dominated
+- Scaling: Linear per user (independent connections / WebSocket)
+- Latency: Color change typically near real-time; limited by Twitch API & network RTT
 
-- **Docker Integration**: Environment variables override config file settings
-- **Runtime Configuration**: Channels and color preferences from environment
-- **Token Persistence**: Tokens always saved to config file for persistence
+## 12. Dependencies & Tooling
 
-### Live Configuration Reload
+- Runtime: `aiohttp`, `httpx`, optional `watchdog`
+- Tooling: Ruff (lint/format/imports), mypy (strict), bandit (security), mdformat (optional), pre-commit hooks
+- Python: 3.13+ (uses latest stdlib improvements & performance)
 
-- **File Watching**: Monitors config file for external changes using watchdog
-- **Validation**: Validates new configuration before applying
-- **Bot Coordination**: Prevents infinite restart loops from bot-initiated config updates
-- **Debouncing**: 1-second delay prevents multiple rapid restarts
-- **Statistics Persistence**: Preserves bot statistics (messages sent, colors changed) across config restarts
+## 13. Future Enhancements
 
-### Configuration Validation and Processing
+- Optional structured/JSON log output mode
+- Metrics endpoint (subscription counts, reconnect counters, color success rates)
+- Expanded health probes (latency windows, API error budgets)
+- EventSub multiplexing optimization (batch subscription refresh)
 
-- **Legacy Format Support**: Supports both multi-user and legacy single-user formats
-- **User Validation**: Comprehensive validation with detailed error reporting
-- **Graceful Handling**: Invalid users are skipped with warnings, valid users continue
-- **Automatic Conversion**: Legacy single-user configs automatically converted to multi-user format
+---
 
-## Multi-Bot Orchestration
-
-### Application Entry Point
-
-- **Main Function**: Handles startup flow, configuration loading, and token setup
-- **Health Check Mode**: `--health-check` flag for Docker health verification
-- **Welcome Instructions**: Displays setup guidance on first run
-- **Environment Variables**: Supports `TWITCH_CONF_FILE` for custom config paths
-- **Signal Handling**: Proper graceful shutdown on interruption
-
-### Bot Manager Architecture
-
-- **Independent Bots**: Each user runs as separate bot instance
-- **Concurrent Execution**: All bots run simultaneously using asyncio
-- **Health Monitoring**: Tracks bot status and handles failures
-- **Graceful Shutdown**: Coordinated shutdown of all bots
-- **Statistics Persistence**: Maintains bot statistics across configuration restarts
-
-### Resource Management
-
-- **Task Management**: Each bot runs as async task
-- **Error Isolation**: Bot failures don't affect other bots
-- **Memory Efficiency**: Shared resources where possible
-- **Signal Handling**: Proper cleanup on termination signals
-
-## IRC Implementation
-
-### Connection Management
-
-- **Server**: irc.chat.twitch.tv:6667 with 10-second connection timeout
-- **Authentication**: OAuth token-based authentication with Twitch capabilities
-- **Capabilities**: Membership, tags, and commands capabilities
-- **Health Monitoring**: 300-second activity timeout, 600-second ping interval expectation
-- **Automatic Reconnection**: Force reconnection on stale connections with state preservation
-- **Visible Status**: Real-time ping/pong logging with username identification
-
-### Message Processing
-
-- **Real-time Processing**: Event-driven message handling with activity timestamp tracking
-- **Own Message Detection**: Only processes messages from the bot's own username
-- **Channel Management**: Supports multiple channels with join confirmation tracking
-- **Channel Joining**: 30-second timeout with retry logic (maximum 2 attempts)
-- **Debug Support**: Optional verbose message logging for development
-- **Message Truncation**: Displays first 50 characters of messages in logs
-
-### Health Monitoring
-
-- **Server Activity Tracking**: Monitors any server communication (5-minute timeout)
-- **Ping Interval Monitoring**: Expects Twitch server pings every 600 seconds
-- **Connection Health Checks**: Periodic validation during message processing
-- **Automatic Recovery**: Force reconnection when connection appears stale
-- **State Preservation**: Maintains channel memberships across reconnections
-
-### Reliability Features
-
-- **Join Confirmation**: Waits for numeric 366 confirmation
-- **Connection Timeout**: 30-second timeout with retry logic
-- **Error Recovery**: Automatic reconnection on failures
-
-## API Integration
-
-### Twitch Helix API Endpoints
-
-1. **Color Change**: `PUT /helix/chat/color`
-   - Sets user chat color (hex or preset)
-   - Returns 204 on success
-   - Rate limited by Twitch
-
-2. **User Information**: `GET /helix/users`
-   - Retrieves user ID and current color
-   - Used for token validation
-   - Required for color change operations
-
-3. **Token Refresh**: `POST /oauth2/token`
-   - Refreshes expired access tokens
-   - Returns new access and refresh tokens
-   - Critical for long-running operation
-
-### Rate Limiting
-
-- **Global Rate Limiter**: Centralized rate limiting across all bots
-- **Quota Tracking**: Monitors API usage and remaining quota
-- **Intelligent Backoff**: Respects Twitch rate limit headers
-- **Usage Logging**: Logs rate limit status for monitoring
-
-## Error Handling Strategy
-
-### Exception Categories
-
-- **API Errors**: Twitch API failures with status codes
-- **Network Errors**: Connection and timeout issues
-- **Configuration Errors**: Invalid config or missing tokens
-- **IRC Errors**: Connection and protocol issues
-
-### Recovery Mechanisms
-
-- **Exponential Backoff**: Intelligent retry with increasing delays
-- **Graceful Degradation**: Continues operation with partial functionality
-- **Error Logging**: Detailed error context without exposing sensitive data
-- **User Notification**: Clear error messages for troubleshooting
-
-### Turbo/Prime Detection
-
-- **Automatic Fallback**: Detects non-Turbo/Prime users from API errors
-- **Persistent Settings**: Saves fallback mode to config
-- **Transparent Operation**: Seamlessly switches to preset colors
-
-## Deployment Architecture
-
-### Docker Support
-
-- **Multi-platform Images**: amd64, arm64, arm/v7, arm/v6, riscv64
-- **Minimal Base**: Alpine Linux for small image size
-- **Health Checks**: Built-in health check endpoint with `--health-check` flag
-- **Volume Mapping**: Config persistence through volume mounts
-- **Non-root Execution**: Runs as dedicated application user (UID 1000)
-- **RISCV64 Support**: Special build handling for RISC-V architecture
-
-### Security Features
-
-- **Non-root Execution**: Runs as dedicated application user
-- **Minimal Permissions**: Only required network and file access
-- **Token Security**: Secure token storage and handling
-- **No Credential Logging**: Prevents token exposure in logs
-
-### Scalability
-
-- **Horizontal Scaling**: Multiple container instances
-- **Resource Efficiency**: Low CPU and memory usage
-- **Independent Operation**: No shared state between instances
-- **Container Orchestration**: Compatible with Docker Compose/Kubernetes
-
-## Logging and Monitoring
-
-### Structured Logging
-
-- **Contextual Information**: User, channel, and operation context
-- **Color-coded Output**: Easy-to-read console logs
-- **Debug Support**: Optional verbose logging mode
-- **Performance Metrics**: API response times and success rates
-
-### Observability Features
-
-- **API Monitoring**: Request/response tracking
-- **Rate Limit Tracking**: Usage patterns and quotas
-- **Connection Statistics**: IRC connection health
-- **Error Patterns**: Failure analysis and trends
-
-## Configuration Validation
-
-### Validation Rules
-
-- **Required Fields**: Username, tokens, channels, client credentials
-- **Format Validation**: Token length, username format, channel names
-- **Placeholder Detection**: Prevents use of example/placeholder values
-- **Duplicate Prevention**: Handles duplicate usernames gracefully
-
-### Error Reporting
-
-- **Field-Specific Errors**: Clear validation messages
-- **Graceful Handling**: Invalid users skipped with warnings
-- **Continued Operation**: Valid users continue despite invalid entries
-
-## Performance Characteristics
-
-### Resource Usage
-
-- **Low Memory**: ~30-40MB per bot instance
-- **Minimal CPU**: Event-driven, non-polling architecture
-- **Efficient I/O**: Async HTTP and IRC operations
-- **Scalable Design**: Linear scaling with user count
-
-### Response Times
-
-- **Immediate Color Changes**: No artificial delays
-- **Fast API Calls**: Optimized HTTP client with connection pooling
-- **Real-time IRC**: Event-driven message processing
-- **Quick Startup**: Fast bot initialization and connection
-
-## Dependencies and Requirements
-
-### Runtime Dependencies
-
-- **aiohttp 3.12+**: Primary async HTTP client for Twitch API communication
-- **httpx 0.28+**: Secondary HTTP client for specific operations
-- **watchdog 3.0+**: File system monitoring for live configuration reload
-- **Python 3.13+**: Core runtime environment
-
-### Development Dependencies
-
-- **black**: Code formatting for consistent style
-- **isort**: Import statement organization
-- **flake8**: Code linting and style checking
-- **mypy**: Static type checking
-- **bandit**: Security vulnerability scanning
-- **pre-commit**: Git hook automation
-
-### System Requirements
-
-- **Python 3.13+**: Tested and optimized for Python 3.13.7
-- **Docker**: Optional for containerized deployment
-- **Network Access**: Outbound HTTPS (Twitch API) and IRC connections
-- **File System**: Read/write access for configuration persistence
-
-This functional documentation reflects the actual implementation and behavior of the Twitch Color Changer Bot as currently deployed.
+This document reflects the current implementation (IRC + EventSub). Experimental features may evolve; refer to commit history for incremental changes.
