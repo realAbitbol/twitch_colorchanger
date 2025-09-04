@@ -7,7 +7,7 @@ import logging
 import os
 import threading
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol, cast, runtime_checkable
 
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer as _Observer
@@ -31,6 +31,14 @@ class ConfigFileHandler(FileSystemEventHandler):
         self.last_modified = 0
 
     # Removed on_modified handler (unused).  # noqa: ERA001
+
+
+@runtime_checkable
+class _ObserverLike(Protocol):  # minimal protocol for typing
+    def schedule(
+        self, handler: FileSystemEventHandler, path: str, recursive: bool = False
+    ) -> None: ...  # noqa: D401,E701
+    def start(self) -> None: ...  # noqa: D401,E701
 
 
 class ConfigWatcher:
@@ -92,7 +100,9 @@ class ConfigWatcher:
             return
 
         try:
-            observer = _Observer()
+            raw_observer = _Observer()
+            # Cast to our minimal protocol so mypy has typed methods
+            observer = cast(_ObserverLike, raw_observer)
             event_handler = ConfigFileHandler(self.config_file, self)
             observer.schedule(event_handler, config_dir, recursive=False)
             observer.start()

@@ -197,14 +197,20 @@ class TokenClient:
                     expires_in = data.get("expires_in")
                     expiry = None
                     if expires_in:
-                        expiry = datetime.now() + timedelta(seconds=expires_in)
+                        # Apply the same safety buffer used on refresh so scheduling logic
+                        # never attempts a refresh too late due to unbuffered validate path.
+                        safe_expires = max(
+                            expires_in - TOKEN_REFRESH_SAFETY_BUFFER_SECONDS, 0
+                        )
+                        expiry = datetime.now() + timedelta(seconds=safe_expires)
                         logger.log_event(
                             "token",
                             "validated",
                             level=logging.DEBUG,
                             user=username,
                             expires_in=expires_in,
-                            human=f"Token valid (remaining {format_duration(expires_in)})",
+                            buffered_expires_in=safe_expires,
+                            human=f"Token valid (remaining {format_duration(expires_in)} raw, buffered {format_duration(safe_expires)})",
                         )
                     return True, expiry
                 if resp.status == 401:

@@ -155,10 +155,13 @@ File: `broadcaster_ids.cache.json` in config directory (override via `TWITCH_BRO
 - Device Flow provisioning on demand for missing/invalid tokens
 - Startup scope validation (fast detection of revoked scope sets)
 - Proactive refresh (<1h remaining) every 10m cycle
+  - Validation path now applies the same safety buffer as refresh (avoids late boundary cases)
 - Forced refresh at startup ensures fresh window
 - Refresh failure → validation fallback → device flow fallback
 - Invalidation events (`eventsub_token_invalid`, also generic token invalid logs) annotated with source (refresh, validation, EventSub 401, etc.)
 - Scope diff detection triggers early invalidation (prevents wasted retries)
+- Expired or expiry-unknown tokens are now proactively force-refreshed in the background loop (no initial 401 needed)
+  - Background loop detects drift (event loop stalls) and temporarily doubles refresh headroom to avoid expiry during pauses
 
 ### Device Flow Sequence
 
