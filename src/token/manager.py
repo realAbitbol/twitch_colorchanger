@@ -7,7 +7,7 @@ import logging
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from secrets import SystemRandom
 from typing import Any, TypeVar
@@ -47,6 +47,9 @@ class TokenInfo:
     refresh_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     last_validation: float = 0
     forced_unknown_attempts: int = 0  # count of forced refreshes due to unknown expiry
+    original_lifetime: int | None = (
+        None  # seconds (baseline when token/expiry first known or refreshed)
+    )
 
 
 class TokenManager:
@@ -148,6 +151,11 @@ class TokenManager:
             info.client_secret = client_secret
             info.expiry = expiry
             info.state = TokenState.FRESH
+            if expiry:
+                # Update baseline only if not already set (retain baseline until refresh occurs)
+                remaining = int((expiry - datetime.now()).total_seconds())
+                if remaining > 0 and info.original_lifetime is None:
+                    info.original_lifetime = remaining
         else:
             self.tokens[username] = TokenInfo(
                 username=username,
@@ -157,6 +165,10 @@ class TokenManager:
                 client_secret=client_secret,
                 expiry=expiry,
             )
+            if expiry:
+                remaining = int((expiry - datetime.now()).total_seconds())
+                if remaining > 0:
+                    self.tokens[username].original_lifetime = remaining
         self.logger.log_event("token_manager", "registered", user=username)
 
     def register_update_hook(
@@ -272,6 +284,11 @@ class TokenManager:
             if result.outcome in (TokenOutcome.VALID, TokenOutcome.SKIPPED)
             else TokenState.STALE
         )
+        # If we actually performed a refresh (new token lifetime), reset baseline.
+        if result.outcome == TokenOutcome.REFRESHED and info.expiry:
+            remaining = int((info.expiry - datetime.now()).total_seconds())
+            if remaining > 0:
+                info.original_lifetime = remaining
 
     def _maybe_fire_update_hook(self, username: str, token_changed: bool) -> None:
         if not token_changed:
@@ -391,24 +408,7 @@ class TokenManager:
     ) -> None:
         """Handle refresh/validation logic for a single user (extracted to reduce complexity)."""
         remaining = self._remaining_seconds(info)
-        # Emit remaining time every cycle for observability (even when no refresh triggered).
-        if remaining is None:
-            self.logger.log_event(
-                "token_manager",
-                "remaining_time",
-                level=logging.INFO,
-                user=username,
-                remaining=None,
-            )
-        else:
-            self.logger.log_event(
-                "token_manager",
-                "remaining_time",
-                level=logging.INFO,
-                user=username,
-                remaining_seconds=int(remaining),
-                human=format_duration(int(max(0, remaining))),
-            )
+        self._log_remaining_detail(username, info, remaining)
         if remaining is None:
             await self._handle_unknown_expiry(username)
             return
@@ -428,6 +428,62 @@ class TokenManager:
             trigger_threshold *= 2
         if remaining < trigger_threshold:
             await self.ensure_fresh(username)
+
+    def _log_remaining_detail(
+        self, username: str, info: TokenInfo, remaining: float | None
+    ) -> None:
+        # Emit remaining time every cycle for observability (even when no refresh triggered).
+        if remaining is None:
+            self.logger.log_event(
+                "token_manager",
+                "remaining_time_detail",
+                level=logging.INFO,
+                user=username,
+                message="❔ Token expiry unknown (will validate / refresh)",
+                remaining_seconds=None,
+            )
+            return
+        int_remaining = int(remaining)
+        human = format_duration(int(max(0, int_remaining)))
+        if int_remaining <= 900:
+            icon = "🚨"
+        elif int_remaining <= 3600:
+            icon = "⏰"
+        elif int_remaining <= 2 * 3600:
+            icon = "⌛"
+        else:
+            icon = "🔐"
+        expires_at = None
+        if info.expiry:
+            exp_dt = info.expiry
+            if exp_dt.tzinfo is None:
+                exp_dt_utc = exp_dt.replace(tzinfo=UTC)
+            else:
+                exp_dt_utc = exp_dt.astimezone(UTC)
+            expires_at = exp_dt_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
+        pct = None
+        if info.original_lifetime and info.original_lifetime > 0:
+            pct = max(0, min(100, int((int_remaining / info.original_lifetime) * 100)))
+        fragments = [f"{icon} {human} remaining"]
+        if expires_at:
+            fragments.append(f"expires {expires_at}")
+        if pct is not None:
+            fragments.append(f"{pct}% of lifetime left")
+        msg = (
+            " (".join([fragments[0], ", ".join(fragments[1:]) + ")"])
+            if len(fragments) > 1
+            else fragments[0]
+        )
+        self.logger.log_event(
+            "token_manager",
+            "remaining_time_detail",
+            level=logging.INFO,
+            user=username,
+            message=msg,
+            remaining_seconds=int_remaining,
+            expires_at=expires_at,
+            lifetime_percent=pct,
+        )
 
     async def _handle_unknown_expiry(self, username: str) -> None:
         """Resolve unknown expiry with capped forced refresh attempts (max 3)."""

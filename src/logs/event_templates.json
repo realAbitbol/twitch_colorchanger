@@ -86,6 +86,10 @@
     "user_info_error": "💥 Error getting user info user={user}: {error}",
     "user_info_failed_status": "❌ Failed to get user info status={status_code} user={user}",
   "using_async_irc": "📡 Using async IRC client user={user}",
+    "color_handler_attach_error": "⚠️ Failed attaching color handler user={user}: {error}",
+    "irc_auth_token_update_error": "⚠️ Error updating IRC auth token user={user}: {error}",
+    "token_scope_validation_error": "🚫 Token scope validation error user={user} missing={missing}",
+    "token_update_backend_error": "⚠️ Error updating chat backend tokens user={user}: {error}",
     "waiting_irc_task_error": "💥 Error waiting for IRC task user={user}: {error}"
   },
   "config": {
@@ -258,6 +262,8 @@
     "eventsub_ws_connected": "🔌 EventSub WebSocket connected",
     "irc_color_handler_set_error": "⚠️ IRC color handler set error: {error}",
     "message_handler_error": "💥 Chat message handler error"
+  ,"eventsub_log_emit_error": "⚠️ EventSub log emit error: {error}",
+  "eventsub_safe_close_error": "⚠️ EventSub safe close error: {error}"
   },
   "manager": {
     "aggregate_statistics": "📊 Aggregate statistics bots={bots} messages={total_messages} colors={total_color_changes}",
@@ -397,6 +403,13 @@
     "stale_background_error": "⚠️ Error cancelling stale background task: {error}",
     "update_hook_error": "⚠️ Update hook scheduling error user={user} type={error_type}",
     "retained_task_error": "⚠️ Retained background task error category={category} error={error} type={error_type}"
+  ,"expiry_unknown_forced_refresh_exhausted": "⚠️ Forced refresh attempts exhausted resolving unknown expiry user={user}",
+  "expiry_unknown_forced_refresh_failed": "⚠️ Forced refresh attempt failed resolving unknown expiry user={user} attempt={attempt}",
+  "expiry_unknown_forced_refresh_success": "✅ Forced refresh resolved unknown expiry user={user} attempt={attempt}",
+  "expiry_unknown_validation_failed": "⚠️ Validation failed with unknown expiry user={user}",
+  "loop_drift_detected": "⏱️ Token manager loop drift detected drift={drift_seconds}s base={base_sleep}s",
+  "remaining_time_detail": "🕒 {message}",
+  "unexpected_expired_state": "⚠️ Unexpected expired state detected user={user} remaining={remaining}"
   },
   "metrics": {
     "snapshot": "� Metrics snapshot"

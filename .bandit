@@ -1,0 +1,7 @@
+[bandit]
+# Skip assert_used (B101) already set via pyproject? Keeping here for clarity.
+skips = B101
+# Exclude virtual environment, build artifacts, tests
+exclude = .venv,build,dist,tests
+# Targets (optional documentation)
+targets = src,scripts
