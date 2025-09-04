@@ -196,7 +196,7 @@ def get_configuration() -> list[dict[str, Any]]:
 
 
 def print_config_summary(users: Sequence[dict[str, Any]]) -> None:
-    logger.log_event("config", "summary", user_count=len(users))
+    logger.log_event("config", "summary", user_count=len(users), level=10)
     for i, user in enumerate(users, 1):
         logger.log_event(
             "config",
@@ -207,6 +207,7 @@ def print_config_summary(users: Sequence[dict[str, Any]]) -> None:
             channels=",".join(user.get("channels", [])),
             is_prime_or_turbo=user.get("is_prime_or_turbo", True),
             has_refresh_token=bool(user.get("refresh_token")),
+            level=10,
         )
 
 
