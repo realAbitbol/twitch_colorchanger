@@ -11,9 +11,9 @@ services:
     container_name: twitch-colorchanger
     restart: unless-stopped
 
-    # REQUIRED: Mount the configuration file (primary source of truth)
+    # REQUIRED: Mount the entire config directory (conf + backups + cache files)
     volumes:
-      - ./twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf
+      - ./config:/app/config
     # Optional: persist logs
     #  - ./logs:/app/logs
 

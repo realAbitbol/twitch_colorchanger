@@ -18,13 +18,10 @@ import aiohttp
 
 from ..api.twitch import TwitchAPI
 from ..application_context import ApplicationContext
+from ..chat import BackendType, create_chat_backend, normalize_backend_type
 from ..color.models import ColorRequestResult, ColorRequestStatus
-from ..config.async_persistence import (
-    flush_pending_updates,
-    queue_user_update,
-)
+from ..config.async_persistence import flush_pending_updates, queue_user_update
 from ..config.model import normalize_channels_list
-from ..irc.async_irc import AsyncTwitchIRC
 from ..logs.logger import logger
 from ..rate.retry_policies import (
     COLOR_CHANGE_RETRY,
@@ -55,6 +52,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         user_id: str | None = None,
         enabled: bool = True,
     ):
+        # Core identity / credentials
         self.context = context
         self.username = nick
         self.access_token = (
@@ -67,28 +65,45 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         self.client_secret = client_secret
         self.user_id = user_id
         self.token_expiry: datetime | None = None
+
+        # Shared HTTP session (must be provided)
         if not http_session:
             raise ValueError(
                 "http_session is required - bots must use shared HTTP session"
             )
         self.http_session = http_session
         self.api = TwitchAPI(self.http_session)
-        self.token_manager: TokenManager | None = None  # set at start
+
+        # Registration / token manager will be set at runtime
+        self.token_manager: TokenManager | None = None
         self._registrar: BotRegistrar | None = None
+
+        # Channel / behavior config
         self.channels = channels
         self.use_random_colors = is_prime_or_turbo
         self.config_file = config_file
         self.enabled = enabled
-        self.irc: AsyncTwitchIRC | None = None
+
+        # Chat backend (IRC by default, EventSub optional)
+        from ..chat import ChatBackend as _ChatBackend  # local import for type only
+
+        self.chat_backend: _ChatBackend | None = (
+            None  # lazy init via _initialize_connection
+        )
+        # Backwards compat attribute (legacy code may read it; kept for legacy paths)
+        self.irc = None
+
+        # Runtime state
         self.running = False
         self.irc_task: asyncio.Task[Any] | None = None
         self.stats = BotStats()
-        # Removed unused connection tracking attributes flagged by dead-code scan.
-        # last_successful_connection / connection_failure_start were not referenced.
         self.last_color: str | None = None
+
+        # Rate limiting & scheduling
         self.rate_limiter = context.get_rate_limiter(self.client_id, self.username)
         self.scheduler = AdaptiveScheduler()
-        # Lazy-initialized optional services / state containers
+
+        # Lazy/optional services
         self._color_service: ColorChangeService | None = None
         self._last_color_change_payload: dict[str, Any] | None = None
 
@@ -106,16 +121,17 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         await self._registrar.register(self)
         if not await self._initialize_connection():
             return
-        await self._run_irc_loop()
+        await self._run_chat_loop()
 
-    async def _run_irc_loop(self) -> None:
-        """Run primary IRC listen task with limited auto-reconnect attempts."""
-        if not self.irc:
+    async def _run_chat_loop(self) -> None:
+        """Run primary chat backend listen task (IRC or EventSub)."""
+        backend = self.chat_backend
+        if backend is None:
             logger.log_event(
-                "bot", "irc_not_initialized", level=logging.ERROR, user=self.username
+                "bot", "chat_not_initialized", level=logging.ERROR, user=self.username
             )
             return
-        self.irc_task = asyncio.create_task(self.irc.listen())
+        self.irc_task = asyncio.create_task(backend.listen())
 
         def _irc_task_done(task: asyncio.Task[Any]) -> None:  # local callback
             if task.cancelled():
@@ -145,7 +161,17 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             self, "_normalized_channels_cache", self.channels
         )
         for channel in normalized_channels[1:]:
-            await self.irc.join_channel(channel)
+            try:
+                await backend.join_channel(channel)
+            except Exception as e:  # noqa: BLE001
+                logger.log_event(
+                    "bot",
+                    "join_channel_error",
+                    level=logging.WARNING,
+                    user=self.username,
+                    channel=channel,
+                    error=str(e),
+                )
         await self.scheduler.start()
 
         try:
@@ -182,10 +208,13 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             try:
                 if not await self._initialize_connection():
                     continue
-                if not self.irc:
-                    current_error = RuntimeError("IRC not initialized for reconnect")
+                backend2 = self.chat_backend
+                if backend2 is None:
+                    current_error = RuntimeError(
+                        "chat backend not initialized for reconnect"
+                    )
                     continue
-                self.irc_task = asyncio.create_task(self.irc.listen())
+                self.irc_task = asyncio.create_task(backend2.listen())
                 self.irc_task.add_done_callback(cb)
                 await self.irc_task
                 return
@@ -198,7 +227,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         self.running = False
         await self.scheduler.stop()
         await self._cancel_token_task()
-        await self._disconnect_irc()
+        await self._disconnect_chat_backend()
         await self._wait_for_irc_task()
         # Flush any pending debounced config writes before final shutdown.
         if self.config_file:
@@ -217,27 +246,78 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         await asyncio.sleep(0.1)
 
     async def _initialize_connection(self) -> bool:
-        """Prepare user id, color state, IRC client and connect. Returns success."""
-        if not self.user_id:
-            user_info = await self._get_user_info()
-            if user_info and "id" in user_info:
-                self.user_id = user_info["id"]
-                logger.log_event(
-                    "bot", "user_id_retrieved", user=self.username, user_id=self.user_id
-                )
-            else:
-                logger.log_event(
-                    "bot", "user_id_failed", level=logging.ERROR, user=self.username
-                )
-                return False
+        """Prepare identity, choose backend, connect, and register handlers."""
+        if not await self._ensure_user_id():
+            return False
+        await self._prime_color_state()
+        btype = self._determine_backend_type()
+        await self._log_scopes_if_possible()
+        normalized_channels = await self._normalize_channels_if_needed()
+        if not await self._init_and_connect_backend(btype, normalized_channels):
+            return False
+        self._normalized_channels_cache = normalized_channels
+        return True
+
+    async def _ensure_user_id(self) -> bool:
+        if self.user_id:
+            return True
+        user_info = await self._get_user_info()
+        if user_info and "id" in user_info:
+            self.user_id = user_info["id"]
+            logger.log_event(
+                "bot", "user_id_retrieved", user=self.username, user_id=self.user_id
+            )
+            return True
+        logger.log_event(
+            "bot", "user_id_failed", level=logging.ERROR, user=self.username
+        )
+        return False
+
+    async def _prime_color_state(self) -> None:
         current_color = await self._get_current_color()
         if current_color:
             self.last_color = current_color
             logger.log_event(
                 "bot", "initialized_color", user=self.username, color=current_color
             )
-        logger.log_event("bot", "using_async_irc", user=self.username)
-        self.irc = AsyncTwitchIRC()
+
+    def _determine_backend_type(self) -> BackendType:
+        backend_env = os.environ.get("TWITCH_CHAT_BACKEND", "irc")
+        btype = normalize_backend_type(backend_env)
+        logger.log_event(
+            "bot", "using_chat_backend", user=self.username, backend=btype.value
+        )
+        return btype
+
+    async def _log_scopes_if_possible(self) -> None:
+        try:
+            from ..api.twitch import TwitchAPI  # local import
+
+            if self.context.session:
+                api = TwitchAPI(self.context.session)
+                validation = await api.validate_token(self.access_token)
+                raw_scopes = (
+                    validation.get("scopes") if isinstance(validation, dict) else None
+                )
+                scopes_list = (
+                    [str(s) for s in raw_scopes] if isinstance(raw_scopes, list) else []
+                )
+                logger.log_event(
+                    "bot",
+                    "token_scopes",
+                    user=self.username,
+                    scopes=";".join(scopes_list) if scopes_list else "<none>",
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.log_event(
+                "bot",
+                "token_scope_validation_error",
+                level=logging.DEBUG,
+                user=self.username,
+                error=str(e),
+            )
+
+    async def _normalize_channels_if_needed(self) -> list[str]:
         normalized_channels, was_changed = normalize_channels_list(self.channels)
         if was_changed:
             logger.log_event(
@@ -251,38 +331,50 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             await self._persist_normalized_channels()
         else:
             self.channels = normalized_channels
-        self.irc.channels = normalized_channels.copy()
-        self.irc.set_message_handler(self.handle_irc_message)
-        if hasattr(self.irc, "set_auth_failure_callback"):
-            try:
-                self.irc.set_auth_failure_callback(self._on_irc_auth_failure)
-            except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "bot",
-                    "auth_failure_callback_set_error",
-                    level=logging.DEBUG,
-                    user=self.username,
-                    error=str(e),
-                )
-        if not await self.irc.connect(
-            self.access_token, self.username, normalized_channels[0]
-        ):
+        return normalized_channels
+
+    async def _init_and_connect_backend(
+        self, btype: BackendType, normalized_channels: list[str]
+    ) -> bool:
+        self.chat_backend = create_chat_backend(
+            btype.value, http_session=self.context.session
+        )
+        backend = self.chat_backend
+        backend.set_message_handler(self.handle_irc_message)
+        try:
+            backend.set_color_change_handler(self.handle_irc_message)
+        except Exception as e:  # noqa: BLE001
+            logger.log_event(
+                "bot",
+                "color_handler_attach_error",
+                level=logging.DEBUG,
+                user=self.username,
+                error=str(e),
+            )
+        connected = await backend.connect(
+            self.access_token,
+            self.username,
+            normalized_channels[0],
+            self.user_id,
+            self.client_id,
+            self.client_secret,
+        )
+        if not connected:
             logger.log_event(
                 "bot", "connect_failed", level=logging.ERROR, user=self.username
             )
             return False
         logger.log_event("bot", "listener_start", user=self.username)
-        # Provide normalized channels list to caller context (start method) via return attribute
-        self._normalized_channels_cache: list[str] = normalized_channels
         return True
 
     async def _cancel_token_task(self) -> None:  # compatibility no-op
         return None
 
-    async def _disconnect_irc(self) -> None:
-        if self.irc:
+    async def _disconnect_chat_backend(self) -> None:
+        backend = self.chat_backend
+        if backend is not None:
             try:
-                await self.irc.disconnect()
+                await backend.disconnect()
             except Exception as e:  # noqa: BLE001
                 logger.log_event(
                     "bot",
@@ -326,6 +418,9 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             return
         if self._is_color_change_allowed():
             await self._change_color()
+
+    # Backwards compatibility alias
+    handle_chat_message = handle_irc_message
 
     def _is_color_change_allowed(self) -> bool:
         return bool(getattr(self, "enabled", True))
@@ -374,8 +469,18 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             if info and info.access_token:
                 if info.access_token != self.access_token:
                     self.access_token = info.access_token
-                    if self.irc:
-                        self.irc.update_token(info.access_token)
+                    backend_local = self.chat_backend
+                    if backend_local is not None:
+                        try:
+                            backend_local.update_token(info.access_token)
+                        except Exception as e:  # noqa: BLE001
+                            logger.log_event(
+                                "bot",
+                                "token_update_backend_error",
+                                level=logging.DEBUG,
+                                user=self.username,
+                                error=str(e),
+                            )
                 return outcome.name != "FAILED"
             return False
         except Exception as e:  # noqa: BLE001
@@ -494,8 +599,18 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         info = self.token_manager.get_info(self.username)
         if info and info.access_token:
             self.access_token = info.access_token
-            if self.irc:
-                self.irc.update_token(info.access_token)
+            backend_local = self.chat_backend
+            if backend_local is not None:
+                try:
+                    backend_local.update_token(info.access_token)
+                except Exception as e:  # noqa: BLE001
+                    logger.log_event(
+                        "bot",
+                        "irc_auth_token_update_error",
+                        level=logging.DEBUG,
+                        user=self.username,
+                        error=str(e),
+                    )
             if outcome.name != "FAILED":
                 logger.log_event("bot", "irc_auth_refresh_success", user=self.username)
         return None

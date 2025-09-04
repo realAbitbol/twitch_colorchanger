@@ -238,39 +238,108 @@ async def setup_missing_tokens(
 ) -> list[dict[str, Any]]:
     import aiohttp
 
+    from ..api.twitch import TwitchAPI
     from ..token.provisioner import TokenProvisioner  # local import
 
+    required_scopes = {"chat:read", "user:read:chat", "user:manage:chat_color"}
     updated_users: list[dict[str, Any]] = []
     any_updates = False
+
     async with aiohttp.ClientSession() as session:
         provisioner = TokenProvisioner(session)
+        api = TwitchAPI(session)
         for user in users:
-            access = user.get("access_token")
-            refresh = user.get("refresh_token")
-            expiry = user.get("token_expiry")
-            if access and refresh:
-                updated_users.append(user)
-                continue
-            client_id_v = user.get("client_id") or ""
-            client_secret_v = user.get("client_secret") or ""
-            result_access, result_refresh, result_expiry = await provisioner.provision(
-                user.get("username", "unknown"),
-                client_id_v,
-                client_secret_v,
-                access,
-                refresh,
-                expiry,
+            changed, processed_user = await _process_single_user_tokens(
+                user, api, provisioner, required_scopes
             )
-            if result_access and result_refresh:
-                user["access_token"] = result_access
-                user["refresh_token"] = result_refresh
-                if result_expiry:
-                    user["token_expiry"] = result_expiry
+            if changed:
                 any_updates = True
-            updated_users.append(user)
+            updated_users.append(processed_user)
     if any_updates:
         _save_updated_config(updated_users, config_file)
     return updated_users
+
+
+def _extract_token_triplet(user: dict[str, Any]) -> tuple[Any, Any, Any]:
+    return (
+        user.get("access_token"),
+        user.get("refresh_token"),
+        user.get("token_expiry"),
+    )
+
+
+async def _validate_or_invalidate_scopes(
+    user: dict[str, Any],
+    access: Any,
+    refresh: Any,
+    api: Any,
+    required_scopes: set[str],
+) -> bool:
+    """Return True if existing tokens are valid & retained else False (forcing provisioning)."""
+    if not (access and refresh):
+        return False
+    try:
+        validation = await api.validate_token(access)
+        raw_scopes = validation.get("scopes") if isinstance(validation, dict) else None
+        scopes_list: list[str] = (
+            [str(s).lower() for s in raw_scopes] if isinstance(raw_scopes, list) else []
+        )
+        scope_set = set(scopes_list)
+        missing = sorted(s for s in required_scopes if s not in scope_set)
+        if missing:
+            # Invalidate tokens to trigger device flow re-provision
+            user.pop("access_token", None)
+            user.pop("refresh_token", None)
+            user.pop("token_expiry", None)
+            from ..logs.logger import logger as _logger  # local import
+
+            _logger.log_event(
+                "token",
+                "scopes_missing_invalidate",
+                user=user.get("username"),
+                missing=";".join(missing),
+            )
+            return False
+        return True
+    except Exception:  # noqa: BLE001
+        # Leave tokens untouched if validation fails; treat as retained
+        return True
+
+
+async def _process_single_user_tokens(
+    user: dict[str, Any],
+    api: Any,
+    provisioner: Any,
+    required_scopes: set[str],
+) -> tuple[bool, dict[str, Any]]:
+    """Process a single user's tokens.
+
+    Returns (changed_flag, user_dict).
+    changed_flag True when we updated (provisioned or re-provisioned) token fields.
+    """
+    access, refresh, _ = _extract_token_triplet(user)
+    tokens_valid = await _validate_or_invalidate_scopes(
+        user, access, refresh, api, required_scopes
+    )
+    if tokens_valid:
+        return False, user
+    client_id_v = user.get("client_id") or ""
+    client_secret_v = user.get("client_secret") or ""
+    new_access, new_refresh, new_expiry = await provisioner.provision(
+        user.get("username", "unknown"),
+        client_id_v,
+        client_secret_v,
+        None,
+        None,
+        None,
+    )
+    if new_access and new_refresh:
+        user["access_token"] = new_access
+        user["refresh_token"] = new_refresh
+        if new_expiry:
+            user["token_expiry"] = new_expiry
+        return True, user
+    return False, user
 
 
 def _save_updated_config(

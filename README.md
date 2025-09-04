@@ -8,6 +8,7 @@
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)
 [![Twitch](https://img.shields.io/badge/Twitch-Bot-purple.svg)](https://dev.twitch.tv/)
 ![IRC](https://img.shields.io/badge/Protocol-IRC-green.svg)
+![EventSub](https://img.shields.io/badge/Chat-EventSub-blue.svg)
 ![Multi-User](https://img.shields.io/badge/Multi--User-Supported-brightgreen.svg)
 ![Auto-Token](https://img.shields.io/badge/Token%20Setup-Automatic-orange.svg)
 [![Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/realabitbol)
@@ -45,6 +46,7 @@ Automatically change your Twitch username color after each message you send in c
     - [General Environment Variables](#general-environment-variables)
     - [Internal Configuration Constants](#internal-configuration-constants)
     - [Environment Variable Usage Examples](#environment-variable-usage-examples)
+  - [Chat Backend Selection](#chat-backend-selection)
   - [Runtime Configuration Changes](#runtime-configuration-changes)
   - [Docker Configuration](#docker-configuration)
   - [Debug Mode](#debug-mode)
@@ -95,6 +97,7 @@ Automatically change your Twitch username color after each message you send in c
 - **🔗 IRC Health Monitoring**: Robust connection health tracking with automatic reconnection (600s ping intervals)
 - **📡 Connection Visibility**: Real-time ping/pong monitoring for connection status transparency
 - **🛑 Per-User Disable Switch**: Temporarily pause color cycling without editing files or restarting
+- **🔁 Pluggable Chat Backends**: Switch between classic IRC and EventSub WebSocket delivery (experimental)
 
 ---
 
@@ -164,7 +167,7 @@ Use [twitchtokengenerator.com](https://twitchtokengenerator.com):
 > **Important**: If using this method, make sure your Twitch app's OAuth Redirect URL is set to `https://twitchtokengenerator.com`
 
 - Enter your Client ID and Client Secret
-- Select scopes: `chat:read`, `user:manage:chat_color` (optional: `chat:edit`)
+- Select scopes: `chat:read`, `user:read:chat`, `user:manage:chat_color` (optional: `chat:edit`)
 - Click **Generate Token** and save the **Access Token** and **Refresh Token**
 
 ### 2. Run the Bot
@@ -215,14 +218,18 @@ cp twitch_colorchanger.conf.sample twitch_colorchanger.conf
 Then run:
 
 ```bash
+# Prepare config directory (includes backups & cache files)
+mkdir -p config
+cp twitch_colorchanger.conf.sample config/twitch_colorchanger.conf
+
 # Docker Hub
 docker run -it --rm \
-  -v $(pwd)/twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf \
+  -v $(pwd)/config:/app/config \
   damastah/twitch-colorchanger:latest
 
 # Or GitHub Container Registry
 docker run -it --rm \
-  -v $(pwd)/twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf \
+  -v $(pwd)/config:/app/config \
   ghcr.io/realabitbol/twitch-colorchanger:latest
 ```
 
@@ -308,7 +315,7 @@ services:
     image: damastah/twitch-colorchanger:latest
     # Alternative: image: ghcr.io/realabitbol/twitch-colorchanger:latest
     volumes:
-      - ./twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf
+      - ./config:/app/config
     restart: unless-stopped
 ```
 
@@ -319,7 +326,7 @@ You can override any configuration constant using environment variables:
 ```bash
 # Single environment override (Docker Hub)
 docker run -e NETWORK_PARTITION_THRESHOLD=1800 \
-  -v $(pwd)/twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf \
+  -v $(pwd)/config:/app/config \
   damastah/twitch-colorchanger:latest
 
 # Multiple environment overrides (GitHub Container Registry)
@@ -327,7 +334,7 @@ docker run \
   -e NETWORK_PARTITION_THRESHOLD=1800 \
   -e CONFIG_SAVE_TIMEOUT=5.0 \
   -e DEFAULT_BUCKET_LIMIT=1000 \
-  -v $(pwd)/twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf \
+  -v $(pwd)/config:/app/config \
   ghcr.io/realabitbol/twitch-colorchanger:latest
 ```
 
@@ -519,6 +526,21 @@ All internal timing and behavior constants can be overridden via environment var
 
 #### Environment Variable Usage Examples
 
+#### Chat Backend Selection
+
+You can switch the underlying chat transport without changing your user config structure (the bot already loads `client_id` and `client_secret` from the config file):
+
+```bash
+TWITCH_CHAT_BACKEND=irc        # default, stable
+TWITCH_CHAT_BACKEND=eventsub   # experimental EventSub WebSocket backend
+```
+
+When using `eventsub` the backend automatically reuses the per-user `client_id` from the configuration file (no extra environment variable needed). The backend subscribes to `channel.chat.message` events filtered to messages from the bot user only (parity with IRC behavior). If anything fails during setup it will log errors; revert to `irc` if unstable.
+
+Scopes: device-flow now grants `chat:read`, `user:read:chat`, and `user:manage:chat_color` (satisfies EventSub chat subscription requirements). If you generated tokens earlier without `user:read:chat`, regenerate them.
+
+Open issues with logs (`DEBUG=true`) if you encounter problems—feedback helps stabilize the EventSub path.
+
 **Increase network resilience for unstable connections:**
 
 ```bash
@@ -585,17 +607,18 @@ The container is built on **Python Alpine Linux** for optimal security and perfo
 - **Non-root Execution**: Runs as `appuser` (UID 1000) for additional security hardening
 - **Production Ready**: Designed for secure containerized deployment
 
-Mount your config file directly:
+Mount your config directory (recommended — keeps main conf, backups, and broadcaster cache together):
 
 ```bash
-docker run -v $PWD/twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf damastah/twitch-colorchanger:latest
+mkdir -p config && cp twitch_colorchanger.conf.sample config/twitch_colorchanger.conf
+docker run -v $PWD/config:/app/config damastah/twitch-colorchanger:latest
 ```
 
 **Important**: The config file must be readable and writable by the container for token management:
 
 ```bash
-# Make config file accessible by container user (UID 1000)
-chmod 666 twitch_colorchanger.conf
+# Make config directory contents accessible by container user (UID 1000)
+chmod 664 config/twitch_colorchanger.conf
 ```
 
 This allows the bot to:
@@ -684,7 +707,7 @@ cp twitch_colorchanger.conf.sample twitch_colorchanger.conf
 
 - Check your Client ID and Client Secret are correct
 - Verify your OAuth Redirect URL is set to `https://twitchtokengenerator.com`
-- Make sure you have the required scopes: `chat:read`, `user:manage:chat_color`
+- Make sure you have the required scopes: `chat:read`, `user:read:chat`, `user:manage:chat_color`
 
 **Virtual Environment:**
 If you prefer to manage your own virtual environment:
@@ -738,13 +761,13 @@ python -m src.main
 
 ### Authentication Issues
 
-- **Missing scopes**: ensure tokens include `chat:read` and `user:manage:chat_color` (and optionally `chat:edit`)
+- **Missing scopes**: ensure tokens include `chat:read`, `user:read:chat`, and `user:manage:chat_color` (optional: `chat:edit`)
 - **Invalid / expired tokens**: regenerate tokens at [twitchtokengenerator.com](https://twitchtokengenerator.com)
 - **Client credentials mismatch**: verify Client ID and Secret match the generated tokens
 
 ### Docker Issues
 
-- **Config not loading**: confirm config file is mounted correctly `-v $(pwd)/twitch_colorchanger.conf:/app/config/twitch_colorchanger.conf`
+- **Config not loading**: confirm config directory is mounted correctly `-v $(pwd)/config:/app/config`
 - **Configuration issues**: check that your config file has valid JSON format and contains user configurations
 - **Color not changing**: non‑Prime/Turbo accounts can only use preset colors
 

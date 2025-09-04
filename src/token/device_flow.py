@@ -29,7 +29,8 @@ class DeviceCodeFlow:
         """Request a device code from Twitch"""
         data = {
             "client_id": self.client_id,
-            "scopes": "chat:read user:manage:chat_color",
+            # Include EventSub chat reading scope so subscriptions succeed.
+            "scopes": "chat:read user:read:chat user:manage:chat_color",
         }
 
         async with aiohttp.ClientSession() as session:
