@@ -462,6 +462,7 @@ The bot supports extensive configuration through environment variables, allowing
 |----------|-------------|---------|
 | `DEBUG` | Enable debug logging | `false` |
 | `TWITCH_CONF_FILE` | Path to configuration file | `twitch_colorchanger.conf` |
+| `TWITCH_CHAT_BACKEND` | Chat transport: `irc` (stable) or `eventsub` (experimental) | `irc` |
 
 #### Internal Configuration Constants
 
