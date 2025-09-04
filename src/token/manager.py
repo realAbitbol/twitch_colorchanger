@@ -196,10 +196,20 @@ class TokenManager:
                         level=logging.DEBUG,
                         human="Background loop cancelled",
                     )
-                else:
+                else:  # Re-raise unexpected exceptions
                     raise
             finally:
                 self.background_task = None
+
+    def register_update_hook(
+        self, username: str, hook: Callable[[], Coroutine[Any, Any, None]]
+    ) -> None:
+        """Register a coroutine hook invoked after a successful token refresh.
+
+        The hook should perform persistence of updated tokens. Errors are suppressed
+        at invocation time to avoid disrupting refresh cycles.
+        """
+        self._update_hooks[username] = hook
 
     def register(
         self,
@@ -210,6 +220,12 @@ class TokenManager:
         client_secret: str,
         expiry: datetime | None,
     ) -> None:
+        """Register (or update) a user's token credentials.
+
+        Reintroduces the previous method signature used by callers (e.g. BotRegistrar)
+        after earlier refactors removed it inadvertently. Maintains original logging
+        semantics and baseline lifetime tracking.
+        """
         info = self.tokens.get(username)
         if info:
             info.access_token = access_token
@@ -219,7 +235,6 @@ class TokenManager:
             info.expiry = expiry
             info.state = TokenState.FRESH
             if expiry:
-                # Update baseline only if not already set (retain baseline until refresh occurs)
                 remaining = int((expiry - datetime.now()).total_seconds())
                 if remaining > 0 and info.original_lifetime is None:
                     info.original_lifetime = remaining
@@ -237,16 +252,6 @@ class TokenManager:
                 if remaining > 0:
                     self.tokens[username].original_lifetime = remaining
         self.logger.log_event("token_manager", "registered", user=username)
-
-    def register_update_hook(
-        self, username: str, hook: Callable[[], Coroutine[Any, Any, None]]
-    ) -> None:
-        """Register a coroutine hook invoked after a successful token refresh.
-
-        The hook should perform persistence of updated tokens. Errors are suppressed
-        at invocation time to avoid disrupting refresh cycles.
-        """
-        self._update_hooks[username] = hook
 
     def remove(self, username: str) -> bool:
         """Remove a user from token tracking (e.g., config removal)."""
@@ -476,48 +481,8 @@ class TokenManager:
         """Handle refresh/validation logic for a single user (extracted to reduce complexity)."""
         remaining = self._remaining_seconds(info)
         self._log_remaining_detail(username, info, remaining)
-        # Periodic remote validation (every configured interval) to confirm expiry accuracy.
-        try:
-            now = time.time()
-            if (
-                info.expiry is not None
-                and now - info.last_validation
-                >= TOKEN_MANAGER_PERIODIC_VALIDATION_INTERVAL
-            ):
-                outcome = await self.validate(username)
-                # validate() already rate-limits via TOKEN_MANAGER_VALIDATION_MIN_INTERVAL
-                if outcome == TokenOutcome.VALID:
-                    # Recompute remaining after potential expiry update
-                    new_remaining = self._remaining_seconds(info)
-                    if new_remaining is not None:
-                        self.logger.log_event(
-                            "token_manager",
-                            "periodic_validation_ok",
-                            user=username,
-                            remaining=int(new_remaining),
-                        )
-                else:
-                    # On any failed remote validation attempt, force a refresh.
-                    self.logger.log_event(
-                        "token_manager",
-                        "periodic_validation_failed",
-                        user=username,
-                    )
-                    ref_outcome = await self.ensure_fresh(username, force_refresh=True)
-                    self.logger.log_event(
-                        "token_manager",
-                        "periodic_validation_forced_refresh",
-                        user=username,
-                        refresh_outcome=ref_outcome.value,
-                    )
-        except Exception as e:  # noqa: BLE001
-            self.logger.log_event(
-                "token_manager",
-                "periodic_validation_error",
-                user=username,
-                error=str(e),
-                error_type=type(e).__name__,
-            )
+        # Perform periodic remote validation if due.
+        await self._maybe_periodic_validate(username, info)
         if remaining is None:
             await self._handle_unknown_expiry(username)
             return
@@ -538,6 +503,68 @@ class TokenManager:
         if remaining < trigger_threshold:
             await self.ensure_fresh(username)
 
+    async def _maybe_periodic_validate(self, username: str, info: TokenInfo) -> None:
+        """Perform periodic remote validation if interval has elapsed.
+
+        Handles success, failure (with forced refresh), and error logging with
+        human-readable remaining durations.
+        """
+        try:
+            now = time.time()
+            if (
+                info.expiry is None
+                or now - info.last_validation
+                < TOKEN_MANAGER_PERIODIC_VALIDATION_INTERVAL
+            ):
+                return
+            outcome = await self.validate(username)
+            if outcome == TokenOutcome.VALID:
+                new_remaining = self._remaining_seconds(info)
+                if new_remaining is not None:
+                    human_new = format_duration(max(0, int(new_remaining)))
+                    self.logger.log_event(
+                        "token_manager",
+                        "periodic_validation_ok",
+                        user=username,
+                        remaining_human=human_new,
+                    )
+                return
+            # Failure path: capture pre-refresh remaining, force refresh
+            pre_remaining = self._remaining_seconds(info)
+            pre_human = (
+                format_duration(max(0, int(pre_remaining)))
+                if pre_remaining is not None
+                else "unknown"
+            )
+            self.logger.log_event(
+                "token_manager",
+                "periodic_validation_failed",
+                user=username,
+                remaining_human=pre_human,
+            )
+            ref_outcome = await self.ensure_fresh(username, force_refresh=True)
+            post_remaining = self._remaining_seconds(info)
+            post_human = (
+                format_duration(max(0, int(post_remaining)))
+                if post_remaining is not None
+                else "unknown"
+            )
+            self.logger.log_event(
+                "token_manager",
+                "periodic_validation_forced_refresh",
+                user=username,
+                refresh_outcome=ref_outcome.value,
+                new_remaining_human=post_human,
+            )
+        except Exception as e:  # noqa: BLE001
+            self.logger.log_event(
+                "token_manager",
+                "periodic_validation_error",
+                user=username,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+
     def _log_remaining_detail(
         self, username: str, info: TokenInfo, remaining: float | None
     ) -> None:
@@ -546,7 +573,7 @@ class TokenManager:
             self.logger.log_event(
                 "token_manager",
                 "remaining_time_detail",
-                level=logging.INFO,
+                level=logging.DEBUG,
                 user=username,
                 message="❔ Token expiry unknown (will validate / refresh)",
                 remaining_seconds=None,
@@ -574,7 +601,7 @@ class TokenManager:
         self.logger.log_event(
             "token_manager",
             "remaining_time_detail",
-            level=logging.INFO,
+            level=logging.DEBUG,
             user=username,
             message=f"{icon} Access token validity: {human} remaining",
             remaining_seconds=int_remaining,
