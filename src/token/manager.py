@@ -16,6 +16,7 @@ import aiohttp
 
 from ..constants import (
     TOKEN_MANAGER_BACKGROUND_BASE_SLEEP,
+    TOKEN_MANAGER_PERIODIC_VALIDATION_INTERVAL,
     TOKEN_MANAGER_VALIDATION_MIN_INTERVAL,
     TOKEN_REFRESH_THRESHOLD_SECONDS,
 )
@@ -475,6 +476,48 @@ class TokenManager:
         """Handle refresh/validation logic for a single user (extracted to reduce complexity)."""
         remaining = self._remaining_seconds(info)
         self._log_remaining_detail(username, info, remaining)
+        # Periodic remote validation (every configured interval) to confirm expiry accuracy.
+        try:
+            now = time.time()
+            if (
+                info.expiry is not None
+                and now - info.last_validation
+                >= TOKEN_MANAGER_PERIODIC_VALIDATION_INTERVAL
+            ):
+                outcome = await self.validate(username)
+                # validate() already rate-limits via TOKEN_MANAGER_VALIDATION_MIN_INTERVAL
+                if outcome == TokenOutcome.VALID:
+                    # Recompute remaining after potential expiry update
+                    new_remaining = self._remaining_seconds(info)
+                    if new_remaining is not None:
+                        self.logger.log_event(
+                            "token_manager",
+                            "periodic_validation_ok",
+                            user=username,
+                            remaining=int(new_remaining),
+                        )
+                else:
+                    # On any failed remote validation attempt, force a refresh.
+                    self.logger.log_event(
+                        "token_manager",
+                        "periodic_validation_failed",
+                        user=username,
+                    )
+                    ref_outcome = await self.ensure_fresh(username, force_refresh=True)
+                    self.logger.log_event(
+                        "token_manager",
+                        "periodic_validation_forced_refresh",
+                        user=username,
+                        refresh_outcome=ref_outcome.value,
+                    )
+        except Exception as e:  # noqa: BLE001
+            self.logger.log_event(
+                "token_manager",
+                "periodic_validation_error",
+                user=username,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
         if remaining is None:
             await self._handle_unknown_expiry(username)
             return
@@ -533,7 +576,7 @@ class TokenManager:
             "remaining_time_detail",
             level=logging.INFO,
             user=username,
-            message=f"{icon} access token validity: {human} remaining",
+            message=f"{icon} Access token validity: {human} remaining",
             remaining_seconds=int_remaining,
         )
 

@@ -127,3 +127,6 @@ TOKEN_MANAGER_VALIDATION_MIN_INTERVAL = _get_env_int(
 TOKEN_MANAGER_BACKGROUND_BASE_SLEEP = _get_env_int(
     "TOKEN_MANAGER_BACKGROUND_BASE_SLEEP", 60
 )  # Base seconds between proactive refresh loop iterations
+TOKEN_MANAGER_PERIODIC_VALIDATION_INTERVAL = _get_env_int(
+    "TOKEN_MANAGER_PERIODIC_VALIDATION_INTERVAL", 1800
+)  # Seconds between periodic remote validations (default 30 min)

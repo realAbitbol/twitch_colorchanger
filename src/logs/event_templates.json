@@ -412,7 +412,11 @@
     "startup_validated_within_threshold": "⏳ Startup validated token within threshold (no refresh) user={user} remaining={remaining}s outcome={refresh_outcome}",
     "startup_validated_ok": "✅ Startup validated token user={user} remaining={remaining}s",
     "startup_validation_forced_refresh": "🔄 Startup validation failed forcing refresh outcome={refresh_outcome} user={user}",
-    "startup_validation_error": "⚠️ Startup validation error user={user} type={error_type} error={error}"
+  "startup_validation_error": "⚠️ Startup validation error user={user} type={error_type} error={error}",
+  "periodic_validation_ok": "✅ Periodic validation ok user={user} remaining={remaining}s",
+  "periodic_validation_failed": "❌ Periodic validation failed user={user}",
+  "periodic_validation_error": "⚠️ Periodic validation error user={user} type={error_type} error={error}"
+  ,"periodic_validation_forced_refresh": "🔄 Periodic validation failed forcing refresh outcome={refresh_outcome} user={user}"
   },
   "metrics": {
     "snapshot": "📊 Metrics snapshot"
