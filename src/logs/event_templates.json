@@ -390,7 +390,6 @@
     "scopes_missing_invalidate": "🚫 Token scopes missing required={required} got={current} user={user} invalidated=true"
   },
   "token_manager": {
-    "registered": "📝 Token manager: registered",
     "background_cancelled": "🛑 Background token manager task cancelled",
     "start": "▶️ Started centralized token manager",
     "background_error": "💥 Background token manager loop error: {error}",
@@ -398,6 +397,7 @@
     "removed": "🗑️ Removed token entry user={user}",
     "stale_background_detected": "🧪 Stale background task detected (cancelling)",
     "stale_background_error": "⚠️ Error cancelling stale background task: {error}",
+  "registered": "📝 Token manager: registered",
     "update_hook_error": "⚠️ Update hook scheduling error user={user} type={error_type}",
     "retained_task_error": "⚠️ Retained background task error category={category} error={error} type={error_type}",
     "expiry_unknown_forced_refresh_exhausted": "⚠️ Forced refresh attempts exhausted resolving unknown expiry user={user}",
@@ -413,10 +413,10 @@
     "startup_validated_ok": "✅ Startup validated token user={user} remaining={remaining}s",
     "startup_validation_forced_refresh": "🔄 Startup validation failed forcing refresh outcome={refresh_outcome} user={user}",
   "startup_validation_error": "⚠️ Startup validation error user={user} type={error_type} error={error}",
-  "periodic_validation_ok": "✅ Periodic validation ok user={user} remaining={remaining}s",
-  "periodic_validation_failed": "❌ Periodic validation failed user={user}",
-  "periodic_validation_error": "⚠️ Periodic validation error user={user} type={error_type} error={error}"
-  ,"periodic_validation_forced_refresh": "🔄 Periodic validation failed forcing refresh outcome={refresh_outcome} user={user}"
+  "periodic_validation_ok": "✅ Periodic remote token validation ok for user {user} ({remaining_human} remaining)",
+  "periodic_validation_failed": "❌ Periodic remote token validation failed for user {user} ({remaining_human} remaining pre-refresh)",
+  "periodic_validation_error": "⚠️ Periodic remote token validation error for user {user} type={error_type} error={error}",
+  "periodic_validation_forced_refresh": "🔄 Forced refresh after failed periodic remote validation for user {user} outcome={refresh_outcome} ({new_remaining_human} remaining)"
   },
   "metrics": {
     "snapshot": "📊 Metrics snapshot"
