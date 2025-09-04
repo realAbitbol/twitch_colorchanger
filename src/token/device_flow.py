@@ -21,8 +21,10 @@ class DeviceCodeFlow:
         # Public OAuth endpoint constants (well-known; not secrets or passwords)
         # These are standard Twitch OAuth endpoints, not credentials or secrets.
         self.device_code_url = "https://id.twitch.tv/oauth2/device"
-        # Standard public Twitch OAuth token endpoint (not a secret or credential)
-        self.token_url = "https://id.twitch.tv/oauth2/token"  # noqa: S105  # nosec B105
+        # Standard public Twitch OAuth token endpoint (well-known; not a secret).
+        # Security linters (Bandit/Ruff S105) flag this as a potential hardcoded password/secret,
+        # but it's a fixed public endpoint URL, not credentials.
+        self.token_url = "https://id.twitch.tv/oauth2/token"  # nosec B105  # noqa: S105
         self.poll_interval = 5  # seconds
 
     async def request_device_code(self) -> dict[str, Any] | None:
