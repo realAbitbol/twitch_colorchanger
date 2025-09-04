@@ -209,6 +209,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                     "eventsub_token_scopes",
                     user=self._username,
                     scopes=";".join(scopes_list),
+                    level=10,
                 )
         except Exception:  # noqa: BLE001
             self._scopes = set()

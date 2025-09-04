@@ -26,9 +26,11 @@ class BotRegistrar:
     async def register(self, bot: TwitchColorBot) -> None:
         # Register credentials with the token manager, set up persistence, then
         # trigger an initial freshness check (which may refresh + persist).
-        logger.log_event("bot", "registering_token_manager", user=bot.username)
+        logger.log_event(
+            "bot", "registering_token_manager", user=bot.username, level=10
+        )
         self._upsert_token(bot)
-        logger.log_event("token_manager", "registered", user=bot.username)
+        logger.log_event("token_manager", "registered", user=bot.username, level=10)
         self._register_persistence_hook(bot)
         await self._initial_refresh_and_persist(bot)
 

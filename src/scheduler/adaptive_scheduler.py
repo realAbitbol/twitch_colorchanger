@@ -79,7 +79,8 @@ class AdaptiveScheduler:
         # Use async context for task creation
         async with self._lock:
             self.scheduler_task = asyncio.create_task(self._run_scheduler())
-        logger.log_event("scheduler", "started")
+
+    logger.log_event("scheduler", "started", level=10)
 
     async def stop(self) -> None:
         """Stop the scheduler and cancel all tasks"""
