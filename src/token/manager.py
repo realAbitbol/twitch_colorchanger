@@ -519,36 +519,22 @@ class TokenManager:
             icon = "⌛"
         else:
             icon = "🔐"
-        expires_at = None
+        # Expiry timestamp not included in human message (simplified per request).
         if info.expiry:
+            # Still normalize timezone (side-effect free; retained if future logging re-introduces expiry).
             exp_dt = info.expiry
             if exp_dt.tzinfo is None:
-                exp_dt_utc = exp_dt.replace(tzinfo=UTC)
+                _ = exp_dt.replace(tzinfo=UTC)
             else:
-                exp_dt_utc = exp_dt.astimezone(UTC)
-            expires_at = exp_dt_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
-        pct = None
-        if info.original_lifetime and info.original_lifetime > 0:
-            pct = max(0, min(100, int((int_remaining / info.original_lifetime) * 100)))
-        fragments = [f"{icon} {human} remaining"]
-        if expires_at:
-            fragments.append(f"expires {expires_at}")
-        if pct is not None:
-            fragments.append(f"{pct}% of lifetime left")
-        msg = (
-            " (".join([fragments[0], ", ".join(fragments[1:]) + ")"])
-            if len(fragments) > 1
-            else fragments[0]
-        )
+                _ = exp_dt.astimezone(UTC)
+        # Build a clearer human message: explicitly mention token remaining time (no extra parenthetical details).
         self.logger.log_event(
             "token_manager",
             "remaining_time_detail",
             level=logging.INFO,
             user=username,
-            message=msg,
+            message=f"{icon} access token validity: {human} remaining",
             remaining_seconds=int_remaining,
-            expires_at=expires_at,
-            lifetime_percent=pct,
         )
 
     async def _handle_unknown_expiry(self, username: str) -> None:
