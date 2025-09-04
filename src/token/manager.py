@@ -98,7 +98,6 @@ class TokenManager:
                 self.background_task.cancel()
                 await self.background_task
             except asyncio.CancelledError:
-                # Propagate cancellation upwards; restart logic should honor this.
                 raise
             except Exception as e:  # noqa: BLE001
                 self.logger.log_event(
@@ -110,10 +109,10 @@ class TokenManager:
             finally:
                 self.background_task = None
         self.running = True
-        # Initial validation pass before launching background loop (extract to helper for complexity control).
+        # Initial validation pass before launching background loop
         await self._initial_validation_pass()
         self.background_task = asyncio.create_task(self._background_refresh_loop())
-        self.logger.log_event("token_manager", "start")
+        self.logger.log_event("token_manager", "start", level=10)
         await asyncio.sleep(0)
 
     async def _initial_validation_pass(self) -> None:

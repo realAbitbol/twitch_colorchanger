@@ -54,7 +54,7 @@ class ApplicationContext:
     @classmethod
     async def create(cls) -> ApplicationContext:
         ctx = cls()
-        logger.log_event("context", "creating")
+        logger.log_event("context", "creating", level=10)
         ctx.session = aiohttp.ClientSession()
         ctx._session_birth = time.time()
         logger.log_event("context", "session_created", level=10)
