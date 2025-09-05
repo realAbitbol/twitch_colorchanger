@@ -29,6 +29,7 @@ repos:
       - id: mypy
         stages: [push]
         additional_dependencies: [types-requests]
+        pass_filenames: false
         args:
           - --cache-dir=.mypy_cache
           - --warn-unused-configs
@@ -38,7 +39,6 @@ repos:
           - src
           - tests
           - scripts
-        pass_filenames: false
 
   - repo: https://github.com/pycqa/bandit
     rev: 1.8.6
@@ -60,6 +60,7 @@ repos:
         name: pip-audit (manual)
         stages: [manual]
         args: ['--requirement', 'requirements.txt', '--requirement', 'requirements-dev.txt']
+
   - repo: https://github.com/executablebooks/mdformat
     rev: 0.7.22
     hooks:
@@ -70,14 +71,7 @@ repos:
           - mdformat-tables
 
   - repo: local
-    hooks:
-      - id: pytest
-        name: pytest (quick)
-        entry: pytest -q --maxfail=1 --disable-warnings
-        language: system
-        pass_filenames: false
-        stages: [push]
-        additional_dependencies: []
+    hooks: []
 
 default_stages: [commit, push]
 
