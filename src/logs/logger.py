@@ -173,17 +173,19 @@ class BotLogger:
     def _build_concise_message(
         event_name: str, prefix: str, human_text: str | None, channel: str | None
     ) -> str:
-        # Chat message beautification: add emoji for PRIVMSG events if missing.
-        if (
-            event_name == "irc_privmsg"
-            and human_text
-            and not human_text.startswith("💬")
-        ):
-            human_text = f"💬 {human_text}"
+        # Chat message beautification: include channel before username for PRIVMSG.
+        if event_name == "irc_privmsg" and human_text:
+            if channel:
+                # Desired format: "💬 #channel username: message"
+                if human_text.startswith("💬 "):
+                    human_text = f"💬 #{channel} {human_text[2:].lstrip()}"
+                else:
+                    human_text = f"💬 #{channel} {human_text}"
+            elif not human_text.startswith("💬"):
+                human_text = f"💬 {human_text}"
         core = human_text or event_name
         msg = f"{prefix} {core}"
-        if channel and event_name.endswith("privmsg") and f"#{channel}" not in prefix:
-            msg += f" (#{channel})"
+        # Suffix channel hint is no longer necessary for PRIVMSG since it's in-line above.
         return msg
 
 

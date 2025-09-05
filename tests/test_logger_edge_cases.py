@@ -26,9 +26,9 @@ def test_logger_privmsg_emoji_added_once(caplog):  # type: ignore[no-untyped-def
     log.log_event("irc", "privmsg", human="💬 already", user="bob", channel="room")
     msgs = [m.message for m in caplog.records]
     # First should have emoji added, second should keep single emoji (not duplicate)
-    if sum(1 for m in msgs if "💬 hello" in m) != 1:
+    if sum(1 for m in msgs if "💬 #room hello" in m) != 1:
         raise AssertionError("Expected single injected emoji for first message")
-    if sum(1 for m in msgs if "💬 already" in m) != 1:
+    if sum(1 for m in msgs if "💬 #room already" in m) != 1:
         raise AssertionError("Expected second message preserved with existing emoji")
 
 
