@@ -16,7 +16,7 @@ Comprehensive description of runtime behavior, architecture, and operational cha
   - [3.2 Interface Responsibilities](#32-interface-responsibilities)
   - [3.3 Design Rationale](#33-design-rationale)
 - [4. IRC Backend Summary](#4-irc-backend-summary)
-- [5. EventSub Backend (Experimental)](#5-eventsub-backend-experimental)
+- [5. EventSub Backend (Default)](#5-eventsub-backend-default)
   - [5.1 Transport & Session](#51-transport--session)
   - [5.2 Subscriptions](#52-subscriptions)
   - [5.3 Message Handling](#53-message-handling)
@@ -51,7 +51,7 @@ Automatically changes a user's Twitch chat color after each of their own message
 6. Startup current color discovery (first change guaranteed different)
 7. Proactive token refresh + validation (pre-expiry)
 8. IRC backend with health & reconnection
-9. EventSub backend (experimental) with resilient subscriptions
+9. EventSub backend (default) with resilient subscriptions
 10. Live configuration reload (watchdog + debounce)
 11. Channel deduplication & persistence
 12. Structured event logging & event template catalog audit
@@ -79,16 +79,16 @@ Only the bot user’s own messages are interpreted. State changes persist to con
 
 ## 3. Chat Backend Abstraction
 
-> Note: EventSub is Twitch's modern, extensible delivery mechanism. While IRC remains functional today, Twitch has historically encouraged migration toward EventSub/WebSocket for richer event delivery. Treat the IRC backend as stable legacy support and EventSub as the forward-looking path likely to outlast any future IRC deprecation.
+> Note: EventSub is Twitch's modern, extensible delivery mechanism and now the default for the bot. IRC remains functional as a stable legacy fallback and may receive fewer future enhancements.
 
 ### 3.1 Implementations
 
 | Backend  | Status        | Transport                                      | Required Scopes                                    |
 |----------|---------------|------------------------------------------------|----------------------------------------------------|
-| IRC      | Stable        | Raw IRC TCP                                    | `chat:read` (implicit)                             |
-| EventSub | Experimental  | EventSub WebSocket (`channel.chat.message` v1) | `chat:read`, `user:read:chat`, `user:manage:chat_color` |
+| IRC      | Stable (Legacy) | Raw IRC TCP                                    | `chat:read` (implicit)                             |
+| EventSub | Default       | EventSub WebSocket (`channel.chat.message` v1) | `chat:read`, `user:read:chat`, `user:manage:chat_color` |
 
-Select via `TWITCH_CHAT_BACKEND=irc|eventsub` (defaults to `irc`; invalid → fallback).
+Select via `TWITCH_CHAT_BACKEND=eventsub|irc` (defaults to `eventsub`; invalid → fallback to `irc`).
 
 ### 3.2 Interface Responsibilities
 
@@ -102,7 +102,7 @@ Both backends emit only *self* messages to maximize signal quality and enforce p
 
 Standard Twitch IRC client: authentication, capabilities (membership/tags/commands), JOIN confirmation (366), 30s join timeout + retry, stale detection (activity timeout + server ping expectations), forced reconnect logic, and per-channel state tracking.
 
-## 5. EventSub Backend (Experimental)
+## 5. EventSub Backend (Default)
 
 ### 5.1 Transport & Session
 
@@ -147,7 +147,7 @@ File: `broadcaster_ids.cache.json` in config directory (override via `TWITCH_BRO
 ### 5.6 Limitations
 
 - Only self messages (design choice for parity & performance)
-- Experimental: fall back to IRC if instability observed
+- Legacy fallback: will fall back to IRC if instability observed
 - One WebSocket per user (not multiplexed across users—simplifies isolation)
 
 ## 6. Token Lifecycle Management

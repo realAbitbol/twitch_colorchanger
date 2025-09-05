@@ -286,7 +286,8 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             )
 
     def _determine_backend_type(self) -> BackendType:
-        backend_env = os.environ.get("TWITCH_CHAT_BACKEND", "irc")
+        # Default switched to EventSub; set TWITCH_CHAT_BACKEND=irc to force legacy IRC.
+        backend_env = os.environ.get("TWITCH_CHAT_BACKEND", "eventsub")
         btype = normalize_backend_type(backend_env)
         logger.log_event(
             "bot", "using_chat_backend", user=self.username, backend=btype.value

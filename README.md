@@ -94,7 +94,7 @@ Automatically change your Twitch username color after each message you send in c
 - **🔗 IRC Health Monitoring**: Robust connection health tracking with automatic reconnection (600s ping intervals)
 - **📡 Connection Visibility**: Real-time ping/pong monitoring for connection status transparency
 - **🛑 Per-User Disable Switch**: Temporarily pause color cycling without editing files or restarting
-- **🔁 Pluggable Chat Backends**: Switch between classic IRC and EventSub WebSocket delivery (experimental)
+- **🔁 Pluggable Chat Backends**: Switch between modern EventSub WebSocket (default) and legacy IRC
 
 ---
 
@@ -462,7 +462,7 @@ The bot supports extensive configuration through environment variables, allowing
 |----------|-------------|---------|
 | `DEBUG` | Enable debug logging | `false` |
 | `TWITCH_CONF_FILE` | Path to configuration file | `twitch_colorchanger.conf` |
-| `TWITCH_CHAT_BACKEND` | Chat transport: `irc` (stable) or `eventsub` (experimental) | `irc` |
+| `TWITCH_CHAT_BACKEND` | Chat transport: `eventsub` (default, recommended) or `irc` (legacy) | `eventsub` |
 
 #### Internal Configuration Constants
 
@@ -560,18 +560,18 @@ python -m src.main
 
 #### Chat Backend Selection
 
-> EventSub is Twitch's more modern WebSocket-based event system. IRC is still supported but considered legacy for new feature growth. The bot keeps IRC for reliability and broad compatibility, while EventSub positions you for any future Twitch shift away from IRC.
+> EventSub is Twitch's modern WebSocket-based event system and now the default for this bot. IRC remains available as a legacy fallback for reliability and broad compatibility.
 
 You can switch the underlying chat transport without changing your user config structure (the bot already loads `client_id` and `client_secret` from the config file):
 
 ```bash
-TWITCH_CHAT_BACKEND=irc        # default, stable
-TWITCH_CHAT_BACKEND=eventsub   # experimental EventSub WebSocket backend
+TWITCH_CHAT_BACKEND=irc        # force legacy IRC backend (optional)
+TWITCH_CHAT_BACKEND=eventsub   # explicit EventSub (default if unset)
 ```
 
 When using `eventsub` the backend automatically reuses the per-user `client_id` from the configuration file (no extra environment variable needed). The backend subscribes to `channel.chat.message` events filtered to messages from the bot user only (parity with IRC behavior). If anything fails during setup it will log errors; revert to `irc` if unstable.
 
-Required scopes for EventSub chat path (automatic device flow now requests all of these):
+Required scopes for EventSub chat path (automatic device flow requests all of these by default):
 
 | Purpose | Scope |
 |---------|-------|

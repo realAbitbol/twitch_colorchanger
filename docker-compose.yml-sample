@@ -21,8 +21,8 @@ services:
     # not need any. All user/token/channel config lives in the file above.
     environment:
       - PYTHONUNBUFFERED=1
-      # Advanced examples (uncomment if needed):
-      # - TWITCH_CHAT_BACKEND=eventsub   # Use EventSub WebSocket backend instead of IRC
+  # Advanced examples (uncomment if needed):
+  # - TWITCH_CHAT_BACKEND=irc   # Force legacy IRC backend (default is EventSub)
       # - NETWORK_PARTITION_THRESHOLD=1800
       # - CONFIG_SAVE_TIMEOUT=5.0
       # - DEFAULT_BUCKET_LIMIT=1000
