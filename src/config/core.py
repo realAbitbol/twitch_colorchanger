@@ -281,32 +281,72 @@ async def _validate_or_invalidate_scopes(
         return False
     try:
         validation = await api.validate_token(access)
-        raw_scopes = validation.get("scopes") if isinstance(validation, dict) else None
-        scopes_list: list[str] = (
-            [str(s).lower() for s in raw_scopes] if isinstance(raw_scopes, list) else []
-        )
+        # If validation failed (None or non-dict) retain existing tokens; treat as transient.
+        if not isinstance(validation, dict):
+            return True
+        raw_scopes = validation.get("scopes")
+        # If scopes key missing or not a list, retain tokens (don't nuke on malformed payload)
+        if not isinstance(raw_scopes, list):
+            return True
+        scopes_list = [str(s).lower() for s in raw_scopes]
         scope_set = set(scopes_list)
-        missing = sorted(s for s in required_scopes if s not in scope_set)
-        if missing:
-            # Invalidate tokens to trigger device flow re-provision
-            user.pop("access_token", None)
-            user.pop("refresh_token", None)
-            user.pop("token_expiry", None)
-            from ..logs.logger import logger as _logger  # local import
-
-            _logger.log_event(
-                "token",
-                "scopes_missing_invalidate",
-                user=user.get("username"),
-                # Provide fields expected by template: required, current.
-                required=";".join(sorted(required_scopes)),
-                current=";".join(sorted(scope_set)) if scope_set else "<none>",
-            )
-            return False
-        return True
+        missing = _missing_scopes(required_scopes, scope_set)
+        if not missing:
+            return True
+        # Double-check via one revalidation to avoid false positives.
+        confirmed_missing, confirmed_set = await _confirm_missing_scopes(
+            api, access, required_scopes
+        )
+        if not confirmed_missing:
+            return True
+        _invalidate_for_missing_scopes(
+            user,
+            required_scopes,
+            confirmed_set if confirmed_set is not None else scope_set,
+        )
+        return False
     except Exception:  # noqa: BLE001
         # Leave tokens untouched if validation fails; treat as retained
         return True
+
+
+def _missing_scopes(required: set[str], current: set[str]) -> list[str]:
+    return sorted(s for s in required if s not in current)
+
+
+async def _confirm_missing_scopes(
+    api: Any,
+    access: str,
+    required: set[str],
+) -> tuple[list[str], set[str] | None]:
+    try:
+        second = await api.validate_token(access)
+    except Exception:  # noqa: BLE001
+        return [], None  # Treat failure as retain (no confirmed missing)
+    if not isinstance(second, dict) or not isinstance(second.get("scopes"), list):
+        return [], None
+    second_set = {str(s).lower() for s in second["scopes"]}
+    second_missing = _missing_scopes(required, second_set)
+    if second_missing:
+        return second_missing, second_set
+    return [], second_set
+
+
+def _invalidate_for_missing_scopes(
+    user: dict[str, Any], required_scopes: set[str], current_set: set[str]
+) -> None:
+    user.pop("access_token", None)
+    user.pop("refresh_token", None)
+    user.pop("token_expiry", None)
+    from ..logs.logger import logger as _logger  # local import
+
+    _logger.log_event(
+        "token",
+        "scopes_missing_invalidate",
+        user=user.get("username"),
+        required=";".join(sorted(required_scopes)),
+        current=";".join(sorted(current_set)) if current_set else "<none>",
+    )
 
 
 async def _process_single_user_tokens(
