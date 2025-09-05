@@ -29,7 +29,7 @@ def test_logger_privmsg_emoji_addition(caplog) -> None:  # type: ignore[no-untyp
     # Simulate PRIVMSG event with human text lacking emoji
     log.log_event("irc", "privmsg", human="hello world", user="tester", channel="room")
     msgs = [r.message for r in caplog.records]
-    if not any("💬 hello world" in m for m in msgs):
+    if not any("💬 #room hello world" in m for m in msgs):
         raise AssertionError("Expected chat emoji prefix added once")
 
 
