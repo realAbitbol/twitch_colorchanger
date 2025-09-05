@@ -175,6 +175,9 @@ class ColorChangeService:
         status_code: int,
         fallback_to_preset: bool,
     ) -> bool:
+        # Persistent Turbo/Prime detection: track repeated hex rejections
+        if not is_preset and status_code in (400, 403):
+            await self._handle_hex_rejection(status_code)
         # Defensive guard: if a success (2xx/204) status bubbles here due to
         # any upstream classification inconsistency, treat it as success
         # instead of emitting a false failure event (observed 204 case).
@@ -208,6 +211,65 @@ class ColorChangeService:
             )
         return False
 
+    async def _handle_hex_rejection(self, status_code: int) -> None:
+        """On repeated 400/403 for hex, disable random hex and persist to config.
+
+        After two strikes, we assume lack of Turbo/Prime for hex colors and
+        flip use_random_colors to False, then invoke a bot hook to persist.
+        """
+        try:
+            strikes = int(getattr(self.bot, "_hex_rejection_strikes", 0)) + 1
+            self.bot._hex_rejection_strikes = strikes
+        except Exception:
+            strikes = 1
+            self.bot._hex_rejection_strikes = strikes
+
+        snippet: str | None = None
+        try:
+            extract = getattr(self.bot, "_extract_color_error_snippet", None)
+            if callable(extract):
+                snippet = extract()
+        except Exception:
+            snippet = None
+
+        logger.log_event(
+            "bot",
+            "hex_color_rejection",
+            user=self.bot.username,
+            status_code=status_code,
+            strikes=strikes,
+            snippet=snippet,
+        )
+
+        if strikes >= 2 and getattr(self.bot, "use_random_colors", False):
+            try:
+                self.bot.use_random_colors = False
+            except Exception as e:  # noqa: BLE001
+                # Log instead of silently swallowing to satisfy linting and observability
+                logger.log_event(
+                    "bot",
+                    "hex_color_persist_disable_error",
+                    level=30,
+                    user=self.bot.username,
+                    error=str(e),
+                    exc_info=True,
+                )
+            logger.log_event("bot", "hex_color_persist_disable", user=self.bot.username)
+            try:
+                hook = getattr(self.bot, "on_persistent_prime_detection", None)
+                if hook:
+                    res = hook()
+                    if hasattr(res, "__await__"):
+                        await res  # type: ignore[misc]
+            except Exception as e:  # noqa: BLE001
+                logger.log_event(
+                    "bot",
+                    "hex_color_persist_disable_error",
+                    level=30,
+                    user=self.bot.username,
+                    error=str(e),
+                )
+
     def _select_color(self) -> str:
         if self.bot.use_random_colors:
             return get_random_hex(exclude=self.bot.last_color)
@@ -216,6 +278,23 @@ class ColorChangeService:
     def _record_success(self, color: str, is_preset: bool) -> None:
         self.bot.increment_colors_changed()
         self.bot.last_color = color
+        # If a true-hex color succeeded, reset any accumulated rejection strikes
+        if not is_preset:
+            try:
+                self.bot._hex_rejection_strikes = 0
+                logger.log_event(
+                    "bot", "hex_color_strikes_reset", user=self.bot.username
+                )
+            except Exception as e:  # noqa: BLE001
+                # Use existing template at WARN level and include exception context
+                logger.log_event(
+                    "bot",
+                    "hex_color_strikes_reset",
+                    level=30,
+                    user=self.bot.username,
+                    error=str(e),
+                    exc_info=True,
+                )
         logger.log_event(
             "bot",
             "color_changed" if not is_preset else "preset_color_changed",

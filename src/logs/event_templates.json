@@ -91,6 +91,12 @@
   "keepalive_color_get_none": "🫧 Keepalive color GET returned no color user={user}",
   "keepalive_color_get_error": "⚠️ Keepalive color GET error user={user} error={error}",
   "keepalive_register_error": "⚠️ Keepalive callback register error user={user} error={error}"
+  ,"hex_color_rejection": "🚫 Hex color rejected status={status_code} strikes={strikes} user={user} snippet={snippet}",
+  "hex_color_persist_disable": "🧩 Persistent detection: disabling random hex for user={user}",
+  "hex_color_persist_disable_error": "⚠️ Error during persistent hex disable user={user}: {error}",
+  "hex_color_strikes_reset": "♻️ Hex color rejection strikes reset user={user}",
+  "persist_prime_detection_disable": "💾 Persisted Turbo/Prime detection (disabled random hex) user={user}",
+  "persist_prime_detection_error": "⚠️ Persist Turbo/Prime detection error user={user}: {error}"
   },
   "config": {
     "channel_normalization_change": "🛠️ Channel normalization change {original}->{normalized}",

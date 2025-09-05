@@ -79,7 +79,7 @@ Only the bot user’s own messages are interpreted. State changes persist to con
 
 ## 3. Chat Backend Abstraction
 
-> Note: EventSub is Twitch's modern, extensible delivery mechanism and now the default for the bot. IRC remains functional as a stable legacy fallback and may receive fewer future enhancements.
+> Note: EventSub is Twitch's modern, extensible delivery mechanism and now the default for the bot. IRC remains functional as a legacy option and may receive fewer future enhancements.
 
 ### 3.1 Implementations
 
@@ -88,7 +88,7 @@ Only the bot user’s own messages are interpreted. State changes persist to con
 | IRC      | Stable (Legacy) | Raw IRC TCP                                    | `chat:read` (implicit)                             |
 | EventSub | Default       | EventSub WebSocket (`channel.chat.message` v1) | `chat:read`, `user:read:chat`, `user:manage:chat_color` |
 
-Select via `TWITCH_CHAT_BACKEND=eventsub|irc` (defaults to `eventsub`; invalid → fallback to `irc`).
+Select via `TWITCH_CHAT_BACKEND=eventsub|irc` (defaults to `eventsub`). No automatic fallback to IRC is performed.
 
 ### 3.2 Interface Responsibilities
 
@@ -147,7 +147,7 @@ File: `broadcaster_ids.cache.json` in config directory (override via `TWITCH_BRO
 ### 5.6 Limitations
 
 - Only self messages (design choice for parity & performance)
-- Legacy fallback: will fall back to IRC if instability observed
+- Legacy option: you can explicitly select IRC if preferred
 - One WebSocket per user (not multiplexed across users—simplifies isolation)
 
 ## 6. Token Lifecycle Management
