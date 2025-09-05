@@ -60,7 +60,6 @@ repos:
         name: pip-audit (manual)
         stages: [manual]
         args: ['--requirement', 'requirements.txt', '--requirement', 'requirements-dev.txt']
-
   - repo: https://github.com/executablebooks/mdformat
     rev: 0.7.22
     hooks:
@@ -69,6 +68,16 @@ repos:
         additional_dependencies:
           - mdformat-gfm
           - mdformat-tables
+
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest (quick)
+        entry: pytest -q --maxfail=1 --disable-warnings
+        language: system
+        pass_filenames: false
+        stages: [push]
+        additional_dependencies: []
 
 default_stages: [commit, push]
 
