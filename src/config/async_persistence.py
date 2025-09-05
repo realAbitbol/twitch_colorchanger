@@ -69,10 +69,11 @@ async def _prune_user_locks() -> None:
             _USER_LOCKS.pop(u, None)
         if stale:
             try:
+                # Use placeholder names matching event template (removed, remaining)
                 logger.log_event(
                     "config",
                     "user_lock_prune",
-                    pruned=len(stale),
+                    removed=len(stale),
                     remaining=len(_USER_LOCKS),
                 )
             except Exception as e:  # noqa: BLE001

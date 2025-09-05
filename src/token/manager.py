@@ -323,10 +323,7 @@ class TokenManager:
             return TokenOutcome.VALID
 
         client = self._get_client(info.client_id, info.client_secret)
-        result, token_changed = await self._refresh_with_lock(
-            client, info, username, force_refresh
-        )
-        self._maybe_fire_update_hook(username, token_changed)
+        result, _ = await self._refresh_with_lock(client, info, username, force_refresh)
         return result.outcome
 
     # --- Internal helpers (extracted to reduce complexity) ---
@@ -366,7 +363,9 @@ class TokenManager:
                 )
             elif result.outcome == TokenOutcome.FAILED:
                 info.state = TokenState.EXPIRED
-        # Fire hook if token actually changed (covers internal direct calls bypassing ensure_fresh wrapper)
+        # Fire hook if token actually changed. This is the single authoritative
+        # location for firing update hooks to avoid double invocation (the
+        # ensure_fresh wrapper deliberately does NOT fire the hook).
         self._maybe_fire_update_hook(username, token_changed)
         return result, token_changed
 

@@ -27,7 +27,13 @@ def parse_irc_message(raw_line: str) -> IRCMessage:
         tags = _parse_tags(tags_part[1:])
 
     if raw_line.startswith(":"):
-        prefix, raw_line = raw_line[1:].split(" ", 1)
+        # Defensive: malformed lines may omit space after prefix; guard split
+        remainder = raw_line[1:]
+        if " " in remainder:
+            prefix, raw_line = remainder.split(" ", 1)
+        else:  # malformed; treat whole remainder as prefix and leave rest empty
+            prefix = remainder
+            raw_line = ""
 
     if " :" in raw_line:
         raw_line, params = raw_line.split(" :", 1)
