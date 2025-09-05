@@ -110,6 +110,33 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             os.environ.get("COLOR_KEEPALIVE_RECENT_ACTIVITY_SECONDS", "600")
         )
 
+    async def on_persistent_prime_detection(self) -> None:
+        """Persist that this user should not use random hex colors.
+
+        Sets is_prime_or_turbo to False in the user's config and writes via
+        debounced queue. This method is invoked by ColorChangeService when
+        repeated hex rejections indicate lack of Turbo/Prime privileges.
+        """
+        if not self.config_file:
+            return
+        user_config = self._build_user_config()
+        user_config["is_prime_or_turbo"] = False
+        try:
+            await queue_user_update(user_config, self.config_file)
+            logger.log_event(
+                "bot",
+                "persist_prime_detection_disable",
+                user=self.username,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.log_event(
+                "bot",
+                "persist_prime_detection_error",
+                level=logging.WARNING,
+                user=self.username,
+                error=str(e),
+            )
+
     async def start(self) -> None:
         logger.log_event("bot", "start", user=self.username)
         self.running = True

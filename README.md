@@ -567,7 +567,7 @@ python -m src.main
 
 #### Chat Backend Selection
 
-> EventSub is Twitch's modern WebSocket-based event system and now the default for this bot. IRC remains available as a legacy fallback for reliability and broad compatibility.
+> EventSub is Twitch's modern WebSocket-based event system and now the default for this bot. IRC remains available as a legacy option.
 
 You can switch the underlying chat transport without changing your user config structure (the bot already loads `client_id` and `client_secret` from the config file):
 
@@ -606,7 +606,7 @@ The EventSub backend resolves channel names to broadcaster IDs and caches them i
 
 All EventSub chat messages are normalized to the same log template (`irc.privmsg`) with an added `backend=eventsub` tag. Only the bot's own messages are processed (mirrors IRC handling) to keep color change triggers consistent and reduce noise.
 
-Fallback behavior: if `TWITCH_CHAT_BACKEND=eventsub` is set but the backend fails to initialize, the bot logs the failure and continues with IRC (stable path).
+There is no automatic fallback from EventSub to IRC. If EventSub fails to initialize, the bot will log the failure and stop for that user. You can select IRC explicitly by setting `TWITCH_CHAT_BACKEND=irc`.
 
 Open issues with logs (`DEBUG=true`) if you encounter problems—feedback helps stabilize the EventSub path.
 
