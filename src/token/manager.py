@@ -219,7 +219,7 @@ class TokenManager:
         if not hasattr(backend, "update_access_token"):
             return
 
-        def _propagate() -> None:
+        async def _propagate() -> None:  # coroutine required by register_update_hook
             info = self.tokens.get(username)
             if not info or not info.access_token:
                 return
@@ -233,6 +233,8 @@ class TokenManager:
                     user=username,
                     error=str(e),
                 )
+            # tiny await to satisfy linters that expect async use
+            await asyncio.sleep(0)
 
         self.register_update_hook(username, _propagate)
 
