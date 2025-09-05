@@ -15,7 +15,7 @@ COPY requirements.txt ./
 
 # (1 & 2 & 4) Single-layer build deps + pip install with BuildKit cache + removal + no bytecode
 # Uses BuildKit cache mount to persist wheel/pip cache across builds without baking it into layers.
-RUN --mount=type=cache,target=/root/.cache/pip \
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
         apk add --no-cache --virtual .build-deps \
             gcc \
             musl-dev \
@@ -23,13 +23,14 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         && pip install --no-compile -r requirements.txt \
         && apk del .build-deps
 
-# Copy application source (not installed as package; executed via -m)
-COPY src/ ./src/
-
-# Package site-packages with ABI marker for reliable copy without knowing version later
+# Package site-packages with ABI marker for reliable copy without knowing version later.
+# Placed BEFORE copying source so that code changes don't invalidate this layer.
 RUN ABI_DIR=$(python -c 'import sys;import pathlib;print(f"python{sys.version_info.major}.{sys.version_info.minor}")') \
     && echo "${ABI_DIR}" > PYTHON_ABI \
     && tar -C /usr/local/lib -cf site-packages.tar ${ABI_DIR}/site-packages
+
+# Copy application source (not installed as package; executed via -m)
+COPY src/ ./src/
 
 # Runtime stage: minimal image with only runtime deps + app
 FROM python:${PYTHON_VERSION} AS runtime
