@@ -27,6 +27,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # Copy application source (not installed as package; executed via -m)
 COPY src/ ./src/
 
+# Package site-packages with ABI marker for reliable copy without knowing version later
+RUN ABI_DIR=$(python -c 'import sys;import pathlib;print(f"python{sys.version_info.major}.{sys.version_info.minor}")') \
+    && echo "${ABI_DIR}" > PYTHON_ABI \
+    && tar -C /usr/local/lib -cf site-packages.tar ${ABI_DIR}/site-packages
+
 # Runtime stage: minimal image with only runtime deps + app
 FROM python:${PYTHON_VERSION} AS runtime
 
@@ -49,10 +54,13 @@ RUN addgroup -g 1000 -S appgroup \
 
 WORKDIR /app
 
-# (3) Copy only site-packages (explicit ABI to avoid wildcard miss) and app source
-# If Python version changes, adjust PYTHON_ABI (or refactor to auto-detect via build arg)
-ARG PYTHON_ABI=3.13
-COPY --from=builder /usr/local/lib/python${PYTHON_ABI}/site-packages/ /usr/local/lib/python${PYTHON_ABI}/site-packages/
+# (3) Auto-detected ABI: extract packaged site-packages tar and copy source
+COPY --from=builder /build/PYTHON_ABI /PYTHON_ABI
+COPY --from=builder /build/site-packages.tar /site-packages.tar
+RUN ABI=$(cat /PYTHON_ABI) \
+    && mkdir -p /usr/local/lib/${ABI} \
+    && tar -C /usr/local/lib -xf /site-packages.tar \
+    && rm /site-packages.tar /PYTHON_ABI
 COPY --from=builder /build/src/ ./src/
 
 # Prepare config directory and adjust ownership
