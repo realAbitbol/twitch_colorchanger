@@ -49,8 +49,10 @@ RUN addgroup -g 1000 -S appgroup \
 
 WORKDIR /app
 
-# (3) Copy only site-packages (omit /usr/local/bin to avoid unnecessary tool scripts)
-COPY --from=builder /usr/local/lib/python*/site-packages /usr/local/lib/python*/site-packages
+# (3) Copy only site-packages (explicit ABI to avoid wildcard miss) and app source
+# If Python version changes, adjust PYTHON_ABI (or refactor to auto-detect via build arg)
+ARG PYTHON_ABI=3.13
+COPY --from=builder /usr/local/lib/python${PYTHON_ABI}/site-packages/ /usr/local/lib/python${PYTHON_ABI}/site-packages/
 COPY --from=builder /build/src/ ./src/
 
 # Prepare config directory and adjust ownership
