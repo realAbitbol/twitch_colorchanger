@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7-labs
 ARG PYTHON_VERSION=3.13-alpine
 
 # Builder stage: install build tools & dependencies (wheels cached for copy)
@@ -5,21 +6,26 @@ FROM python:${PYTHON_VERSION} AS builder
 
 WORKDIR /build
 
-# Install build dependencies only here
-RUN apk add --no-cache --virtual .build-deps \
-    gcc \
-    musl-dev \
-    python3-dev
+# Ensure no .pyc compiled & faster installs (pyc disabled) during build
+ENV PYTHONDONTWRITEBYTECODE=1 \
+        PIP_NO_CACHE_DIR=1 \
+        PIP_DISABLE_PIP_VERSION_CHECK=1
 
 COPY requirements.txt ./
-RUN python -m pip install --upgrade pip \
- && pip install --no-cache-dir -r requirements.txt \
- && rm -rf ~/.cache/pip
 
+# (1 & 2 & 4) Single-layer build deps + pip install with BuildKit cache + removal + no bytecode
+# Uses BuildKit cache mount to persist wheel/pip cache across builds without baking it into layers.
+RUN --mount=type=cache,target=/root/.cache/pip \
+        apk add --no-cache --virtual .build-deps \
+            gcc \
+            musl-dev \
+            python3-dev \
+        && python -m pip install --upgrade pip \
+        && pip install --no-cache-dir --no-compile -r requirements.txt \
+        && apk del .build-deps
+
+# Copy application source (not installed as package; executed via -m)
 COPY src/ ./src/
-
-# Remove build dependencies to shrink the layer (artifacts already compiled)
-RUN apk del .build-deps || true
 
 # Runtime stage: minimal image with only runtime deps + app
 FROM python:${PYTHON_VERSION} AS runtime
@@ -43,9 +49,8 @@ RUN addgroup -g 1000 -S appgroup \
 
 WORKDIR /app
 
-# Copy only installed site-packages and scripts from builder (keeps wheels out)
+# (3) Copy only site-packages (omit /usr/local/bin to avoid unnecessary tool scripts)
 COPY --from=builder /usr/local/lib/python*/site-packages /usr/local/lib/python*/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=builder /build/src/ ./src/
 
 # Prepare config directory and adjust ownership
