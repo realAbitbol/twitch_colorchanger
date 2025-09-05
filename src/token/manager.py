@@ -78,6 +78,10 @@ class TokenManager:
         self._update_hooks: dict[str, Callable[[], Coroutine[Any, Any, None]]] = {}
         # Retained background tasks (e.g. persistence hooks) to prevent premature GC.
         self._hook_tasks: list[asyncio.Task[Any]] = []
+        # Per-user optional keepalive callbacks (async) invoked after successful periodic validation.
+        self._keepalive_callbacks: dict[
+            str, Callable[[], Coroutine[Any, Any, None]]
+        ] = {}
         # Mark as initialized to avoid repeating work on future constructions.
         self._inst_initialized = True
 
@@ -209,6 +213,16 @@ class TokenManager:
         at invocation time to avoid disrupting refresh cycles.
         """
         self._update_hooks[username] = hook
+
+    def register_keepalive_callback(
+        self, username: str, hook: Callable[[], Coroutine[Any, Any, None]]
+    ) -> None:
+        """Register a per-user keepalive callback.
+
+        Executed (fire-and-forget) right after a successful periodic remote validation.
+        Errors are logged but do not affect token lifecycle.
+        """
+        self._keepalive_callbacks[username] = hook
 
     def register_eventsub_backend(self, username: str, backend: Any) -> None:
         """Register EventSub chat backend for automatic token propagation.
@@ -562,6 +576,19 @@ class TokenManager:
                         remaining_human=human_new,
                         remaining_seconds=int(updated_remaining),
                     )
+                # Fire keepalive callback (async) if registered.
+                cb = self._keepalive_callbacks.get(username)
+                if cb:
+                    try:
+                        self._create_retained_task(cb(), category="keepalive")
+                    except Exception as e:  # noqa: BLE001
+                        self.logger.log_event(
+                            "token_manager",
+                            "keepalive_callback_error",
+                            user=username,
+                            level=logging.DEBUG,
+                            error=str(e),
+                        )
                 return updated_remaining
             # Failure -> forced refresh.
             pre_seconds = (
