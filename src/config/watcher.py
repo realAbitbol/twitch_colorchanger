@@ -24,11 +24,13 @@ from .core import (
 class ConfigFileHandler(FileSystemEventHandler):
     """File system event handler for config file changes"""
 
+    last_modified: float
+
     def __init__(self, config_file: str, watcher_instance: "ConfigWatcher"):
         super().__init__()
         self.config_file = os.path.abspath(config_file)
         self.watcher = watcher_instance
-        self.last_modified = 0
+        self.last_modified = 0.0
 
     # Debounced event processing for our single config file
     def _should_process(self) -> bool:
@@ -63,13 +65,13 @@ class ConfigFileHandler(FileSystemEventHandler):
                 )
 
     # Watchdog will call these on file changes; we forward with debounce
-    def on_modified(self, event):  # type: ignore[override]
+    def on_modified(self, event):
         self._handle_event(getattr(event, "src_path", ""))
 
-    def on_created(self, event):  # type: ignore[override]
+    def on_created(self, event):
         self._handle_event(getattr(event, "src_path", ""))
 
-    def on_moved(self, event):  # type: ignore[override]
+    def on_moved(self, event):
         # For moved events, prefer destination path
         dest = getattr(event, "dest_path", None) or getattr(event, "src_path", "")
         self._handle_event(dest)

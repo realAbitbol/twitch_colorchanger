@@ -6,6 +6,7 @@ packaged under `color`.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, cast
 
 from ..logs.logger import logger
@@ -257,10 +258,10 @@ class ColorChangeService:
             logger.log_event("bot", "hex_color_persist_disable", user=self.bot.username)
             try:
                 hook = getattr(self.bot, "on_persistent_prime_detection", None)
-                if hook:
+                if hook and callable(hook):
                     res = hook()
-                    if hasattr(res, "__await__"):
-                        await res  # type: ignore[misc]
+                    if asyncio.iscoroutine(res):
+                        await res
             except Exception as e:  # noqa: BLE001
                 logger.log_event(
                     "bot",
