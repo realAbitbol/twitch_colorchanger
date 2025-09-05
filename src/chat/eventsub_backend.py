@@ -72,6 +72,30 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
 
         # end __init__
 
+    # --- token lifecycle integration -------------------------------------------------
+    def update_access_token(self, new_token: str | None) -> None:
+        """Update access token in place after an external refresh.
+
+        Keeps EventSub WebSocket subscription flow aligned with latest token,
+        reducing windows where a stale token might trigger invalid events.
+        Lightweight (just assignment + flag reset) so safe to call from hooks.
+        """
+        if not new_token or not isinstance(new_token, str):  # defensive
+            return
+        # If a token_invalid flag was previously set due to stale token, clear it
+        # so normal subscription verification can proceed with fresh credentials.
+        previously_invalid = self._token_invalid_flag
+        self._token = new_token
+        if previously_invalid:
+            self._token_invalid_flag = False
+            self._consecutive_subscribe_401 = 0
+            logger.log_event(
+                "chat",
+                "eventsub_token_recovered",
+                level=20,
+                user=self._username,
+            )
+
     def _jitter(self, a: float, b: float) -> float:
         """Return scheduling jitter using a non-crypto but system-derived source.
 
@@ -623,7 +647,11 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                     "eventsub_token_invalid",
                     level=40,
                     user=self._username,
+                    # Provide a synthetic channel marker so template formatting does not
+                    # leave {channel} literal when invalidation is detected via the
+                    # subscription listing endpoint (no single channel context).
                     source="list_subscriptions",
+                    channel="*",
                 )
             return None
         if status != 200 or not isinstance(data, dict):

@@ -1,90 +1,77 @@
-# Pre-commit configuration for Twitch ColorChanger Bot
-# Modern approach using Ruff for fast, comprehensive Python linting and formatting
+minimum_pre_commit_version: '3.5.0'
+fail_fast: true
 
 repos:
-  # Standard pre-commit hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.4.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
-        description: Trim trailing whitespace
       - id: end-of-file-fixer
-        description: Ensure files end with a newline
       - id: check-yaml
-        description: Check YAML files for syntax errors
       - id: check-json
-        description: Check JSON files for syntax errors
       - id: check-toml
-        description: Check TOML files for syntax errors
       - id: check-merge-conflict
-        description: Check for merge conflict markers
       - id: check-added-large-files
-        description: Prevent large files from being committed
         args: ['--maxkb=1000']
       - id: mixed-line-ending
-        description: Ensure consistent line endings
         args: ['--fix=lf']
 
-  # Ruff - Fast Python linter and formatter (replaces flake8, isort, autopep8)
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.12.11
+    rev: v0.12.12
     hooks:
-      # Ruff linter
       - id: ruff
-        args: [
-          '--fix',           # Automatically fix fixable violations
-          '--exit-non-zero-on-fix'  # Exit with non-zero code if fixes were applied
-        ]
-      # Ruff formatter (replaces Black)
+        args: ['--fix']
       - id: ruff-format
 
-  # Markdown formatting
-  - repo: https://github.com/executablebooks/mdformat
-    rev: 0.7.21
-    hooks:
-      - id: mdformat
-        description: Format Markdown files with mdformat
-        stages: [manual]  # Only run when explicitly called, not on every commit
-        additional_dependencies:
-          - mdformat-gfm      # GitHub Flavored Markdown support
-          - mdformat-tables   # Table formatting support
-
-  # Python type checking
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.5.1
+    rev: v1.17.1
     hooks:
       - id: mypy
-        description: Type check Python code with mypy
+        stages: [push]
         additional_dependencies: [types-requests]
-        args: ['--ignore-missing-imports']
+        args:
+          - --cache-dir=.mypy_cache
+          - --warn-unused-configs
+          - --warn-redundant-casts
+          - --warn-unused-ignores
+          - --no-warn-no-return
+          - src
+          - tests
+          - scripts
+        pass_filenames: false
 
-  # Security scanning
   - repo: https://github.com/pycqa/bandit
-    rev: 1.7.5
+    rev: 1.8.6
     hooks:
       - id: bandit
-        description: Security linting with Bandit
-        args: ['-r', 'src/']
-        exclude: ^tests/
-        additional_dependencies: [pbr]
+        stages: [push]
+        args: ['-r', 'src/', 'scripts/']
 
-  # Custom hook to run our comprehensive lint command
-  - repo: local
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
     hooks:
-      - id: make-lint
-        name: Run make lint
-        entry: make
-        args: [lint]
-        language: system
-        description: Run comprehensive linting with make lint
-        pass_filenames: false
-        always_run: true
-        stages: [commit]
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
 
-# Configure which hooks run at which stages
-default_stages: [commit]
+  - repo: https://github.com/pypa/pip-audit
+    rev: v2.9.0
+    hooks:
+      - id: pip-audit
+        name: pip-audit (manual)
+        stages: [manual]
+        args: ['--requirement', 'requirements.txt', '--requirement', 'requirements-dev.txt']
 
-# Exclude certain files/directories
+  - repo: https://github.com/executablebooks/mdformat
+    rev: 0.7.22
+    hooks:
+      - id: mdformat
+        stages: [manual]
+        additional_dependencies:
+          - mdformat-gfm
+          - mdformat-tables
+
+default_stages: [commit, push]
+
 exclude: |
   (?x)^(
     \.git/.*|

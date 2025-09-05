@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from ..logs.logger import logger
 
@@ -30,16 +31,20 @@ class UserConfig:
     enabled: bool = True  # New flag to enable/disable automatic color change
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> UserConfig:
+    def from_dict(cls, data: Mapping[str, Any]) -> UserConfig:
+        channels_raw = data.get("channels")
+        channels: list[str]
+        if isinstance(channels_raw, list):
+            channels = [str(c).strip() for c in channels_raw if isinstance(c, str)]
+        else:
+            channels = []
         return cls(
             username=str(data.get("username", "")).strip(),
-            client_id=data.get("client_id"),
-            client_secret=data.get("client_secret"),
-            access_token=data.get("access_token"),
-            refresh_token=data.get("refresh_token"),
-            channels=list(data.get("channels", []))
-            if isinstance(data.get("channels"), list)
-            else [],
+            client_id=cast(str | None, data.get("client_id")),
+            client_secret=cast(str | None, data.get("client_secret")),
+            access_token=cast(str | None, data.get("access_token")),
+            refresh_token=cast(str | None, data.get("refresh_token")),
+            channels=channels,
             is_prime_or_turbo=bool(data.get("is_prime_or_turbo", True)),
             enabled=bool(data.get("enabled", True)),
         )
