@@ -25,14 +25,11 @@
     "using_chat_backend": "🔀 Using chat backend {backend} user={user}",
     "color_change_attempt_refresh": "🔐 Attempting token refresh after 401 color change user={user}",
     "color_change_internal_error": "💥 Internal error changing color (non-HTTP) user={user}",
-    "color_change_http_error_detail": "🧪 HTTP error detail status={status_code} detail={detail} user={user}",
-    "color_change_status_failed": "❌ Failed to change color status={status_code} user={user}",
-    "color_change_timeout": "⏱️ Color change timeout user={user}",
+  "color_change_status_failed": "❌ Failed to change color status={status_code} user={user}",
     "color_success_late_classification": "⚠️ Late success classification status={status_code} user={user}",
     "color_changed": "🎨 Color changed to {color} user={user}",
     "preset_color_changed": "🎨 Preset color changed to {color} user={user}",
     "preset_color_internal_error": "💥 Internal error changing preset color user={user}",
-    "preset_color_http_error_detail": "🧪 Preset color HTTP error detail status={status_code} detail={detail} user={user}",
     "preset_color_success_late_classification": "⚠️ Late preset color success classification status={status_code} user={user}",
     "color_refresh_failed": "💥 Token refresh failed cannot retry color change user={user}",
     "color_retry_after_refresh": "🔄 Retrying color change after token refresh user={user}",
@@ -64,9 +61,8 @@
     "normalized_channels_saved": "💾 Normalized channels saved user={user}",
     "persist_disable_failed": "⚠️ Failed to persist disable flag user={user}: {error}",
     "persist_enable_failed": "⚠️ Failed to persist enable flag user={user}: {error}",
-    "preset_color_error": "💥 Error preset color fallback user={user}: {error}",
-    "preset_color_failed_status": "❌ Preset color change failed status={status_code} user={user}",
-    "preset_color_retry_failed_status": "💥 Preset color change failed after retries status={status_code} user={user}",
+  "preset_color_failed_status": "❌ Preset color change failed status={status_code} user={user}",
+  "preset_color_retry_failed_status": "💥 Preset color change failed after retries status={status_code} user={user}",
     "rate_limited_color_change": "⏳ Rate limited retry soon user={user}",
     "register_hook_failed": "⚠️ Failed to register token update hook user={user}: {error}",
     "registering_token_manager": "📝 Registering with token manager user={user}",
@@ -88,6 +84,12 @@
     "token_scope_validation_error": "🚫 Token scope validation error user={user} missing={missing}",
     "token_update_backend_error": "⚠️ Error updating chat backend tokens user={user}: {error}",
     "waiting_irc_task_error": "💥 Error waiting for IRC task user={user}: {error}"
+  ,"keepalive_color_get_attempt": "🫧 Keepalive color GET attempt user={user}",
+  "keepalive_color_get_success": "🫧 Keepalive color GET success user={user} color={color}",
+  "keepalive_color_get_skip_recent": "🫧 Keepalive GET skipped (recent activity) user={user}",
+  "keepalive_color_get_none": "🫧 Keepalive color GET returned no color user={user}",
+  "keepalive_color_get_error": "⚠️ Keepalive color GET error user={user} error={error}",
+  "keepalive_register_error": "⚠️ Keepalive callback register error user={user} error={error}"
   },
   "config": {
     "channel_normalization_change": "🛠️ Channel normalization change {original}->{normalized}",
@@ -420,7 +422,8 @@
   "periodic_validation_ok": "✅ Periodic remote token validation ok for user {user} ({remaining_human} remaining, {remaining_seconds}s)",
   "periodic_validation_failed": "❌ Periodic remote token validation failed for user {user} ({remaining_human} remaining pre-refresh, {remaining_seconds}s)",
   "periodic_validation_error": "⚠️ Periodic remote token validation error for user {user} type={error_type} error={error}",
-  "periodic_validation_forced_refresh": "🔄 Forced refresh after failed periodic remote validation for user {user} outcome={refresh_outcome} ({new_remaining_human} remaining, {new_remaining_seconds}s)"
+  "periodic_validation_forced_refresh": "🔄 Forced refresh after failed periodic remote validation for user {user} outcome={refresh_outcome} ({new_remaining_human} remaining, {new_remaining_seconds}s)",
+  "keepalive_callback_error": "⚠️ Keepalive callback error user={user} error={error}"
   },
   "metrics": {
     "snapshot": "📊 Metrics snapshot"
