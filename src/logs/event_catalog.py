@@ -3,10 +3,20 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 EVENT_TEMPLATES: dict[tuple[str, str], str] = {}
 _JSON_FILENAME = "event_templates.json"  # co-located inside logging/ directory
+
+
+def _add_domain_actions(
+    templates: dict[tuple[str, str], str], domain: str, actions: Mapping[str, Any]
+) -> None:
+    for action, template in actions.items():
+        if isinstance(action, str) and isinstance(template, str):
+            templates[(domain, action)] = template
 
 
 def _load_event_templates() -> dict[tuple[str, str], str]:
@@ -19,12 +29,11 @@ def _load_event_templates() -> dict[tuple[str, str], str]:
     templates: dict[tuple[str, str], str] = {}
     try:
         with path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-        for domain, actions in data.items():
-            if isinstance(actions, dict):
-                for action, template in actions.items():
-                    if isinstance(template, str):
-                        templates[(domain, action)] = template
+            raw: Any = json.load(f)
+        if isinstance(raw, Mapping):
+            for domain, actions in raw.items():
+                if isinstance(domain, str) and isinstance(actions, Mapping):
+                    _add_domain_actions(templates, domain, actions)
     except FileNotFoundError:
         templates[("app", "load_error")] = "Event templates file missing"
     except Exception as e:  # noqa: BLE001

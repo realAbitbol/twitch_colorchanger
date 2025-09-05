@@ -5,11 +5,14 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from typing import TextIO
 
-try:
-    from .event_catalog import EVENT_TEMPLATES
-except Exception:  # pragma: no cover
-    EVENT_TEMPLATES = {}
+
+def _supports_color(stream: TextIO) -> bool:
+    try:
+        return stream.isatty()
+    except Exception:  # pragma: no cover
+        return False
 
 
 class SimpleFormatter(logging.Formatter):
@@ -24,7 +27,8 @@ class SimpleFormatter(logging.Formatter):
 
     def __init__(self) -> None:
         super().__init__()
-        self.enable_color = sys.stdout.isatty()
+        # Guard against environments where stdout might be replaced.
+        self.enable_color = _supports_color(sys.stdout)
 
     def format(self, record: logging.LogRecord) -> str:  # noqa: D401 (simple override)
         msg = record.getMessage()
@@ -80,7 +84,12 @@ class BotLogger:
         human_text = human
         derived = False
         if human_text is None:
-            template = EVENT_TEMPLATES.get((domain, action))
+            # Local import to avoid cyclic import issues during module init.
+            try:  # pragma: no cover - defensive
+                from .event_catalog import EVENT_TEMPLATES as _event_templates
+            except Exception:  # noqa: BLE001
+                _event_templates = {}
+            template = _event_templates.get((domain, action))
             if template:
                 try:
                     human_text = template.format(**kwargs)

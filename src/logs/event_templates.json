@@ -253,6 +253,7 @@
   "eventsub_subscribed": "✅ {user} joined #{channel}",
     "eventsub_subscription_check_error": "⚠️ EventSub subscription check error: {error}",
     "eventsub_token_invalid": "🚫 EventSub token invalid source={source} channel={channel}",
+  "eventsub_token_recovered": "🔄 EventSub token recovered",
     "eventsub_token_scopes": "🧪 EventSub token scopes scopes={scopes}",
     "eventsub_welcome_parse_error": "⚠️ EventSub welcome parse error: {error}",
     "eventsub_ws_abnormal_end": "⚠️ EventSub WebSocket abnormal end code={code}",

@@ -17,21 +17,28 @@ policies should consider another attempt.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
 
 
 class InternalError(Exception):
-    """Base internal exception with optional metadata and transience flag."""
+    """Base internal exception with optional metadata and transience flag.
+
+    data: dict[str, object] – arbitrary structured context (never user‑facing).
+    """
 
     transient: bool = False  # Override in subclasses if appropriate
+    data: dict[str, object]
 
-    def __init__(self, message: str, *, data: dict[str, Any] | None = None):
+    def __init__(
+        self, message: str, *, data: Mapping[str, object] | None = None
+    ) -> None:  # noqa: D401 - simple initializer
         super().__init__(message)
-        self.data = data or {}
+        # Copy into a plain dict to avoid unexpected mutations from caller.
+        self.data = dict(data) if data else {}
 
     def is_transient(self) -> bool:  # Small convenience helper
-        return getattr(self, "transient", False)
+        return bool(self.transient)
 
 
 class NetworkError(InternalError):

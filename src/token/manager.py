@@ -210,6 +210,32 @@ class TokenManager:
         """
         self._update_hooks[username] = hook
 
+    def register_eventsub_backend(self, username: str, backend: Any) -> None:
+        """Register EventSub chat backend for automatic token propagation.
+
+        Creates an update hook that calls backend.update_access_token(new_token)
+        after successful refresh. Silently ignored if backend lacks method.
+        """
+        if not hasattr(backend, "update_access_token"):
+            return
+
+        def _propagate() -> None:
+            info = self.tokens.get(username)
+            if not info or not info.access_token:
+                return
+            try:
+                backend.update_access_token(info.access_token)
+            except Exception as e:  # noqa: BLE001
+                self.logger.log_event(
+                    "token_manager",
+                    "eventsub_token_propagate_error",
+                    level=30,
+                    user=username,
+                    error=str(e),
+                )
+
+        self.register_update_hook(username, _propagate)
+
     def _upsert_token_info(
         self,
         username: str,
@@ -338,6 +364,8 @@ class TokenManager:
                 )
             elif result.outcome == TokenOutcome.FAILED:
                 info.state = TokenState.EXPIRED
+        # Fire hook if token actually changed (covers internal direct calls bypassing ensure_fresh wrapper)
+        self._maybe_fire_update_hook(username, token_changed)
         return result, token_changed
 
     def _apply_successful_refresh(self, info: TokenInfo, result: TokenResult) -> None:
@@ -497,7 +525,12 @@ class TokenManager:
         if force_proactive:
             trigger_threshold *= 2
         if remaining < trigger_threshold:
-            await self.ensure_fresh(username)
+            # If drift triggered and we're only refreshing early due to doubled threshold,
+            # force the refresh so _should_skip_refresh does not ignore it.
+            if force_proactive and remaining > TOKEN_REFRESH_THRESHOLD_SECONDS:
+                await self.ensure_fresh(username, force_refresh=True)
+            else:
+                await self.ensure_fresh(username)
 
     async def _maybe_periodic_or_unknown_resolution(
         self, username: str, info: TokenInfo, remaining: float | None
