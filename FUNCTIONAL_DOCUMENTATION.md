@@ -200,7 +200,7 @@ Startup → Existing tokens checked
 
 ### 9.1 Event Template Catalog (Recent Notables)
 
-`eventsub_ws_connected`, `eventsub_subscribed`, `eventsub_resubscribe_missing`, `eventsub_token_scopes`, `eventsub_token_invalid`, `eventsub_missing_scopes`, `eventsub_reconnect_success`, `eventsub_reconnect_failed`, `eventsub_stale_detected`, `auto_color_enabled`, `auto_color_disabled`.
+`eventsub_ws_connected`, `eventsub_subscribed`, `eventsub_resubscribe_missing`, `eventsub_token_scopes`, `eventsub_token_invalid`, `eventsub_missing_scopes`, `eventsub_reconnect_success`, `eventsub_reconnect_failed`, `eventsub_stale_detected`, `auto_color_enabled`, `auto_color_disabled`, `keepalive_color_get_attempt`, `keepalive_color_get_success`, `keepalive_color_get_skip_recent`, `keepalive_color_get_none`.
 
 ### 9.2 Security & Resilience Updates
 
@@ -236,6 +236,7 @@ Startup → Existing tokens checked
 - Metrics endpoint (subscription counts, reconnect counters, color success rates)
 - Expanded health probes (latency windows, API error budgets)
 - EventSub multiplexing optimization (batch subscription refresh)
+- Optional metrics emission for keepalive trigger counts & idle distribution
 
 ---
 

@@ -95,6 +95,7 @@ Automatically change your Twitch username color after each message you send in c
 - **📡 Connection Visibility**: Real-time ping/pong monitoring for connection status transparency
 - **🛑 Per-User Disable Switch**: Temporarily pause color cycling without editing files or restarting
 - **🔁 Pluggable Chat Backends**: Switch between modern EventSub WebSocket (default) and legacy IRC
+- **🫧 Idle Keepalive (Low Impact)**: After successful periodic token validation the bot may issue a lightweight GET of the current chat color if you've been idle (no messages) for a configurable period (default 600s) to keep internal state fresh and surface token/API issues early without sending redundant PUT color changes.
 
 ---
 
@@ -512,6 +513,12 @@ All internal timing and behavior constants can be overridden via environment var
 | `DEFAULT_BUCKET_LIMIT` | Default API request bucket size | 800 |
 | `RATE_LIMIT_SAFETY_BUFFER` | Safety buffer for rate limiting | 5 |
 | `STALE_BUCKET_AGE` | Age after which buckets are considered stale | 60 |
+
+**Keepalive / Idle Behavior:**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `COLOR_KEEPALIVE_RECENT_ACTIVITY_SECONDS` | Minimum idle seconds before a background color GET keepalive is attempted (triggered only after a successful periodic token validation). Set higher to reduce background calls or lower (>=300 recommended) if you want faster detection of revoked color state. | 600 |
 
 **Exponential Backoff:**
 
