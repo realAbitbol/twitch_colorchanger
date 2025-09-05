@@ -30,7 +30,49 @@ class ConfigFileHandler(FileSystemEventHandler):
         self.watcher = watcher_instance
         self.last_modified = 0
 
-    # Removed on_modified handler (unused).  # noqa: ERA001
+    # Debounced event processing for our single config file
+    def _should_process(self) -> bool:
+        """Check if the config file's mtime advanced since last processed."""
+        try:
+            mtime = os.path.getmtime(self.config_file)
+        except FileNotFoundError:
+            return False
+        # If we are paused, skip immediately
+        if getattr(self.watcher, "paused", False):
+            return False
+        # Debounce: only process when mtime increases
+        if mtime <= self.last_modified:
+            return False
+        self.last_modified = mtime
+        return True
+
+    def _handle_event(self, src_path: str) -> None:
+        # Only react to our specific config file (absolute paths)
+        if os.path.abspath(src_path) != self.config_file:
+            return
+        if self._should_process():
+            try:
+                self.watcher._on_config_changed()  # noqa: SLF001
+            except Exception as e:  # noqa: BLE001
+                # _on_config_changed logs details; record that handler swallowed
+                logger.log_event(
+                    "config_watch",
+                    "change_handler_error",
+                    level=logging.DEBUG,
+                    error=str(e),
+                )
+
+    # Watchdog will call these on file changes; we forward with debounce
+    def on_modified(self, event):  # type: ignore[override]
+        self._handle_event(getattr(event, "src_path", ""))
+
+    def on_created(self, event):  # type: ignore[override]
+        self._handle_event(getattr(event, "src_path", ""))
+
+    def on_moved(self, event):  # type: ignore[override]
+        # For moved events, prefer destination path
+        dest = getattr(event, "dest_path", None) or getattr(event, "src_path", "")
+        self._handle_event(dest)
 
 
 @runtime_checkable

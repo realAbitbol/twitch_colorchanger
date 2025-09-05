@@ -131,6 +131,7 @@
     "no_valid_users": "⚠️ New config has no valid users - ignoring changes",
     "paused": "⏸️ Config watcher paused (bot update)",
     "processing_error": "💥 Error processing config change: {error}",
+  "change_handler_error": "⚠️ Error in change handler (swallowed) error={error}",
     "resumed": "▶️ Config watcher resumed",
     "start": "👀 Started watching config file path={path}",
     "start_failed": "💥 Failed to start config watcher: {error}",
