@@ -714,15 +714,25 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         return await self._color_service.change_color(hex_color)
 
     async def _maybe_get_color_keepalive(self) -> None:
-        if not self._is_color_change_allowed():
-            return
+        # Keepalive should run even if auto color changes are disabled; we just annotate enabled state.
+        enabled = self._is_color_change_allowed()
         idle = time.time() - self._last_activity_ts
         if idle < self._keepalive_recent_activity:
             logger.log_event(
-                "bot", "keepalive_color_get_skip_recent", user=self.username
+                "bot",
+                "keepalive_color_get_skip_recent",
+                user=self.username,
+                enabled=enabled,
+                idle=int(idle),
+                threshold=int(self._keepalive_recent_activity),
             )
             return
-        logger.log_event("bot", "keepalive_color_get_attempt", user=self.username)
+        logger.log_event(
+            "bot",
+            "keepalive_color_get_attempt",
+            user=self.username,
+            enabled=enabled,
+        )
         try:
             color = await self._get_current_color_impl()
             if color:
@@ -731,16 +741,23 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                     "bot",
                     "keepalive_color_get_success",
                     user=self.username,
+                    enabled=enabled,
                     color=color,
                 )
             else:
-                logger.log_event("bot", "keepalive_color_get_none", user=self.username)
+                logger.log_event(
+                    "bot",
+                    "keepalive_color_get_none",
+                    user=self.username,
+                    enabled=enabled,
+                )
         except Exception as e:  # noqa: BLE001
             logger.log_event(
                 "bot",
                 "keepalive_color_get_error",
                 level=logging.DEBUG,
                 user=self.username,
+                enabled=enabled,
                 error=str(e),
             )
 
