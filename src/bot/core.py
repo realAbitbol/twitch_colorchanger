@@ -155,7 +155,9 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         await self.scheduler.start()
 
         try:
-            await self.irc_task
+            task = self.irc_task
+            if task is not None:
+                await task
         except KeyboardInterrupt:
             logger.log_event(
                 "bot", "shutdown_initiated", level=logging.WARNING, user=self.username
