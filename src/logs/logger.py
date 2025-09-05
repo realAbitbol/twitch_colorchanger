@@ -112,7 +112,7 @@ class BotLogger:
         user, channel, human_text = self._extract_reserved(kw)
         prefix = self._build_prefix(user, channel)
         msg = (
-            self._build_debug_message(event_name, prefix, human_text, kw)
+            self._build_debug_message(event_name, prefix, human_text, channel, kw)
             if debug_enabled
             else self._build_concise_message(event_name, prefix, human_text, channel)
         )
@@ -146,15 +146,21 @@ class BotLogger:
 
     @staticmethod
     def _build_debug_message(
-        event_name: str, prefix: str, human_text: str | None, kwargs: dict[str, object]
+        event_name: str,
+        prefix: str,
+        human_text: str | None,
+        channel: str | None,
+        kwargs: dict[str, object],
     ) -> str:
-        # Chat message beautification: add emoji for PRIVMSG events if missing.
-        if (
-            event_name == "irc_privmsg"
-            and human_text
-            and not human_text.startswith("💬")
-        ):
-            human_text = f"💬 {human_text}"
+        # Chat message beautification in DEBUG: include channel inline for PRIVMSG.
+        if event_name == "irc_privmsg" and human_text:
+            if channel:
+                if human_text.startswith("💬 "):
+                    human_text = f"💬 #{channel} {human_text[2:].lstrip()}"
+                else:
+                    human_text = f"💬 #{channel} {human_text}"
+            elif not human_text.startswith("💬"):
+                human_text = f"💬 {human_text}"
         context = ", ".join(f"{k}={v}" for k, v in kwargs.items())
         # Pad / truncate event name to a fixed column for alignment
         width = 32
