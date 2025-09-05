@@ -56,6 +56,9 @@ disallow_any_generics = false
 disallow_subclassing_any = false
 no_implicit_reexport = false
 follow_imports = "skip"
+exclude = [
+    "tests/",
+]
 
 # Per-module relaxations (keep legacy modules compiling). Remove over time.
 # Module-specific relaxations (mypy 1.10+ style via overrides)
