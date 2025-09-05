@@ -1,11 +1,40 @@
 ARG PYTHON_VERSION=3.13-alpine
+
+# Builder stage: install build tools & dependencies (wheels cached for copy)
+FROM python:${PYTHON_VERSION} AS builder
+
+WORKDIR /build
+
+# Install build dependencies only here
+RUN apk add --no-cache --virtual .build-deps \
+    gcc \
+    musl-dev \
+    python3-dev
+
+COPY requirements.txt ./
+RUN python -m pip install --upgrade pip \
+ && pip install --no-cache-dir -r requirements.txt \
+ && rm -rf ~/.cache/pip
+
+COPY src/ ./src/
+
+# Remove build dependencies to shrink the layer (artifacts already compiled)
+RUN apk del .build-deps || true
+
+# Runtime stage: minimal image with only runtime deps + app
 FROM python:${PYTHON_VERSION} AS runtime
 
+# Supply optional build metadata (pass with --build-arg VCS_REF, --build-arg BUILD_DATE)
+ARG VCS_REF="unknown"
+ARG BUILD_DATE="unknown"
+
 LABEL org.opencontainers.image.title="twitch-colorchanger" \
-      org.opencontainers.image.description="Multi-user Twitch chat color changer bot" \
-      org.opencontainers.image.version="2.3" \
-      org.opencontainers.image.source="https://github.com/realAbitbol/twitch_colorchanger" \
-      maintainer="Twitch ColorChanger Bot"
+    org.opencontainers.image.description="Multi-user Twitch chat color changer bot" \
+    org.opencontainers.image.version="2.3" \
+    org.opencontainers.image.source="https://github.com/realAbitbol/twitch_colorchanger" \
+    org.opencontainers.image.revision="${VCS_REF}" \
+    org.opencontainers.image.created="${BUILD_DATE}" \
+    maintainer="Twitch ColorChanger Bot"
 
 # Create non-root user (explicit IDs for reproducibility) and install tini as minimal init
 RUN addgroup -g 1000 -S appgroup \
@@ -14,21 +43,10 @@ RUN addgroup -g 1000 -S appgroup \
 
 WORKDIR /app
 
-# System deps only when needed (riscv64 edge case). Keep layer small.
-RUN pip install --no-cache-dir --upgrade pip && \
-    if [ "$(uname -m)" = "riscv64" ]; then \
-        apk add --no-cache --virtual .build-deps gcc musl-dev python3-dev; \
-    fi
-
-# Copy dependency spec first for better build caching
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && \
-    if [ "$(uname -m)" = "riscv64" ]; then \
-        apk del .build-deps; \
-    fi
-
-# Copy source
-COPY src/ ./src/
+# Copy only installed site-packages and scripts from builder (keeps wheels out)
+COPY --from=builder /usr/local/lib/python*/site-packages /usr/local/lib/python*/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+COPY --from=builder /build/src/ ./src/
 
 # Prepare config directory and adjust ownership
 RUN mkdir -p /app/config && chown -R appuser:appgroup /app
