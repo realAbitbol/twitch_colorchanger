@@ -6,10 +6,10 @@ FROM python:${PYTHON_VERSION} AS builder
 
 WORKDIR /build
 
-# Ensure no .pyc compiled & faster installs (pyc disabled) during build
+# Ensure no .pyc compiled & faster installs (pyc disabled) during build.
+# Allow pip's cache (remove PIP_NO_CACHE_DIR & --no-cache-dir) so BuildKit cache mount is effective.
 ENV PYTHONDONTWRITEBYTECODE=1 \
-        PIP_NO_CACHE_DIR=1 \
-        PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 COPY requirements.txt ./
 
@@ -20,8 +20,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
             gcc \
             musl-dev \
             python3-dev \
-        && python -m pip install --upgrade pip \
-        && pip install --no-cache-dir --no-compile -r requirements.txt \
+        && pip install --no-compile -r requirements.txt \
         && apk del .build-deps
 
 # Copy application source (not installed as package; executed via -m)
@@ -70,7 +69,6 @@ USER appuser
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     TWITCH_CONF_FILE=/app/config/twitch_colorchanger.conf \
     TWITCH_BROADCASTER_CACHE=/app/config/broadcaster_ids.cache.json
