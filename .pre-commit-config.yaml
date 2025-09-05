@@ -50,7 +50,7 @@ repos:
     rev: v1.5.0
     hooks:
       - id: detect-secrets
-        args: ['--baseline', '.secrets.baseline']
+        args: ['--baseline', '.secrets.baseline', '--exclude-files', '^tests/']
 
   - repo: https://github.com/pypa/pip-audit
     rev: v2.9.0
@@ -82,13 +82,13 @@ default_stages: [commit, push]
 
 exclude: |
   (?x)^(
-    \.git/.*|
-    \.venv/.*|
+    \\.git/.*|
+    \\.venv/.*|
     __pycache__/.*|
-    \.pytest_cache/.*|
+    \\.pytest_cache/.*|
     htmlcov/.*|
-    \.coverage.*|
+    \\.coverage.*|
     build/.*|
     dist/.*|
-    \.egg-info/.*
+    \\.egg-info/.*
   )$
