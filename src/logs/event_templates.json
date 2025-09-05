@@ -403,6 +403,7 @@
   "registered": "📝 Token manager: registered",
     "update_hook_error": "⚠️ Update hook scheduling error user={user} type={error_type}",
     "retained_task_error": "⚠️ Retained background task error category={category} error={error} type={error_type}",
+  "eventsub_token_propagate_error": "⚠️ EventSub token propagation error user={user}: {error}",
     "expiry_unknown_forced_refresh_exhausted": "⚠️ Forced refresh attempts exhausted resolving unknown expiry user={user}",
     "expiry_unknown_forced_refresh_failed": "⚠️ Forced refresh attempt failed resolving unknown expiry user={user} attempt={attempt}",
     "expiry_unknown_forced_refresh_success": "✅ Forced refresh resolved unknown expiry user={user} attempt={attempt}",

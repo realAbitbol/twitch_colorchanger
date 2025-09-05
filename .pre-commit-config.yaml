@@ -37,7 +37,6 @@ repos:
           - --warn-unused-ignores
           - --no-warn-no-return
           - src
-          - tests
           - scripts
 
   - repo: https://github.com/pycqa/bandit
@@ -71,7 +70,13 @@ repos:
           - mdformat-tables
 
   - repo: local
-    hooks: []
+    hooks:
+      - id: event-templates-audit
+        name: Event template audit
+        entry: python scripts/event_template_audit.py
+        language: system
+        pass_filenames: false
+        stages: [commit, push]
 
 default_stages: [commit, push]
 
