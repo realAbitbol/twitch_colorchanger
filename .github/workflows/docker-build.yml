@@ -77,11 +77,18 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
           labels: |
             org.opencontainers.image.title=Twitch ColorChanger Bot
             org.opencontainers.image.description=Multi-user Twitch chat color changer bot
             org.opencontainers.image.vendor=realAbitbol
             org.opencontainers.image.licenses=GPL-3.0
+
+      - name: Set build metadata
+        id: build_meta
+        run: |
+          echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+          echo "vcs_ref=${GITHUB_SHA}" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -91,6 +98,9 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VCS_REF=${{ steps.build_meta.outputs.vcs_ref }}
+            BUILD_DATE=${{ steps.build_meta.outputs.build_date }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: true
