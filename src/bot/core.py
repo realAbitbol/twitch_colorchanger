@@ -399,6 +399,18 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                 "bot", "connect_failed", level=logging.ERROR, user=self.username
             )
             return False
+        # Ensure EventSub backend receives token updates after refreshes
+        try:
+            if self.token_manager:
+                self.token_manager.register_eventsub_backend(self.username, backend)
+        except Exception as e:  # noqa: BLE001
+            logger.log_event(
+                "bot",
+                "eventsub_backend_register_error",
+                level=20,
+                user=self.username,
+                error=str(e),
+            )
         logger.log_event("bot", "listener_start", user=self.username, level=10)
         return True
 

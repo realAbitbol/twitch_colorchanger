@@ -46,6 +46,7 @@
     "error_changing_color_internal": "💥 Error changing color user={user}: {error}",
     "flush_pending_updates_error": "⚠️ Error flushing pending config updates user={user}: {error}",
     "get_current_color_error": "💥 Error getting current color user={user}: {error}",
+  "eventsub_backend_register_error": "⚠️ Failed to register EventSub backend for token propagation user={user}: {error}",
     "initialized_color": "🎨 Initialized with current color {color} user={user}",
     "irc_auth_refresh_error": "💥 Error refreshing tokens after IRC auth failure user={user}: {error}",
     "irc_auth_refresh_success": "✅ Token refreshed after IRC auth failure user={user}",
