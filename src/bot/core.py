@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover
     from ..color import ColorChangeService
+    from ..color.models import ColorRequestResult  # forward ref for type hints
     from ..token.manager import TokenManager
 
 import aiohttp
@@ -614,6 +615,57 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                 error=str(e),
             )
             return None
+
+    # --- Color change low-level request (expected by ColorChangeService) ---
+    async def _perform_color_request(
+        self, params: dict[str, Any], *, action: str
+    ) -> ColorRequestResult:  # noqa: D401
+        """Issue a raw color change (PUT chat/color) returning structured result.
+
+        This restores the method expected by ColorChangeService._issue_request.
+        It encapsulates: rate limit accounting, status classification, logging
+        of certain error diagnostics, and payload capture for later snippets.
+        """
+        from ..color.models import (  # local import
+            ColorRequestResult,
+            ColorRequestStatus,
+        )
+
+        await self.rate_limiter.wait_if_needed(action, is_user_request=True)
+        try:
+            data, status_code, headers = await self.api.request(
+                "PUT",
+                CHAT_COLOR_ENDPOINT,
+                access_token=self.access_token,
+                client_id=self.client_id,
+                params=params,
+            )
+            self._last_color_change_payload = data if isinstance(data, dict) else None
+            self.rate_limiter.update_from_headers(headers, is_user_request=True)
+
+            # Success codes (Twitch may return 204 No Content or 200 OK)
+            if status_code in (200, 204):
+                return ColorRequestResult(
+                    ColorRequestStatus.SUCCESS, http_status=status_code
+                )
+            if status_code == 401:
+                return ColorRequestResult(
+                    ColorRequestStatus.UNAUTHORIZED, http_status=status_code
+                )
+            if status_code == 429:
+                return ColorRequestResult(
+                    ColorRequestStatus.RATE_LIMIT, http_status=status_code
+                )
+            # Generic HTTP failure
+            return ColorRequestResult(
+                ColorRequestStatus.HTTP_ERROR,
+                http_status=status_code,
+                error=self._extract_color_error_snippet(),
+            )
+        except TimeoutError as e:  # network timeout
+            return ColorRequestResult(ColorRequestStatus.TIMEOUT, error=str(e))
+        except Exception as e:  # noqa: BLE001
+            return ColorRequestResult(ColorRequestStatus.INTERNAL_ERROR, error=str(e))
 
     async def _on_irc_auth_failure(self) -> None:
         if not self.token_manager:
