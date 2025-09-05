@@ -79,6 +79,10 @@ coverage.xml
 *.cover
 *.py,cover
 .hypothesis/
+tests/
+
+# Source helper scripts not needed in runtime image
+scripts/
 
 # Linting and formatting caches
 .ruff_cache/
