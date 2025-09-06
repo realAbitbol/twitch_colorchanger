@@ -71,12 +71,14 @@ Automatically change your Twitch username color after each message you send in c
 
 ## Features
 
+
 ### Core Features
 
 - **🎨 Dynamic Color Changes**: Automatically changes your Twitch chat color after every message
 - **👥 Multi-User Support**: Run multiple bots for different Twitch accounts simultaneously
 - **🎲 Flexible Colors**: Supports both preset Twitch colors and random hex colors (Prime/Turbo users)
 - **🔄 Universal Compatibility**: Works with Chatterino, web chat, or any IRC client
+- **🔌 Modern Chat Backend Support**: Supports both EventSub WebSocket (recommended, more modern) and legacy IRC as chat backends. EventSub is the default and preferred for new deployments.
 - **🔑 Automatic Token Setup**: Smart token management with automatic authorization flow - just provide client credentials!
 - **🔄 Token Refresh**: Automatic token validation and refresh with fallback to authorization flow when needed
 - **🐳 Docker Ready**: Multi-platform support (amd64, arm64, arm/v7, arm/v6, riscv64)
@@ -94,9 +96,7 @@ Automatically change your Twitch username color after each message you send in c
 - **✅ Configuration Validation**: Comprehensive validation with detailed error reporting
 - **📊 Rate Limiting**: Smart rate limiting with quota tracking and logging
 - **🔗 IRC Health Monitoring**: Robust connection health tracking with automatic reconnection (600s ping intervals)
-- **📡 Connection Visibility**: Real-time ping/pong monitoring for connection status transparency
 - **🛑 Per-User Disable Switch**: Temporarily pause color cycling without editing files or restarting
-- **🔁 Pluggable Chat Backends**: Switch between modern EventSub WebSocket (default) and legacy IRC
 - **🫧 Idle Keepalive (Low Impact)**: After successful periodic token validation the bot may issue a lightweight GET of the current chat color if you've been idle (no messages) for a configurable period (default 600s) to keep internal state fresh and surface token/API issues early without sending redundant PUT color changes.
 
 ---
