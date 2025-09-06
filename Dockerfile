@@ -1,5 +1,22 @@
 # syntax=docker/dockerfile:1.7-labs
 ARG PYTHON_VERSION=3.13-alpine
+
+# Builder stage: build wheels for all dependencies (compile C-exts when needed)
+FROM python:${PYTHON_VERSION} AS builder
+WORKDIR /app
+ARG TARGETARCH
+COPY requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip && \
+    if [ "$TARGETARCH" = "riscv64" ]; then \
+        apk add --no-cache --virtual .build-deps gcc musl-dev python3-dev; \
+    fi && \
+    pip wheel -r requirements.txt -w /app/wheels && \
+    if [ "$TARGETARCH" = "riscv64" ]; then \
+        apk del .build-deps; \
+    fi
+
+# Runtime stage: minimal image, install from prebuilt wheels only
 FROM python:${PYTHON_VERSION} AS runtime
 
 # Optional build metadata passed from CI (safe defaults if not provided)
@@ -21,21 +38,11 @@ RUN addgroup -g 1000 -S appgroup \
 
 WORKDIR /app
 
-# System deps only when needed (riscv64 edge case). Keep layer small.
-ARG TARGETARCH
+# Install app dependencies from wheels (no compiler in final image)
+COPY --from=builder /app/wheels /wheels
+COPY requirements.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip && \
-    if [ "$TARGETARCH" = "riscv64" ]; then \
-        apk add --no-cache --virtual .build-deps gcc musl-dev python3-dev; \
-    fi
-
-# Copy dependency spec first for better build caching
-COPY requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-compile -r requirements.txt && \
-    if [ "$TARGETARCH" = "riscv64" ]; then \
-        apk del .build-deps; \
-    fi
+    pip install --no-index --find-links=/wheels --no-compile -r requirements.txt
 
 # Copy source
 COPY --chown=appuser:appgroup src/ ./src/
