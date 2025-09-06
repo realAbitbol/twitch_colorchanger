@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -17,7 +17,7 @@ class NoopClient:
         r.outcome = TokenOutcome.SKIPPED if not force else TokenOutcome.REFRESHED
         r.access_token = access if not force else access + "X"
         r.refresh_token = refresh if not force else refresh + "X"
-        r.expiry = datetime.now() + timedelta(minutes=5)
+        r.expiry = datetime.now(UTC) + timedelta(minutes=5)
         return r
 
 @pytest.mark.asyncio
@@ -35,7 +35,7 @@ async def test_concurrent_forced_and_natural_refresh(monkeypatch):
     tm._update_hooks = {}
     tm._hook_tasks = []
 
-    info = TokenInfo("user", "A", "R", "cid", "csec", datetime.now()+timedelta(seconds=2))
+    info = TokenInfo("user", "A", "R", "cid", "csec", datetime.now(UTC)+timedelta(seconds=2))
     tm.tokens["user"] = info
     client = NoopClient()
     monkeypatch.setattr(tm, "_get_client", lambda cid, cs: client)

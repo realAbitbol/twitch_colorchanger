@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -20,7 +20,7 @@ class DummyClient:
         r.outcome = TokenOutcome.REFRESHED
         r.access_token = self.new_access
         r.refresh_token = self.new_refresh
-        r.expiry = datetime.now() + timedelta(hours=1)
+        r.expiry = datetime.now(UTC) + timedelta(hours=1)
         return r
 
 @pytest.mark.asyncio
@@ -47,7 +47,7 @@ async def test_single_update_hook_invocation(monkeypatch):
         refresh_token="oldR",
         client_id="cid",
         client_secret="csec",
-        expiry=datetime.now() + timedelta(seconds=10),
+        expiry=datetime.now(UTC) + timedelta(seconds=10),
     )
     tm.tokens["u"] = info
     dummy = DummyClient("newA", "newR")

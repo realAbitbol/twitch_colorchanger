@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import aiohttp
 
@@ -60,7 +60,7 @@ class TokenProvisioner:
             expiry = None
             if lifetime:
                 safe = max(lifetime - TOKEN_REFRESH_SAFETY_BUFFER_SECONDS, 0)
-                expiry = datetime.now() + timedelta(seconds=safe)
+                expiry = datetime.now(UTC) + timedelta(seconds=safe)
             logger.log_event(
                 "token",
                 "device_authorized",

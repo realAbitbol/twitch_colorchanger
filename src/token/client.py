@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 
 import aiohttp
@@ -58,7 +58,7 @@ class TokenClient:
         if (
             not force_refresh
             and expiry
-            and (expiry - datetime.now()).total_seconds()
+            and (expiry - datetime.now(UTC)).total_seconds()
             > TOKEN_REFRESH_THRESHOLD_SECONDS
         ):
             return TokenResult(
@@ -73,7 +73,7 @@ class TokenClient:
                 final_expiry = remote_expiry or expiry
                 if (
                     final_expiry
-                    and (final_expiry - datetime.now()).total_seconds()
+                    and (final_expiry - datetime.now(UTC)).total_seconds()
                     > TOKEN_REFRESH_THRESHOLD_SECONDS
                 ):
                     return TokenResult(
@@ -113,7 +113,7 @@ class TokenClient:
                         safe_expires = max(
                             expires_in - TOKEN_REFRESH_SAFETY_BUFFER_SECONDS, 0
                         )
-                        expiry = datetime.now() + timedelta(seconds=safe_expires)
+                        expiry = datetime.now(UTC) + timedelta(seconds=safe_expires)
                     human_expires = format_duration(expires_in)
                     logger.log_event(
                         "token",
@@ -202,7 +202,7 @@ class TokenClient:
                         safe_expires = max(
                             expires_in - TOKEN_REFRESH_SAFETY_BUFFER_SECONDS, 0
                         )
-                        expiry = datetime.now() + timedelta(seconds=safe_expires)
+                        expiry = datetime.now(UTC) + timedelta(seconds=safe_expires)
                         logger.log_event(
                             "token",
                             "validated",
