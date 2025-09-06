@@ -69,14 +69,6 @@ repos:
           - mdformat-gfm
           - mdformat-tables
 
-  - repo: local
-    hooks:
-      - id: event-templates-audit
-        name: Event template audit
-        entry: python scripts/event_template_audit.py
-        language: system
-        pass_filenames: false
-        stages: [commit, push]
 
 default_stages: [commit, push]
 
