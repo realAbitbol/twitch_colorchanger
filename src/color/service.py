@@ -284,7 +284,7 @@ class ColorChangeService:
             try:
                 self.bot._hex_rejection_strikes = 0
                 logger.log_event(
-                    "bot", "hex_color_strikes_reset", user=self.bot.username
+                    "bot", "hex_color_strikes_reset", level=10, user=self.bot.username
                 )
             except Exception as e:  # noqa: BLE001
                 # Use existing template at WARN level and include exception context
