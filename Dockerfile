@@ -12,6 +12,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         apk add --no-cache --virtual .build-deps gcc musl-dev python3-dev; \
     fi && \
     pip wheel -r requirements.txt -w /app/wheels && \
+    # Strip all .so files in built wheels (if any)
+    find /app/wheels -name '*.so' -exec strip --strip-unneeded {} + || true && \
     if [ "$TARGETARCH" = "riscv64" ]; then \
         apk del .build-deps; \
     fi
@@ -42,7 +44,8 @@ WORKDIR /app
 COPY --from=builder /app/wheels /wheels
 COPY requirements.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-index --find-links=/wheels --no-compile -r requirements.txt
+    pip install --no-index --find-links=/wheels --no-compile -r requirements.txt && \
+    pip uninstall -y pip setuptools wheel
 
 # Copy source
 COPY --chown=appuser:appgroup src/ ./src/
@@ -54,6 +57,7 @@ USER appuser
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONOPTIMIZE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     TWITCH_CONF_FILE=/app/config/twitch_colorchanger.conf \
