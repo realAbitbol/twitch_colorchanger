@@ -479,9 +479,28 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             return
         self._last_activity_ts = time.time()
         self.stats.messages_sent += 1
-        msg_lower = message.strip().lower()
+        raw = message.strip()
+        msg_lower = raw.lower()
         handled = await self._maybe_handle_toggle(msg_lower)
         if handled:
+            return
+        # Direct color command: "ccc <color>" (preset or hex, case-insensitive).
+        # This command should work even if auto color change is disabled.
+        if msg_lower.startswith("ccc"):
+            parts = raw.split(None, 1)
+            if len(parts) == 2:
+                desired = self._normalize_color_arg(parts[1])
+                if desired:
+                    await self._change_color(desired)
+                    return
+            # If malformed or invalid arg, emit an informational log.
+            try:
+                arg_val = parts[1] if len(parts) == 2 else ""
+            except Exception:  # pragma: no cover - defensive
+                arg_val = ""
+            logger.log_event(
+                "bot", "ccc_invalid_argument", user=self.username, arg=arg_val
+            )
             return
         if self._is_color_change_allowed():
             await self._change_color()
@@ -491,6 +510,34 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
 
     def _is_color_change_allowed(self) -> bool:
         return bool(getattr(self, "enabled", True))
+
+    @staticmethod
+    def _normalize_color_arg(arg: str) -> str | None:
+        """Normalize a user-supplied color argument.
+
+        Accepts preset names (case-insensitive) or hex with or without leading '#'.
+        Returns a normalized string: preset name in lowercase, or '#rrggbb'.
+        """
+        from ..color.utils import TWITCH_PRESET_COLORS  # local import
+
+        s = arg.strip()
+        if not s:
+            return None
+        s_nohash = s[1:] if s.startswith(("#", "#")) else s
+        lower = s_nohash.lower()
+        # Preset name match
+        if lower in {c.lower() for c in TWITCH_PRESET_COLORS}:
+            return lower
+        # Hex validation (3 or 6 chars)
+        import re
+
+        if re.fullmatch(r"[0-9a-fA-F]{6}", lower):
+            return f"#{lower}"
+        if re.fullmatch(r"[0-9a-fA-F]{3}", lower):
+            # Expand shorthand (#abc -> #aabbcc)
+            expanded = "".join(ch * 2 for ch in lower)
+            return f"#{expanded}"
+        return None
 
     async def _maybe_handle_toggle(self, msg_lower: str) -> bool:
         """Handle enable/disable commands; return True if processed."""
