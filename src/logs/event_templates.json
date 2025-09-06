@@ -428,7 +428,7 @@
     "startup_validated_ok": "✅ Startup validated token user={user} remaining={remaining}s",
     "startup_validation_forced_refresh": "🔄 Startup validation failed forcing refresh outcome={refresh_outcome} user={user}",
   "startup_validation_error": "⚠️ Startup validation error user={user} type={error_type} error={error}",
-  "periodic_validation_ok": "✅ Periodic remote token validation ok for user {user} ({remaining_human} remaining, {remaining_seconds}s)",
+  "periodic_validation_ok": "✅ Periodic remote token validation ok for user {user} ({remaining_human} remaining)",
   "periodic_validation_failed": "❌ Periodic remote token validation failed for user {user} ({remaining_human} remaining pre-refresh, {remaining_seconds}s)",
   "periodic_validation_error": "⚠️ Periodic remote token validation error for user {user} type={error_type} error={error}",
   "periodic_validation_forced_refresh": "🔄 Forced refresh after failed periodic remote validation for user {user} outcome={refresh_outcome} ({new_remaining_human} remaining, {new_remaining_seconds}s)",

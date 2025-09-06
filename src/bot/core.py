@@ -588,13 +588,15 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             )
 
     async def _check_and_refresh_token(self, force: bool = False) -> bool:
-        if not self.token_manager:
+        # Use attached TokenManager if available; otherwise fall back to context
+        tm = self.token_manager or getattr(self.context, "token_manager", None)
+        if not tm:
             return False
+        # Cache for subsequent calls
+        self.token_manager = tm
         try:
-            outcome = await self.token_manager.ensure_fresh(
-                self.username, force_refresh=force
-            )
-            info = self.token_manager.get_info(self.username)
+            outcome = await tm.ensure_fresh(self.username, force_refresh=force)
+            info = tm.get_info(self.username)
             if info and info.access_token:
                 if info.access_token != self.access_token:
                     self.access_token = info.access_token
@@ -844,6 +846,18 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                     user=self.username,
                     enabled=enabled,
                 )
+                # If keepalive returns no color, force a token refresh and let
+                # TokenManager propagate/persist via its update hook.
+                try:
+                    await self._check_and_refresh_token(force=True)
+                except Exception as e:  # noqa: BLE001
+                    logger.log_event(
+                        "token_manager",
+                        "keepalive_callback_error",
+                        user=self.username,
+                        level=logging.DEBUG,
+                        error=str(e),
+                    )
         except Exception as e:  # noqa: BLE001
             logger.log_event(
                 "bot",
