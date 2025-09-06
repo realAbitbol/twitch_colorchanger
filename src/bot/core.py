@@ -485,22 +485,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         if handled:
             return
         # Direct color command: "ccc <color>" (preset or hex, case-insensitive).
-        # This command should work even if auto color change is disabled.
-        if msg_lower.startswith("ccc"):
-            parts = raw.split(None, 1)
-            if len(parts) == 2:
-                desired = self._normalize_color_arg(parts[1])
-                if desired:
-                    await self._change_color(desired)
-                    return
-            # If malformed or invalid arg, emit an informational log.
-            try:
-                arg_val = parts[1] if len(parts) == 2 else ""
-            except Exception:  # pragma: no cover - defensive
-                arg_val = ""
-            logger.log_event(
-                "bot", "ccc_invalid_argument", user=self.username, arg=arg_val
-            )
+        if await self._maybe_handle_ccc(raw, msg_lower):
             return
         if self._is_color_change_allowed():
             await self._change_color()
@@ -510,6 +495,36 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
 
     def _is_color_change_allowed(self) -> bool:
         return bool(getattr(self, "enabled", True))
+
+    async def _maybe_handle_ccc(self, raw: str, msg_lower: str) -> bool:
+        """Handle the ccc command and return True if processed.
+
+        Behavior:
+        - Accepts presets and hex (#rrggbb or 3-digit) case-insensitively.
+        - Works even if auto mode is disabled.
+        - If user is non-Prime/Turbo (use_random_colors=False), hex is ignored and an
+          info event is logged.
+        - Invalid/missing argument yields an info event and no action.
+        """
+        if not msg_lower.startswith("ccc"):
+            return False
+        parts = raw.split(None, 1)
+        if len(parts) != 2:
+            logger.log_event("bot", "ccc_invalid_argument", user=self.username, arg="")
+            return True
+        desired = self._normalize_color_arg(parts[1])
+        if not desired:
+            logger.log_event(
+                "bot", "ccc_invalid_argument", user=self.username, arg=parts[1]
+            )
+            return True
+        if desired.startswith("#") and not getattr(self, "use_random_colors", True):
+            logger.log_event(
+                "bot", "ccc_hex_ignored_nonprime", user=self.username, color=desired
+            )
+            return True
+        await self._change_color(desired)
+        return True
 
     @staticmethod
     def _normalize_color_arg(arg: str) -> str | None:
