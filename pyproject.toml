@@ -140,7 +140,7 @@ max-complexity = 10
 
 [tool.ruff.lint.isort]
 known-first-party = ["src"]
-known-third-party = ["aiohttp", "httpx", "watchdog"]
+known-third-party = ["aiohttp", "watchdog"]
 
 # Markdown formatting
 [tool.mdformat]
