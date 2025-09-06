@@ -402,17 +402,9 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             btype.value, http_session=self.context.session
         )
         backend = self.chat_backend
+        # Route all messages (including commands like !rip) through a single handler
+        # to avoid double triggers; do not attach a separate color_change_handler.
         backend.set_message_handler(self.handle_irc_message)
-        try:
-            backend.set_color_change_handler(self.handle_irc_message)
-        except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "bot",
-                "color_handler_attach_error",
-                level=logging.DEBUG,
-                user=self.username,
-                error=str(e),
-            )
         connected = await backend.connect(
             self.access_token,
             self.username,
