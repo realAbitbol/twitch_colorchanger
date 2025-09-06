@@ -20,7 +20,6 @@ classifiers = [
 dependencies = []  # Runtime deps still managed via requirements.txt; can be migrated later.
 
 [project.scripts]
-event-templates-audit = "scripts.event_template_audit:main"
 
 # Optional: development dependency group (empty placeholder for future)
 [project.optional-dependencies]
