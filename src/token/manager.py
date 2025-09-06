@@ -551,7 +551,7 @@ class TokenManager:
         # If the loop drifted, give ourselves more headroom by doubling threshold.
         if force_proactive:
             trigger_threshold *= 2
-        if remaining < trigger_threshold:
+        if remaining <= trigger_threshold:
             # If drift triggered and we're only refreshing early due to doubled threshold,
             # force the refresh so _should_skip_refresh does not ignore it.
             if force_proactive and remaining > TOKEN_REFRESH_THRESHOLD_SECONDS:

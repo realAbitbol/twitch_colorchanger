@@ -867,6 +867,17 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                 enabled=enabled,
                 error=str(e),
             )
+            # If keepalive fails, force a token refresh to surface issues early.
+            try:
+                await self._check_and_refresh_token(force=True)
+            except Exception as e2:  # noqa: BLE001
+                logger.log_event(
+                    "token_manager",
+                    "keepalive_callback_error",
+                    user=self.username,
+                    level=logging.DEBUG,
+                    error=str(e2),
+                )
 
     def _extract_color_error_snippet(self) -> str | None:
         try:  # pragma: no cover - defensive
