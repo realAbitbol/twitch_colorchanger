@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7-labs
 ARG PYTHON_VERSION=3.13-alpine
 FROM python:${PYTHON_VERSION} AS runtime
 
@@ -21,23 +22,26 @@ RUN addgroup -g 1000 -S appgroup \
 WORKDIR /app
 
 # System deps only when needed (riscv64 edge case). Keep layer small.
-RUN pip install --no-cache-dir --upgrade pip && \
-    if [ "$(uname -m)" = "riscv64" ]; then \
+ARG TARGETARCH
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip && \
+    if [ "$TARGETARCH" = "riscv64" ]; then \
         apk add --no-cache --virtual .build-deps gcc musl-dev python3-dev; \
     fi
 
 # Copy dependency spec first for better build caching
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && \
-    if [ "$(uname -m)" = "riscv64" ]; then \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-compile -r requirements.txt && \
+    if [ "$TARGETARCH" = "riscv64" ]; then \
         apk del .build-deps; \
     fi
 
 # Copy source
-COPY src/ ./src/
+COPY --chown=appuser:appgroup src/ ./src/
 
 # Prepare config directory and adjust ownership
-RUN mkdir -p /app/config && chown -R appuser:appgroup /app
+RUN mkdir -p /app/config && chown appuser:appgroup /app/config
 
 USER appuser
 
