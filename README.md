@@ -259,6 +259,7 @@ Control a bot from any joined channel using messages sent by the bot's own accou
 |---------|--------|
 | `ccd`   | Disable automatic color changes (persists) |
 | `cce`   | Enable automatic color changes (persists)  |
+| `ccc <color>` | Immediately set color to a specific value (works even when auto is disabled). `<color>` may be a Twitch preset (case-insensitive, e.g., `red`, `Sea_Green`) or a hex color with or without `#` (e.g., `#a1b2c3`, `ABC` which expands to `#aabbcc`). |
 
 Behavior:
 
@@ -266,6 +267,7 @@ Behavior:
 - Survives restarts (state restored on load)
 - Only reacts to the bot user's own messages
 - Disabling pauses API color calls but keeps all connections and stats active
+- `ccc <color>` bypasses the enable/disable toggle and always attempts a change
 
 Tip: Use `DEBUG=true` to see `auto_color_enabled` / `auto_color_disabled` events.
 

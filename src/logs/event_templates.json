@@ -96,6 +96,7 @@
   "hex_color_strikes_reset": "♻️ Hex color rejection strikes reset user={user}",
   "persist_prime_detection_disable": "💾 Persisted Turbo/Prime detection (disabled random hex) user={user}",
   "persist_prime_detection_error": "⚠️ Persist Turbo/Prime detection error user={user}: {error}"
+  ,"ccc_invalid_argument": "ℹ️ Ignoring invalid ccc argument user={user} arg={arg}"
   },
   "config": {
     "channel_normalization_change": "🛠️ Channel normalization change {original}->{normalized}",
