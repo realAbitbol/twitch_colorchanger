@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import aiohttp
 
@@ -29,7 +29,7 @@ def test_keepalive_callback_fires_on_periodic_validation():  # type: ignore[no-u
                 refresh_token="rtk",
                 client_id="cid",
                 client_secret="csec",
-                expiry=datetime.now() + timedelta(hours=2),
+                expiry=datetime.now(UTC) + timedelta(hours=2),
             )
             # Force last validation far enough in past to trigger periodic branch
             info.last_validation = now - TOKEN_MANAGER_PERIODIC_VALIDATION_INTERVAL - 5
@@ -70,7 +70,7 @@ def test_keepalive_callback_not_fired_when_recent():  # type: ignore[no-untyped-
                 refresh_token="rtk",
                 client_id="cid",
                 client_secret="csec",
-                expiry=datetime.now() + timedelta(hours=2),
+                expiry=datetime.now(UTC) + timedelta(hours=2),
             )
             # Last validation very recent -> should skip periodic path
             info.last_validation = time.time() - 5

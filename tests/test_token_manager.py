@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import aiohttp
 import pytest
@@ -30,7 +30,7 @@ class DummyTokenClient(TokenClient):
     ) -> TokenResult:
         self.refresh_calls.append(username + ("!" if force_refresh else ""))
         if self._scenario == "refresh_success":
-            new_expiry = datetime.now() + timedelta(seconds=3600)
+            new_expiry = datetime.now(UTC) + timedelta(seconds=3600)
             return TokenResult(TokenOutcome.REFRESHED, access_token + "X", refresh_token or "r", new_expiry)
         if self._scenario == "refresh_fail":
             return TokenResult(TokenOutcome.FAILED, None, None, None)
@@ -39,10 +39,10 @@ class DummyTokenClient(TokenClient):
     async def _validate_remote(self, username: str, access_token: str):  # type: ignore[override]
         self.validate_calls.append(username)
         if self._scenario == "valid":
-            return True, datetime.now() + timedelta(seconds=4000)
+            return True, datetime.now(UTC) + timedelta(seconds=4000)
         if self._scenario == "invalid":
             return False, None
-        return True, datetime.now() + timedelta(seconds=100)
+        return True, datetime.now(UTC) + timedelta(seconds=100)
 
 
 @pytest.mark.asyncio
@@ -51,7 +51,7 @@ async def test_startup_initial_validation_refresh(monkeypatch):
     async with aiohttp.ClientSession() as session:
         tm = TokenManager(session)
         tm.tokens.clear()
-        near_expiry = datetime.now() + timedelta(seconds=10)
+        near_expiry = datetime.now(UTC) + timedelta(seconds=10)
         tm._upsert_token_info("alice", "atk", "rtk", "cid", "csec", near_expiry)
 
         dummy = DummyTokenClient()
@@ -72,7 +72,7 @@ async def test_force_refresh_path(monkeypatch):
     async with aiohttp.ClientSession() as session:
         tm = TokenManager(session)
         tm.tokens.clear()
-        expiry = datetime.now() + timedelta(seconds=5000)
+        expiry = datetime.now(UTC) + timedelta(seconds=5000)
         tm._upsert_token_info("bob", "atk2", "rtk2", "cid", "csec", expiry)
         dummy = DummyTokenClient()
         dummy.prime("refresh_success")
@@ -87,7 +87,7 @@ async def test_failed_refresh_marks_state(monkeypatch):
     async with aiohttp.ClientSession() as session:
         tm = TokenManager(session)
         tm.tokens.clear()
-        expiry = datetime.now() - timedelta(seconds=5)
+        expiry = datetime.now(UTC) - timedelta(seconds=5)
         info = tm._upsert_token_info("carol", "tok", "rtok", "cid", "csec", expiry)
         dummy = DummyTokenClient()
         dummy.prime("refresh_fail")
@@ -103,7 +103,7 @@ async def test_register_update_hook_fires(monkeypatch):
     async with aiohttp.ClientSession() as session:
         tm = TokenManager(session)
         tm.tokens.clear()
-        expiry = datetime.now() + timedelta(seconds=1)
+        expiry = datetime.now(UTC) + timedelta(seconds=1)
         tm._upsert_token_info("dan", "tokd", "rtokd", "cid", "csec", expiry)
         dummy = DummyTokenClient()
         dummy.prime("refresh_success")
@@ -129,8 +129,8 @@ async def test_prune_removes_inactive_users():
     async with aiohttp.ClientSession() as session:
         tm = TokenManager(session)
         tm.tokens.clear()
-        tm._upsert_token_info("eve", "tok", "rtok", "cid", "csec", datetime.now())
-        tm._upsert_token_info("frank", "tok2", "rtok2", "cid", "csec", datetime.now())
+        tm._upsert_token_info("eve", "tok", "rtok", "cid", "csec", datetime.now(UTC))
+        tm._upsert_token_info("frank", "tok2", "rtok2", "cid", "csec", datetime.now(UTC))
         removed = tm.prune({"eve"})
         assert removed == 1
         assert tm.get_info("frank") is None

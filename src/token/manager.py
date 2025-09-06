@@ -287,7 +287,7 @@ class TokenManager:
             )
             self.tokens[username] = info
             if expiry:
-                remaining = int((expiry - datetime.now()).total_seconds())
+                remaining = int((expiry - datetime.now(UTC)).total_seconds())
                 if remaining > 0:
                     info.original_lifetime = remaining
         else:
@@ -298,7 +298,7 @@ class TokenManager:
             info.expiry = expiry
             info.state = TokenState.FRESH
             if expiry and info.original_lifetime is None:
-                remaining = int((expiry - datetime.now()).total_seconds())
+                remaining = int((expiry - datetime.now(UTC)).total_seconds())
                 if remaining > 0:
                     info.original_lifetime = remaining
         return info
@@ -409,7 +409,7 @@ class TokenManager:
         )
         # If we actually performed a refresh (new token lifetime), reset baseline.
         if result.outcome == TokenOutcome.REFRESHED and info.expiry:
-            remaining = int((info.expiry - datetime.now()).total_seconds())
+            remaining = int((info.expiry - datetime.now(UTC)).total_seconds())
             if remaining > 0:
                 info.original_lifetime = remaining
 
@@ -491,7 +491,7 @@ class TokenManager:
     def _remaining_seconds(self, info: TokenInfo) -> float | None:
         if not info.expiry:
             return None
-        return (info.expiry - datetime.now()).total_seconds()
+        return (info.expiry - datetime.now(UTC)).total_seconds()
 
     async def _background_refresh_loop(self) -> None:
         base = TOKEN_MANAGER_BACKGROUND_BASE_SLEEP

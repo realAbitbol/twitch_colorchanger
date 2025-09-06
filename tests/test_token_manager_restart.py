@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import aiohttp
 import pytest
@@ -15,7 +15,7 @@ async def test_manager_restart_cancels_old_background(monkeypatch):
     async with aiohttp.ClientSession() as session:
         tm = TokenManager(session)
         tm.tokens.clear()
-        expiry = datetime.now() + timedelta(seconds=4000)
+        expiry = datetime.now(UTC) + timedelta(seconds=4000)
         tm._upsert_token_info("rst", "atk", "rtk", "cid", "csec", expiry)
 
     # Normal start

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import aiohttp
 import pytest
@@ -32,14 +32,14 @@ class PeriodicDummyClient(TokenClient):
         # Only simulate real refresh when forced and configured
         if force_refresh and self.refresh_on_force and refresh_token:
             self.refresh_calls += 1
-            new_expiry = datetime.now() + timedelta(seconds=4000)
+            new_expiry = datetime.now(UTC) + timedelta(seconds=4000)
             return TokenResult(TokenOutcome.REFRESHED, access_token + "R", refresh_token, new_expiry)
         return TokenResult(TokenOutcome.VALID, access_token, refresh_token, expiry)
 
     async def _validate_remote(self, username: str, access_token: str):  # type: ignore[override]
         self.validate_calls += 1
         if self.validate_outcome:
-            return True, datetime.now() + timedelta(seconds=2000)
+            return True, datetime.now(UTC) + timedelta(seconds=2000)
         return False, None
 
 
@@ -54,7 +54,7 @@ async def test_periodic_validation_triggers_refresh(monkeypatch):
         tm = TokenManager(session)
         tm.tokens.clear()
         # Token with known expiry far enough to skip proactive immediate refresh
-        expiry = datetime.now() + timedelta(seconds=5000)
+        expiry = datetime.now(UTC) + timedelta(seconds=5000)
         tm._upsert_token_info("puser", "acc", "ref", "cid", "csec", expiry)
 
         dummy = PeriodicDummyClient()
@@ -82,7 +82,7 @@ async def test_periodic_validation_success_no_refresh(monkeypatch):
     async with aiohttp.ClientSession() as session:
         tm = TokenManager(session)
         tm.tokens.clear()
-        expiry = datetime.now() + timedelta(seconds=5000)
+        expiry = datetime.now(UTC) + timedelta(seconds=5000)
         tm._upsert_token_info("puser2", "acc2", "ref2", "cid", "csec", expiry)
 
         dummy = PeriodicDummyClient()

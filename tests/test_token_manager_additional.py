@@ -1,7 +1,7 @@
 import asyncio
 import contextlib
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -67,7 +67,7 @@ async def test_unknown_expiry_success_resets_attempts(monkeypatch):
         await asyncio.sleep(0)
         # Simulate success by setting expiry during first call
         if tm.tokens[username].expiry is None:
-            tm.tokens[username].expiry = datetime.now() + timedelta(seconds=30)
+            tm.tokens[username].expiry = datetime.now(UTC) + timedelta(seconds=30)
         return TokenOutcome.REFRESHED
 
     monkeypatch.setattr(tm, "ensure_fresh", fake_ensure)  # type: ignore[arg-type]
@@ -81,14 +81,14 @@ async def test_unknown_expiry_success_resets_attempts(monkeypatch):
 async def test_periodic_validation_success(monkeypatch):
     tm = _fresh_manager(monkeypatch)
     info = TokenInfo(
-        "u", "A", "R", "cid", "csec", datetime.now() + timedelta(seconds=50)
+        "u", "A", "R", "cid", "csec", datetime.now(UTC) + timedelta(seconds=50)
     )
     info.last_validation = 0  # ensure interval elapsed
     tm.tokens["u"] = info
 
     async def fake_validate(username):  # noqa: ARG001
         await asyncio.sleep(0)
-        info.expiry = datetime.now() + timedelta(seconds=60)
+        info.expiry = datetime.now(UTC) + timedelta(seconds=60)
         return TokenOutcome.VALID
 
     monkeypatch.setattr(tm, "validate", fake_validate)  # type: ignore[arg-type]
@@ -101,7 +101,7 @@ async def test_periodic_validation_success(monkeypatch):
 async def test_periodic_validation_failure_forced_refresh(monkeypatch):
     tm = _fresh_manager(monkeypatch)
     info = TokenInfo(
-        "u", "A", "R", "cid", "csec", datetime.now() + timedelta(seconds=50)
+        "u", "A", "R", "cid", "csec", datetime.now(UTC) + timedelta(seconds=50)
     )
     info.last_validation = 0
     tm.tokens["u"] = info
@@ -131,7 +131,7 @@ async def test_periodic_validation_failure_forced_refresh(monkeypatch):
 async def test_periodic_validation_error_logged(monkeypatch, caplog):
     tm = _fresh_manager(monkeypatch)
     info = TokenInfo(
-        "u", "A", "R", "cid", "csec", datetime.now() + timedelta(seconds=50)
+        "u", "A", "R", "cid", "csec", datetime.now(UTC) + timedelta(seconds=50)
     )
     info.last_validation = 0
     tm.tokens["u"] = info
@@ -160,7 +160,7 @@ async def test_force_proactive_refresh(monkeypatch):
     # Patch threshold to small value for test
     monkeypatch.setattr(mgr_mod, "TOKEN_REFRESH_THRESHOLD_SECONDS", 10, raising=False)
     info = TokenInfo(
-        "u", "A", "R", "cid", "csec", datetime.now() + timedelta(seconds=12)
+        "u", "A", "R", "cid", "csec", datetime.now(UTC) + timedelta(seconds=12)
     )
     tm.tokens["u"] = info
     calls = {"forced": False}
@@ -181,7 +181,7 @@ async def test_force_proactive_refresh(monkeypatch):
 async def test_update_hook_error_logged(monkeypatch, caplog):
     tm = _fresh_manager(monkeypatch)
     info = TokenInfo(
-        "u", "A", "R", "cid", "csec", datetime.now() + timedelta(seconds=5)
+        "u", "A", "R", "cid", "csec", datetime.now(UTC) + timedelta(seconds=5)
     )
     tm.tokens["u"] = info
 
@@ -194,7 +194,7 @@ async def test_update_hook_error_logged(monkeypatch, caplog):
             r.outcome = TokenOutcome.REFRESHED
             r.access_token = "A2"
             r.refresh_token = "R2"
-            r.expiry = datetime.now() + timedelta(seconds=30)
+            r.expiry = datetime.now(UTC) + timedelta(seconds=30)
             return r
 
     monkeypatch.setattr(tm, "_get_client", lambda cid, cs: DummyClient())
@@ -238,7 +238,7 @@ async def test_update_hook_error_logged(monkeypatch, caplog):
 async def test_eventsub_propagation_hook(monkeypatch):
     tm = _fresh_manager(monkeypatch)
     info = TokenInfo(
-        "u", "A", "R", "cid", "csec", datetime.now() + timedelta(seconds=5)
+        "u", "A", "R", "cid", "csec", datetime.now(UTC) + timedelta(seconds=5)
     )
     tm.tokens["u"] = info
 
@@ -251,7 +251,7 @@ async def test_eventsub_propagation_hook(monkeypatch):
             r.outcome = TokenOutcome.REFRESHED
             r.access_token = "NEW"
             r.refresh_token = "RR"
-            r.expiry = datetime.now() + timedelta(seconds=30)
+            r.expiry = datetime.now(UTC) + timedelta(seconds=30)
             return r
 
     monkeypatch.setattr(tm, "_get_client", lambda cid, cs: DummyClient())
@@ -273,7 +273,7 @@ async def test_eventsub_propagation_hook(monkeypatch):
 @pytest.mark.asyncio
 async def test_start_creates_background_task(monkeypatch):
     tm = _fresh_manager(monkeypatch)
-    info = TokenInfo("u", "A", "R", "cid", "csec", datetime.now() + timedelta(seconds=120))
+    info = TokenInfo("u", "A", "R", "cid", "csec", datetime.now(UTC) + timedelta(seconds=120))
     tm.tokens["u"] = info
     async def fake_initial():
         await asyncio.sleep(0)
@@ -296,7 +296,7 @@ async def test_start_creates_background_task(monkeypatch):
 async def test_validate_success_and_failure(monkeypatch):
     tm = _fresh_manager(monkeypatch)
     info = TokenInfo(
-        "u", "A", "R", "cid", "csec", datetime.now() + timedelta(seconds=120)
+        "u", "A", "R", "cid", "csec", datetime.now(UTC) + timedelta(seconds=120)
     )
     tm.tokens["u"] = info
     # Simulate client returning valid then invalid
@@ -307,7 +307,7 @@ async def test_validate_success_and_failure(monkeypatch):
             await asyncio.sleep(0)
             if seq["step"] == 0:
                 seq["step"] = 1
-                return True, datetime.now() + timedelta(seconds=180)
+                return True, datetime.now(UTC) + timedelta(seconds=180)
             return False, None
 
     monkeypatch.setattr(tm, "_get_client", lambda cid, cs: DummyClient())

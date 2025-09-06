@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import aiohttp
@@ -24,7 +24,7 @@ class SmokeTokenClient(TokenClient):
     async def _validate_remote(self, username: str, access_token: str):  # type: ignore[override]
         self.validate_calls += 1
         # Indicate expiring soon to trigger refresh logic
-        return True, datetime.now() + timedelta(seconds=5)
+        return True, datetime.now(UTC) + timedelta(seconds=5)
 
     async def ensure_fresh(  # type: ignore[override]
         self,
@@ -34,9 +34,9 @@ class SmokeTokenClient(TokenClient):
         expiry: datetime | None,
         force_refresh: bool = False,
     ) -> TokenResult:
-        if force_refresh or (expiry and (expiry - datetime.now()).total_seconds() < 30):
+        if force_refresh or (expiry and (expiry - datetime.now(UTC)).total_seconds() < 30):
             self.refresh_calls += 1
-            new_expiry = datetime.now() + timedelta(seconds=3600)
+            new_expiry = datetime.now(UTC) + timedelta(seconds=3600)
             return TokenResult(TokenOutcome.REFRESHED, access_token + "Z", refresh_token, new_expiry)
         return TokenResult(TokenOutcome.VALID, access_token, refresh_token, expiry)
 
@@ -47,7 +47,7 @@ async def test_end_to_end_smoke(tmp_path: Path, monkeypatch):
         tm = TokenManager(session)
         tm.tokens.clear()
         # Seed a token expiring very soon
-        near_expiry = datetime.now() + timedelta(seconds=2)
+        near_expiry = datetime.now(UTC) + timedelta(seconds=2)
         tm._upsert_token_info("smoke", "atk", "rtk", "cid", "csec", near_expiry)
         dummy = SmokeTokenClient()
         dummy.prime()

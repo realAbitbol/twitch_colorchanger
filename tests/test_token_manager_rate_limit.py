@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import aiohttp
 import pytest
@@ -33,7 +33,7 @@ class RateLimitedValidateClient(TokenClient):
     ) -> TokenResult:
         if force_refresh:
             self.refresh_calls += 1
-            new_expiry = datetime.now() + timedelta(seconds=3600)
+            new_expiry = datetime.now(UTC) + timedelta(seconds=3600)
             return TokenResult(ClientOutcome.REFRESHED, access_token + "N", refresh_token, new_expiry)
         return TokenResult(ClientOutcome.VALID, access_token, refresh_token, expiry)
 
@@ -43,7 +43,7 @@ async def test_rate_limited_validation_leads_to_forced_refresh(monkeypatch):
     async with aiohttp.ClientSession() as session:
         tm = TokenManager(session)
         tm.tokens.clear()
-        expiry = datetime.now() + timedelta(seconds=5000)
+        expiry = datetime.now(UTC) + timedelta(seconds=5000)
         tm._upsert_token_info("rluser", "acc", "ref", "cid", "csec", expiry)
         dummy = RateLimitedValidateClient()
         dummy.prime()

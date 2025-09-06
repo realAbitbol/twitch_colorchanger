@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -69,4 +69,4 @@ async def test_refresh_success_sets_buffered_expiry():
     res = await client.refresh("user", "rtok")
     assert res.outcome == TokenOutcome.REFRESHED
     assert res.expiry is not None
-    assert (res.expiry - datetime.now()).total_seconds() <= 1  # clamped to near now
+    assert (res.expiry - datetime.now(UTC)).total_seconds() <= 1  # clamped to near now
