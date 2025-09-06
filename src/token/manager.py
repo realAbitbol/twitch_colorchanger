@@ -74,8 +74,11 @@ class TokenManager:
         self.running = False
         self.logger = logger
         self._client_cache: dict[tuple[str, str], TokenClient] = {}
-        # Registered per-user async persistence hooks (called after token refresh).
-        self._update_hooks: dict[str, Callable[[], Coroutine[Any, Any, None]]] = {}
+        # Registered per-user async hooks (called after successful token refresh).
+        # Multiple hooks can be registered (e.g., persist + propagate to backends).
+        self._update_hooks: dict[
+            str, list[Callable[[], Coroutine[Any, Any, None]]]
+        ] = {}
         # Retained background tasks (e.g. persistence hooks) to prevent premature GC.
         self._hook_tasks: list[asyncio.Task[Any]] = []
         # Per-user optional keepalive callbacks (async) invoked after successful periodic validation.
@@ -209,10 +212,14 @@ class TokenManager:
     ) -> None:
         """Register a coroutine hook invoked after a successful token refresh.
 
-        The hook should perform persistence of updated tokens. Errors are suppressed
-        at invocation time to avoid disrupting refresh cycles.
+        Hooks are additive (multiple hooks can be registered per user).
+        Each hook is scheduled fire-and-forget after a token change.
         """
-        self._update_hooks[username] = hook
+        lst = self._update_hooks.get(username)
+        if lst is None:
+            self._update_hooks[username] = [hook]
+        else:
+            lst.append(hook)
 
     def register_keepalive_callback(
         self, username: str, hook: Callable[[], Coroutine[Any, Any, None]]
@@ -225,12 +232,18 @@ class TokenManager:
         self._keepalive_callbacks[username] = hook
 
     def register_eventsub_backend(self, username: str, backend: Any) -> None:
-        """Register EventSub chat backend for automatic token propagation.
+        """Register chat backend for automatic token propagation.
 
-        Creates an update hook that calls backend.update_access_token(new_token)
-        after successful refresh. Silently ignored if backend lacks method.
+        - If backend has update_access_token(new_token), prefer that.
+        - Else if backend has update_token(new_token), use that.
+        Silently do nothing if neither is available.
         """
-        if not hasattr(backend, "update_access_token"):
+        propagate_attr = None
+        if hasattr(backend, "update_access_token"):
+            propagate_attr = "update_access_token"
+        elif hasattr(backend, "update_token"):
+            propagate_attr = "update_token"
+        if not propagate_attr:
             return
 
         async def _propagate() -> None:  # coroutine required by register_update_hook
@@ -238,7 +251,7 @@ class TokenManager:
             if not info or not info.access_token:
                 return
             try:
-                backend.update_access_token(info.access_token)
+                getattr(backend, propagate_attr)(info.access_token)
             except Exception as e:  # noqa: BLE001
                 self.logger.log_event(
                     "token_manager",
@@ -403,22 +416,21 @@ class TokenManager:
     def _maybe_fire_update_hook(self, username: str, token_changed: bool) -> None:
         if not token_changed:
             return
-        hook = self._update_hooks.get(username)
-        if not hook:
-            return
-        try:
-            # Delegate creation to helper so both Ruff and VS Code recognize
-            # the task is retained and exceptions logged.
-            self._create_retained_task(hook(), category="update_hook")
-        except Exception as e:  # noqa: BLE001
-            self.logger.log_event(
-                "token_manager",
-                "update_hook_error",
-                level=logging.DEBUG,
-                user=username,
-                error=str(e),
-                error_type=type(e).__name__,
-            )
+        hooks = self._update_hooks.get(username) or []
+        for hook in hooks:
+            try:
+                # Delegate creation to helper so both Ruff and VS Code recognize
+                # the task is retained and exceptions logged.
+                self._create_retained_task(hook(), category="update_hook")
+            except Exception as e:  # noqa: BLE001
+                self.logger.log_event(
+                    "token_manager",
+                    "update_hook_error",
+                    level=logging.DEBUG,
+                    user=username,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
 
     def _create_retained_task(
         self, coro: Coroutine[Any, Any, T], *, category: str
