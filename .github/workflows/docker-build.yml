@@ -20,6 +20,11 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    concurrency:
+      group: docker-build-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: read
       packages: write
@@ -42,8 +47,15 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        with:
-          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6,linux/riscv64
+
+      - name: Determine target platforms
+        id: plats
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "value=linux/amd64,linux/arm64" >> $GITHUB_OUTPUT
+          else
+            echo "value=linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6,linux/riscv64" >> $GITHUB_OUTPUT
+          fi
 
       # Log in to Docker Hub (requires DOCKER_USERNAME and DOCKER_PASSWORD secrets)
       # These secrets should be configured in repository settings
@@ -91,10 +103,11 @@ jobs:
           echo "vcs_ref=${GITHUB_SHA}" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6,linux/riscv64
+          platforms: ${{ steps.plats.outputs.value }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -140,10 +153,10 @@ jobs:
       security-events: write
 
     steps:
-      - name: Run Trivy vulnerability scanner
+      - name: Run Trivy vulnerability scanner (digest)
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ env.GHCR_IMAGE_NAME }}:latest
+          image-ref: ${{ needs.build.outputs.digest }}
           format: 'sarif'
           output: 'trivy-results.sarif'
 
