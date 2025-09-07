@@ -1,12 +1,3 @@
-"""EventSub WebSocket chat backend.
-
-
-Lightweight implementation focusing on channel.chat.message events filtered
-for the bot user acting as chatter. This avoids re-implementing full TwitchIO.
-
-Scopes required: chat:read (already typical for the bot token).
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -23,12 +14,26 @@ from ..api.twitch import TwitchAPI
 from ..logs.logger import logger
 from .abstract import ChatBackend, MessageHandler
 
+"""EventSub WebSocket chat backend.
+
+Lightweight implementation focusing on channel.chat.message events filtered
+for the bot user acting as chatter. This avoids re-implementing full TwitchIO.
+
+Scopes required: chat:read (already typical for the bot token).
+"""
+
+# ...existing code...
+
 EVENTSUB_WS_URL = "wss://eventsub.wss.twitch.tv/ws"
 EVENTSUB_SUBSCRIPTIONS = "eventsub/subscriptions"
 EVENTSUB_CHAT_MESSAGE = "channel.chat.message"
 
 
 class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-attributes
+    def set_token_invalid_callback(self, callback):
+        """Set a callback to be called when token is invalid and needs refresh."""
+        self._token_invalid_callback = callback
+
     def __init__(self, http_session: aiohttp.ClientSession | None = None) -> None:
         self._session = http_session or aiohttp.ClientSession()
         self._api = TwitchAPI(self._session)
@@ -550,14 +555,26 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         self, channel_login: str, status: int, data: Any
     ) -> None:
         if status == 202:
-            logger.log_event(
-                "chat",
-                "eventsub_subscribed",
-                channel=channel_login,
-                user=self._username,
-            )
-            self._consecutive_subscribe_401 = 0
+            self._on_subscribed(channel_login)
             return
+        self._log_subscribe_non_202(status, channel_login, data)
+        if status == 401:
+            self._handle_subscribe_unauthorized(channel_login, data)
+            return
+        self._on_subscribe_other(channel_login, status)
+
+    def _on_subscribed(self, channel_login: str) -> None:
+        logger.log_event(
+            "chat",
+            "eventsub_subscribed",
+            channel=channel_login,
+            user=self._username,
+        )
+        self._consecutive_subscribe_401 = 0
+
+    def _log_subscribe_non_202(
+        self, status: int, channel_login: str, data: Any
+    ) -> None:
         logger.log_event(
             "chat",
             "eventsub_subscribe_non_202",
@@ -566,39 +583,55 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
             channel=channel_login,
             detail=(data.get("message") if isinstance(data, dict) else None),
         )
-        if status == 401:
-            self._consecutive_subscribe_401 += 1
+
+    def _handle_subscribe_unauthorized(self, channel_login: str, data: Any) -> None:
+        self._consecutive_subscribe_401 += 1
+        logger.log_event(
+            "chat",
+            "eventsub_subscribe_unauthorized",
+            level=30,
+            channel=channel_login,
+            count=self._consecutive_subscribe_401,
+        )
+        if self._consecutive_subscribe_401 >= 2 and not self._token_invalid_flag:
+            self._token_invalid_flag = True
             logger.log_event(
                 "chat",
-                "eventsub_subscribe_unauthorized",
-                level=30,
+                "eventsub_token_invalid",
+                level=40,
+                user=self._username,
                 channel=channel_login,
-                count=self._consecutive_subscribe_401,
+                source="subscribe",
+                detail=(data.get("message") if isinstance(data, dict) else None),
             )
-            if self._consecutive_subscribe_401 >= 2 and not self._token_invalid_flag:
-                self._token_invalid_flag = True
-                logger.log_event(
-                    "chat",
-                    "eventsub_token_invalid",
-                    level=40,
-                    user=self._username,
-                    channel=channel_login,
-                    source="subscribe",
-                )
-            return
+            if self._token_invalid_callback:
+                try:
+                    _ = asyncio.create_task(self._token_invalid_callback())
+                except Exception as e:
+                    logger.log_event(
+                        "chat",
+                        "eventsub_token_invalid_callback_error",
+                        level=30,
+                        error=str(e),
+                    )
+
+    def _on_subscribe_other(self, channel_login: str, status: int) -> None:
         # reset counter on any non-401 failure
         self._consecutive_subscribe_401 = 0
         if status == 403:
-            required = {"user:read:chat", "chat:read"}
-            missing = sorted(s for s in required if s not in self._scopes)
-            if missing:
-                logger.log_event(
-                    "chat",
-                    "eventsub_missing_scopes",
-                    level=30,
-                    channel=channel_login,
-                    missing=";".join(missing),
-                )
+            self._log_missing_scopes(channel_login)
+
+    def _log_missing_scopes(self, channel_login: str) -> None:
+        required = {"user:read:chat", "chat:read"}
+        missing = sorted(s for s in required if s not in self._scopes)
+        if missing:
+            logger.log_event(
+                "chat",
+                "eventsub_missing_scopes",
+                level=30,
+                channel=channel_login,
+                missing=";".join(missing),
+            )
 
     async def _open_and_handshake(self) -> bool:
         """Open WebSocket and parse welcome, setting session id."""
@@ -626,36 +659,46 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         await self._resubscribe_missing(missing)
 
     async def _fetch_active_broadcaster_ids(self) -> set[str] | None:
+        if not self._can_fetch_broadcaster_ids():
+            return None
+        data, status = await self._try_fetch_broadcaster_ids()
+        if data is None:
+            return None
+        if status == 401:
+            self._handle_list_unauthorized(data)
+            return None
+        if status != 200 or not isinstance(data, dict):
+            return None
+        return self._extract_broadcaster_ids_from_data(data)
+
+    def _can_fetch_broadcaster_ids(self) -> bool:
+        return self._token is not None and self._client_id is not None
+
+    def _handle_list_unauthorized(self, data: Any) -> None:
+        logger.log_event(
+            "chat",
+            "eventsub_list_unauthorized",
+            level=30,
+            detail=(data.get("message") if isinstance(data, dict) else None),
+        )
+
+    async def _try_fetch_broadcaster_ids(self) -> tuple[Any, int]:
         try:
+            # mypy: ensure str, not Optional[str]
             if self._token is None or self._client_id is None:
-                return None
+                raise RuntimeError("Token or client_id is None")
             data, status, _ = await self._api.request(
                 "GET",
                 EVENTSUB_SUBSCRIPTIONS,
                 access_token=self._token,
                 client_id=self._client_id,
             )
+            return data, status
         except Exception as e:  # noqa: BLE001
             logger.log_event("chat", "eventsub_sub_list_error", level=20, error=str(e))
-            return None
-        if status == 401:
-            # Token invalid detected via listing endpoint
-            if not self._token_invalid_flag:
-                self._token_invalid_flag = True
-                logger.log_event(
-                    "chat",
-                    "eventsub_token_invalid",
-                    level=40,
-                    user=self._username,
-                    # Provide a synthetic channel marker so template formatting does not
-                    # leave {channel} literal when invalidation is detected via the
-                    # subscription listing endpoint (no single channel context).
-                    source="list_subscriptions",
-                    channel="*",
-                )
-            return None
-        if status != 200 or not isinstance(data, dict):
-            return None
+            return None, -1
+
+    def _extract_broadcaster_ids_from_data(self, data: Any) -> set[str]:
         rows = data.get("data")
         if not isinstance(rows, list):
             return set()
@@ -778,6 +821,10 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                 )
                 return True
             except Exception as e:  # noqa: BLE001
+                # Try to extract Twitch error details if available
+                twitch_error = None
+                if hasattr(e, "args") and e.args:
+                    twitch_error = e.args[0]
                 logger.log_event(
                     "chat",
                     "eventsub_reconnect_failed",
@@ -785,6 +832,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                     user=self._username,
                     attempt=attempt,
                     error=str(e),
+                    twitch_error=twitch_error,
                     backoff=round(self._backoff, 2),
                 )
                 await asyncio.sleep(

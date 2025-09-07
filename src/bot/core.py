@@ -405,6 +405,18 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         # Route all messages (including commands like !rip) through a single handler
         # to avoid double triggers; do not attach a separate color_change_handler.
         backend.set_message_handler(self.handle_irc_message)
+        # Register token invalid callback for EventSub escalation
+        if hasattr(backend, "set_token_invalid_callback"):
+            try:
+                backend.set_token_invalid_callback(self._check_and_refresh_token)
+            except Exception as e:
+                logger.log_event(
+                    "bot",
+                    "eventsub_backend_callback_register_error",
+                    user=self.username,
+                    level=logging.WARNING,
+                    error=str(e),
+                )
         connected = await backend.connect(
             self.access_token,
             self.username,
@@ -615,12 +627,15 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                 return outcome.name != "FAILED"
             return False
         except Exception as e:  # noqa: BLE001
+            import traceback
+
             logger.log_event(
                 "bot",
                 "token_refresh_helper_error",
                 level=logging.ERROR,
                 user=self.username,
                 error=str(e),
+                traceback=traceback.format_exc(),
             )
             return False
 
