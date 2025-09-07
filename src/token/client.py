@@ -174,6 +174,8 @@ class TokenClient:
             )
             return TokenResult(TokenOutcome.FAILED, None, None, None)
         except Exception as e:  # noqa: BLE001
+            import traceback
+
             logger.log_event(
                 "token",
                 "refresh_error",
@@ -181,6 +183,7 @@ class TokenClient:
                 user=username,
                 error=str(e),
                 error_type=type(e).__name__,
+                traceback=traceback.format_exc(),
             )
             return TokenResult(TokenOutcome.FAILED, None, None, None)
 
@@ -255,6 +258,8 @@ class TokenClient:
             )
             raise NetworkError(f"Network error during validation: {e}") from e
         except Exception as e:  # noqa: BLE001
+            import traceback
+
             logger.log_event(
                 "token",
                 "validation_error",
@@ -262,5 +267,6 @@ class TokenClient:
                 user=username,
                 error=str(e),
                 error_type=type(e).__name__,
+                traceback=traceback.format_exc(),
             )
             return False, None
