@@ -5,8 +5,8 @@
     "context_shutdown_complete": "✅ App completed context shutdown",
     "atexit_context_check_error": "⚠️ Atexit context check error: {error}",
     "critical_error": "💥 Critical error occurred: {error}",
-    "health_fail": "❌ Health check failed: {error}",
-    "health_mode": "🩺 Health check mode",
+  "health_mode": "🩺 Health check mode",
+  "health_fail": "❌ Health check failed: {error}",
     "health_pass": "✅ Health check passed users={user_count}",
     "interrupted": "✋ Interrupted by user",
     "shutdown_complete": "✅ Application shutdown complete",
@@ -16,7 +16,8 @@
     "top_level_error": "💥 Top-level critical error: {error}"
   },
   "bot": {
-    "auto_color_disabled": "🚫 Automatic color change disabled user={user}",
+  "auto_color_disabled": "🚫 Automatic color change disabled user={user}",
+  "eventsub_backend_callback_register_error": "⚠️ Failed to register EventSub backend callback user={user}: {error}",
     "auto_color_enabled": "✅ Automatic color change enabled user={user}",
     "closing_for_user": "🔻 Closing bot user={user}",
     "chat_not_initialized": "⚠️ Chat backend not initialized user={user}",
@@ -238,7 +239,9 @@
     "token_updated": "🔑 IRC token updated"
   },
   "chat": {
-    "color_handler_error": "💥 Color handler error",
+  "color_handler_error": "💥 Color handler error",
+  "eventsub_list_unauthorized": "🚫 EventSub subscription list unauthorized.",
+  "eventsub_token_invalid_callback_error": "⚠️ Error in EventSub token invalid callback: {error}",
     "eventsub_bad_welcome": "⚠️ EventSub bad welcome frame",
     "eventsub_batch_resolve_error": "💥 EventSub batch resolve error: {error}",
     "eventsub_cache_load_error": "⚠️ EventSub cache load error: {error}",
