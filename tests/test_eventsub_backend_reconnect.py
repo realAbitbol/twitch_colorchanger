@@ -41,11 +41,7 @@ async def test_eventsub_session_reconnect_triggers_reconnect(monkeypatch):
     backend._stop_event.set()
     await asyncio.sleep(0.01)
     listen_task.cancel()
-    try:
-        await listen_task
-    except asyncio.CancelledError:
-        pass
-
+    await listen_task
     # The backend should have set the new URL and triggered reconnect
     assert backend._ws_url == new_url
     backend._reconnect_with_backoff.assert_called()
