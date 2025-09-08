@@ -32,7 +32,6 @@
 //   4. Persists newly obtained tokens back into this file
 //   5. Launches one color-change bot per user
 //
-// Restart safe: writes are debounced/batched to minimize churn.
 
 // ====================================================================
 // AUTOMATIC TOKEN SETUP (RECOMMENDED)

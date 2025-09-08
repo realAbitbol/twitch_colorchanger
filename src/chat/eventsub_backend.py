@@ -52,6 +52,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         self._channel_ids: dict[str, str] = {}  # login -> user_id
         self._listen_task: asyncio.Task[Any] | None = None
         self._stop_event = asyncio.Event()
+        self._reconnect_requested = False  # <-- new flag
         # cache file for broadcaster ids (login->id)
         self._cache_path: Path = Path(
             os.environ.get("TWITCH_BROADCASTER_CACHE", "broadcaster_ids.cache.json")
@@ -262,24 +263,15 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         while not self._stop_event.is_set():
             now = time.monotonic()
             await self._maybe_verify_subs(now)
+            if await self._maybe_reconnect():
+                break
             if not await self._ensure_socket():
                 break
             msg = await self._receive_one()
-            if msg is None:  # timeout path handled internally
-                continue
-            if msg.type == aiohttp.WSMsgType.TEXT:
-                self._last_activity = time.monotonic()
-                await self._handle_text(msg.data)
-            elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-                logger.log_event(
-                    "chat",
-                    "eventsub_ws_abnormal_end",
-                    user=self._username,
-                    code=getattr(msg, "data", None),
-                )
-                ok = await self._reconnect_with_backoff()
-                if not ok:
-                    break
+            if await self._handle_ws_message(msg):
+                break
+            if await self._maybe_reconnect():
+                break
 
     async def disconnect(self) -> None:
         self._stop_event.set()
@@ -330,6 +322,10 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
             mt = meta.get("message_type")
             if isinstance(mt, str):
                 return mt
+        # Fallback to top-level 'type' field
+        mtype = data.get("type")
+        if isinstance(mtype, str):
+            return mtype
         return None
 
     async def _handle_session_reconnect(self, data: dict[str, Any]) -> None:
@@ -346,6 +342,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                 "chat", "eventsub_reconnect_instruction", user=self._username
             )
             await self._safe_close()
+            self._reconnect_requested = True
         else:
             logger.log_event("chat", "eventsub_reconnect_url_invalid", level=20)
 
@@ -571,6 +568,35 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
             user=self._username,
         )
         self._consecutive_subscribe_401 = 0
+
+    async def _maybe_reconnect(self) -> bool:
+        """Helper to handle reconnect if requested. Returns True if reconnect was attempted and failed (should break loop)."""
+        if self._reconnect_requested:
+            self._reconnect_requested = False
+            ok = await self._reconnect_with_backoff()
+            if not ok:
+                return True
+            return False
+        return False
+
+    async def _handle_ws_message(self, msg) -> bool:
+        """Handle a websocket message. Returns True if a reconnect was attempted and failed (should break loop)."""
+        if msg is None:
+            return False  # timeout path handled internally
+        if msg.type == aiohttp.WSMsgType.TEXT:
+            self._last_activity = time.monotonic()
+            await self._handle_text(msg.data)
+        elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+            logger.log_event(
+                "chat",
+                "eventsub_ws_abnormal_end",
+                user=self._username,
+                code=getattr(msg, "data", None),
+            )
+            ok = await self._reconnect_with_backoff()
+            if not ok:
+                return True
+        return False
 
     def _log_subscribe_non_202(
         self, status: int, channel_login: str, data: Any
