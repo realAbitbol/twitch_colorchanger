@@ -18,11 +18,11 @@ services:
     #  - ./logs:/app/logs
 
     # Environment variables are ONLY for advanced tuning. Typical users do
-    # not need any. All user/token/channel config lives in the file above.
+    # not need any. All user/token/channel config lives in the conf file.
     environment:
-      - PYTHONUNBUFFERED=1
-  # Advanced examples (uncomment if needed):
-  # - TWITCH_CHAT_BACKEND=irc   # Force legacy IRC backend (default is EventSub)
+      - PYTHONUNBUFFERED=1 # Recommended for real-time debug output
+      # Advanced examples (uncomment if needed):
+      # - TWITCH_CHAT_BACKEND=irc   # Force legacy IRC backend (default is EventSub)
       # - NETWORK_PARTITION_THRESHOLD=1800
       # - CONFIG_SAVE_TIMEOUT=5.0
       # - DEFAULT_BUCKET_LIMIT=1000
@@ -34,15 +34,3 @@ services:
       timeout: 10s
       retries: 3
       start_period: 15s
-
-    deploy:
-      resources:
-        limits:
-          cpus: "0.50"
-          memory: 256M
-        reservations:
-          cpus: "0.10"
-          memory: 64M
-
-    # For production behind a process supervisor or swarm/k8s, adjust
-    # restart policy and remove deploy.resources if unsupported.
