@@ -336,15 +336,33 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
             if isinstance(session_info, dict)
             else None
         )
+        logger.log_event(
+            "chat",
+            "eventsub_reconnect_instruction_received",
+            user=self._username,
+            old_url=getattr(self, "_ws_url", None),
+            new_url=new_url,
+            session_info=str(session_info),
+        )
         if isinstance(new_url, str) and new_url.startswith("wss://"):
             self._ws_url = new_url
             logger.log_event(
-                "chat", "eventsub_reconnect_instruction", user=self._username
+                "chat",
+                "eventsub_reconnect_instruction_switching_url",
+                user=self._username,
+                new_url=new_url,
             )
             await self._safe_close()
             self._reconnect_requested = True
         else:
-            logger.log_event("chat", "eventsub_reconnect_url_invalid", level=20)
+            logger.log_event(
+                "chat",
+                "eventsub_reconnect_url_invalid",
+                level=40,
+                user=self._username,
+                session_info=str(session_info),
+                new_url=new_url,
+            )
 
     async def _handle_notification(self, data: dict[str, Any]) -> None:
         payload = data.get("payload")
@@ -819,12 +837,33 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
             return None
 
     async def _reconnect_with_backoff(self) -> bool:
+        import traceback
+
         attempt = 0
         while not self._stop_event.is_set():
             attempt += 1
             try:
                 await self._safe_close()
-                if not await self._open_and_handshake():
+                logger.log_event(
+                    "chat",
+                    "eventsub_reconnect_attempt",
+                    user=self._username,
+                    attempt=attempt,
+                    ws_url=getattr(self, "_ws_url", None),
+                    session_id=getattr(self, "_session_id", None),
+                    channels=str(self._channels),
+                )
+                handshake_ok = await self._open_and_handshake()
+                logger.log_event(
+                    "chat",
+                    "eventsub_handshake_result",
+                    user=self._username,
+                    attempt=attempt,
+                    ws_url=getattr(self, "_ws_url", None),
+                    session_id=getattr(self, "_session_id", None),
+                    handshake_ok=handshake_ok,
+                )
+                if not handshake_ok:
                     raise RuntimeError("handshake failed")
                 # rebuild channel subs
                 await self._batch_resolve_channels(self._channels)
@@ -835,7 +874,10 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                     "eventsub_reconnect_success",
                     user=self._username,
                     attempt=attempt,
+                    ws_url=getattr(self, "_ws_url", None),
+                    session_id=getattr(self, "_session_id", None),
                     channel_count=len(self._channels),
+                    channels=str(self._channels),
                 )
                 self._backoff = 1.0
                 now = time.monotonic()
@@ -854,11 +896,15 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                 logger.log_event(
                     "chat",
                     "eventsub_reconnect_failed",
-                    level=30,
+                    level=40,
                     user=self._username,
                     attempt=attempt,
+                    ws_url=getattr(self, "_ws_url", None),
+                    session_id=getattr(self, "_session_id", None),
+                    channels=str(self._channels),
                     error=str(e),
                     twitch_error=twitch_error,
+                    traceback=traceback.format_exc(),
                     backoff=round(self._backoff, 2),
                 )
                 await asyncio.sleep(
