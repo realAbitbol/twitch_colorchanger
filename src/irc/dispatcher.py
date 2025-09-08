@@ -89,18 +89,7 @@ class IRCDispatcher:
                 chat_message=message,
                 self_message=True,
             )
-        else:
-            logger.log_event(
-                "irc",
-                "privmsg",
-                level=logging.DEBUG,
-                user=self.client.username,
-                human=f"{username}: {message}",
-                author=username,
-                channel=channel,
-                chat_message=message,
-                self_message=False,
-            )
+        # Do not log messages from other users at any log level
 
     async def _process_message_handlers(
         self, username: str, channel: str, message: str
