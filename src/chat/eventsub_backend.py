@@ -843,7 +843,17 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         while not self._stop_event.is_set():
             attempt += 1
             try:
+                # --- FULL STATE CLEANUP ---
                 await self._safe_close()
+                self._session_id = None
+                self._consecutive_subscribe_401 = 0
+                self._token_invalid_flag = False
+                # Optionally, clear channel_ids if you want to force re-resolve
+                # self._channel_ids.clear()
+
+                # --- RECONNECT DELAY ---
+                await asyncio.sleep(1.0)  # 1 second delay before reconnect
+
                 logger.log_event(
                     "chat",
                     "eventsub_reconnect_attempt",
@@ -853,7 +863,12 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                     session_id=getattr(self, "_session_id", None),
                     channels=str(self._channels),
                 )
-                handshake_ok = await self._open_and_handshake()
+
+                # --- HANDSHAKE WITH FULL LOGGING ---
+                (
+                    handshake_ok,
+                    handshake_details,
+                ) = await self._open_and_handshake_detailed()
                 logger.log_event(
                     "chat",
                     "eventsub_handshake_result",
@@ -862,9 +877,10 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                     ws_url=getattr(self, "_ws_url", None),
                     session_id=getattr(self, "_session_id", None),
                     handshake_ok=handshake_ok,
+                    handshake_details=handshake_details,
                 )
                 if not handshake_ok:
-                    raise RuntimeError("handshake failed")
+                    raise RuntimeError(f"handshake failed: {handshake_details}")
                 # rebuild channel subs
                 await self._batch_resolve_channels(self._channels)
                 for ch in self._channels:
@@ -889,7 +905,6 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                 )
                 return True
             except Exception as e:  # noqa: BLE001
-                # Try to extract Twitch error details if available
                 twitch_error = None
                 if hasattr(e, "args") and e.args:
                     twitch_error = e.args[0]
@@ -912,6 +927,39 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                 )
                 self._backoff = min(self._backoff * 2, self._max_backoff)
         return False
+
+    async def _open_and_handshake_detailed(self):
+        """Open WebSocket and parse welcome, logging all details for diagnostics."""
+        try:
+            # Optionally, create a new ClientSession for each reconnect (advanced):
+            # self._session = aiohttp.ClientSession()
+            ws = await self._session.ws_connect(self._ws_url, heartbeat=30)
+            self._ws = ws
+            # Log handshake request headers (aiohttp hides some, but we can log what we can)
+            handshake_details = {
+                "request_headers": dict(getattr(ws, "_request_headers", {})),
+                "url": self._ws_url,
+            }
+            welcome = await asyncio.wait_for(ws.receive(), timeout=10)
+            handshake_details["welcome_type"] = str(getattr(welcome, "type", None))
+            handshake_details["welcome_raw"] = getattr(welcome, "data", None)
+            if welcome.type != aiohttp.WSMsgType.TEXT:
+                handshake_details["error"] = "bad_welcome_type"
+                return False, handshake_details
+            try:
+                data = json.loads(welcome.data)
+                self._session_id = data.get("payload", {}).get("session", {}).get("id")
+                handshake_details["session_id"] = self._session_id
+                handshake_details["welcome_json"] = data
+            except Exception as e:
+                handshake_details["error"] = f"welcome_parse_error: {e}"
+                return False, handshake_details
+            if not self._session_id:
+                handshake_details["error"] = "no_session_id"
+                return False, handshake_details
+            return True, handshake_details
+        except Exception as e:
+            return False, {"exception": str(e)}
 
     async def _safe_close(self) -> None:
         try:
