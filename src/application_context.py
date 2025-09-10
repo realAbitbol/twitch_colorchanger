@@ -9,6 +9,7 @@ from typing import Any
 
 import aiohttp
 
+from .health import write_status
 from .logs.logger import logger
 from .rate.rate_limiter import TwitchRateLimiter
 from .token.manager import TokenManager
@@ -198,6 +199,26 @@ class ApplicationContext:
                 self._probe_rate_limiters()
                 self._maintenance_ticks += 1
                 self._maybe_emit_metrics()
+                # heartbeat for external health checks
+                try:
+                    write_status({"last_maintenance": time.time()})
+                except Exception as e:  # noqa: BLE001
+                    # Log the health write failure but keep the maintenance loop alive
+                    try:
+                        logger.log_event(
+                            "context",
+                            "maintenance_error",
+                            level=10,
+                            error=str(e),
+                        )
+                    except Exception:
+                        # Fallback: avoid raising from the maintenance loop
+                        try:
+                            import sys as _sys
+
+                            _sys.stderr.write(f"health write error: {e}\n")
+                        except Exception:
+                            ...
                 logger.log_event("context", "maintenance_tick", level=10)
             except asyncio.CancelledError:
                 raise

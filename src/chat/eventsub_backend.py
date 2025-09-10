@@ -11,6 +11,7 @@ from typing import Any
 import aiohttp
 
 from ..api.twitch import TwitchAPI
+from ..health import read_status, write_status
 from ..logs.logger import logger
 from .abstract import ChatBackend, MessageHandler
 
@@ -1015,6 +1016,21 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                     channel_count=len(self._channels),
                     channels=str(self._channels),
                 )
+                # update health status on successful reconnect
+                try:
+                    write_status(
+                        {
+                            "last_reconnect_ok": time.time(),
+                            "consecutive_reconnect_failures": 0,
+                        }
+                    )
+                except Exception as e:
+                    logger.log_event(
+                        "chat",
+                        "eventsub_health_write_error",
+                        level=20,
+                        error=str(e),
+                    )
 
                 self._backoff = 1.0
                 now = time.monotonic()
@@ -1047,6 +1063,23 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                     self._backoff + self._jitter(0, 0.25 * self._backoff)
                 )
                 self._backoff = min(self._backoff * 2, self._max_backoff)
+                # record a reconnect failure in health status
+                try:
+                    status = read_status()
+                    failures = int(status.get("consecutive_reconnect_failures", 0)) + 1
+                    write_status(
+                        {
+                            "last_reconnect_failure": time.time(),
+                            "consecutive_reconnect_failures": failures,
+                        }
+                    )
+                except Exception as e:
+                    logger.log_event(
+                        "chat",
+                        "eventsub_health_write_error",
+                        level=20,
+                        error=str(e),
+                    )
         return False
 
     async def _open_and_handshake_detailed(self):
