@@ -8,6 +8,7 @@ import atexit
 import logging
 import os
 import sys
+import time
 
 from .bot.manager import run_bots
 from .config import (
@@ -17,6 +18,7 @@ from .config import (
     setup_missing_tokens,
 )
 from .errors.handling import log_error
+from .health import read_status
 from .logs.logger import logger
 from .utils import emit_startup_instructions
 
@@ -73,7 +75,49 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--health-check":
         logger.log_event("app", "health_mode")
         try:
+            # Basic config sanity check
             health_config = get_configuration()
+            # Consult runtime health status file (written by background tasks)
+            status = read_status()
+            # Thresholds configurable via env
+            max_failures = int(
+                os.environ.get("TWITCH_HEALTH_MAX_RECONNECT_FAILURES", "5")
+            )
+            stale_threshold = int(os.environ.get("TWITCH_HEALTH_STALE_SECONDS", "600"))
+
+            failures = int(status.get("consecutive_reconnect_failures", 0))
+            last_maintenance = status.get("last_maintenance")
+            last_ok = status.get("last_reconnect_ok")
+
+            if failures >= max_failures:
+                logger.log_event(
+                    "app",
+                    "health_fail",
+                    level=logging.ERROR,
+                    error=f"consecutive_reconnect_failures={failures}",
+                )
+                sys.exit(1)
+
+            now = time.time()
+            if last_maintenance and (now - float(last_maintenance) > stale_threshold):
+                logger.log_event(
+                    "app",
+                    "health_fail",
+                    level=logging.ERROR,
+                    error=f"last_maintenance_stale={now - float(last_maintenance):.0f}s",
+                )
+                sys.exit(1)
+
+            # If we have an explicit last_ok timestamp too old, treat as failure
+            if last_ok and (now - float(last_ok) > stale_threshold):
+                logger.log_event(
+                    "app",
+                    "health_fail",
+                    level=logging.ERROR,
+                    error=f"last_reconnect_ok_stale={now - float(last_ok):.0f}s",
+                )
+                sys.exit(1)
+
             logger.log_event("app", "health_pass", user_count=len(health_config))
             sys.exit(0)
         except Exception as e:  # noqa: BLE001
