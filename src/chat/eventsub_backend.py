@@ -37,42 +37,66 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
     def __init__(self, http_session: aiohttp.ClientSession | None = None) -> None:
         self._session = http_session or aiohttp.ClientSession()
         self._api = TwitchAPI(self._session)
+
         # Current WebSocket URL (can change via session_reconnect instruction)
         self._ws_url: str = EVENTSUB_WS_URL
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._message_handler: MessageHandler | None = None
         self._color_handler: MessageHandler | None = None
+
+        # Credentials and identity
         self._token: str | None = None
         self._client_id: str | None = None
         self._username: str | None = None
         self._user_id: str | None = None
         self._primary_channel: str | None = None
+
+        # Current EventSub session id when connected
         self._session_id: str | None = None
+        # If Twitch sends a session_reconnect instruction it includes a
+        # session id. Store it temporarily so reconnect attempts can try to
+        # preserve continuity when connecting to the provided reconnect_url.
+        self._pending_reconnect_session_id: str | None = None
+
+        # Channel/subscription bookkeeping
         self._channels: list[str] = []
         self._channel_ids: dict[str, str] = {}  # login -> user_id
+
+        # Async runtime primitives
         self._listen_task: asyncio.Task[Any] | None = None
         self._stop_event = asyncio.Event()
-        self._reconnect_requested = False  # <-- new flag
+        self._reconnect_requested = False
+
         # cache file for broadcaster ids (login->id)
         self._cache_path: Path = Path(
             os.environ.get("TWITCH_BROADCASTER_CACHE", "broadcaster_ids.cache.json")
         )
+
         # last validated OAuth scopes (lowercased)
         self._scopes: set[str] = set()
-        # runtime resilience state (moved inside __init__)
+
+        # runtime resilience state
         self._backoff = 1.0
         self._last_activity = time.monotonic()
         self._next_sub_check = self._last_activity + 600.0  # 10 min default
         self._stale_threshold = 70.0  # heartbeat*2 + grace
         self._max_backoff = 60.0
+
         # audit scheduling
-        self._audit_interval = 600.0  # normal audit
-        self._fast_audit_min = 60.0  # earliest fast audit after reconnect
-        self._fast_audit_max = 120.0  # latest fast audit after reconnect
+        self._audit_interval = 600.0
+        self._fast_audit_min = 60.0
+        self._fast_audit_max = 120.0
         self._fast_audit_pending = False
+
         # token invalidation tracking
         self._consecutive_subscribe_401 = 0
         self._token_invalid_flag = False
+
+        # If a session_stale close code is observed, force a full
+        # resubscribe flow on the next successful reconnect rather than
+        # relying solely on session resumption.
+        self._force_full_resubscribe: bool = False
+
         # initial jitter for first audit to avoid thundering herd
         self._next_sub_check += self._jitter(0, 120.0)
 
@@ -171,7 +195,17 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
 
     async def _handshake_and_session(self) -> bool:
         try:
-            self._ws = await self._session.ws_connect(self._ws_url, heartbeat=30)
+            headers = {}
+            if self._client_id:
+                headers["Client-Id"] = self._client_id
+            if self._token:
+                headers["Authorization"] = f"Bearer {self._token}"
+            self._ws = await self._session.ws_connect(
+                self._ws_url,
+                heartbeat=30,
+                headers=headers,
+                protocols=("twitch-eventsub-ws",),
+            )
             logger.log_event("chat", "eventsub_ws_connected", user=self._username)
             welcome = await asyncio.wait_for(self._ws.receive(), timeout=10)
             if welcome.type != aiohttp.WSMsgType.TEXT:
@@ -352,6 +386,13 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                 user=self._username,
                 new_url=new_url,
             )
+            # Remember the session id provided by Twitch so we can attempt to
+            # resume the same session when connecting to the reconnect_url.
+            maybe_id = (
+                session_info.get("id") if isinstance(session_info, dict) else None
+            )
+            if isinstance(maybe_id, str):
+                self._pending_reconnect_session_id = maybe_id
             await self._safe_close()
             self._reconnect_requested = True
         else:
@@ -770,6 +811,50 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
             bid for bid in (self._channel_ids.get(c) for c in self._channels) if bid
         }
 
+    def _handle_close_action(self, close_code: int | None) -> str | None:
+        """Map a close code to an action and perform minimal side-effects.
+
+        Returns a symbolic action name or None.
+        """
+        if close_code is None:
+            return None
+        CLOSE_CODE_ACTIONS = {
+            4001: "token_refresh",
+            4002: "token_refresh",
+            4003: "token_refresh",
+            4007: "session_stale",
+        }
+        action = CLOSE_CODE_ACTIONS.get(int(close_code))
+        if action == "token_refresh":
+            # Mark token invalid and call the configured callback
+            self._token_invalid_flag = True
+            if self._token_invalid_callback:
+                try:
+                    task = asyncio.create_task(self._token_invalid_callback())
+                    # keep a weak reference on the instance so GC doesn't
+                    # collect immediately in some event loop implementations
+                    self._last_token_refresh_task = task
+                except Exception as e:
+                    logger.log_event(
+                        "chat",
+                        "eventsub_token_invalid_callback_error",
+                        level=20,
+                        error=str(e),
+                    )
+        elif action == "session_stale":
+            # mark that we should perform a full resubscribe cycle after
+            # reconnect rather than relying on session resume
+            try:
+                self._force_full_resubscribe = True
+            except Exception as e:
+                logger.log_event(
+                    "chat",
+                    "eventsub_force_full_resubscribe_error",
+                    level=20,
+                    error=str(e),
+                )
+        return action
+
     async def _resubscribe_missing(self, missing: set[str]) -> None:
         for ch, bid in self._channel_ids.items():
             if bid in missing:
@@ -836,7 +921,50 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                 return None
             return None
 
+    # ---- reconnect helpers moved to class scope to reduce function complexity ----
+    async def _reconnect_cleanup(self) -> None:
+        await self._safe_close()
+        # If Twitch provided a pending reconnect session id keep it so the
+        # new connection can attempt to resume that session.
+        if self._pending_reconnect_session_id:
+            self._session_id = self._pending_reconnect_session_id
+        else:
+            self._session_id = None
+        # Clear the pending marker after consuming it.
+        self._pending_reconnect_session_id = None
+        self._consecutive_subscribe_401 = 0
+        self._token_invalid_flag = False
+
+    async def _perform_handshake(self) -> tuple[bool, dict]:
+        return await self._open_and_handshake_detailed()
+
+    async def _do_subscribe_cycle(self) -> None:
+        # rebuild channel subs
+        await self._batch_resolve_channels(self._channels)
+        for ch in self._channels:
+            await self._subscribe_channel_chat(ch)
+        # If we detected a session_stale earlier, ensure we attempt a
+        # full resubscribe cycle and then clear the flag.
+        if self._force_full_resubscribe:
+            logger.log_event(
+                "chat",
+                "eventsub_force_full_resubscribe",
+                user=self._username,
+                channel_count=len(self._channels),
+            )
+            # Re-run the subscribe flow to be explicit.
+            for ch in self._channels:
+                await self._subscribe_channel_chat(ch)
+            self._force_full_resubscribe = False
+
     async def _reconnect_with_backoff(self) -> bool:
+        """Reconnect loop with reduced cognitive complexity by delegating
+        cleanup, handshake and subscribe cycles to small helpers.
+        """
+
+        # Use class-scoped helpers (_reconnect_cleanup, _perform_handshake,
+        # _do_subscribe_cycle) to keep this function small and testable.
+
         import traceback
 
         attempt = 0
@@ -844,12 +972,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
             attempt += 1
             try:
                 # --- FULL STATE CLEANUP ---
-                await self._safe_close()
-                self._session_id = None
-                self._consecutive_subscribe_401 = 0
-                self._token_invalid_flag = False
-                # Optionally, clear channel_ids if you want to force re-resolve
-                # self._channel_ids.clear()
+                await self._reconnect_cleanup()
 
                 # --- RECONNECT DELAY ---
                 await asyncio.sleep(1.0)  # 1 second delay before reconnect
@@ -865,10 +988,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                 )
 
                 # --- HANDSHAKE WITH FULL LOGGING ---
-                (
-                    handshake_ok,
-                    handshake_details,
-                ) = await self._open_and_handshake_detailed()
+                handshake_ok, handshake_details = await self._perform_handshake()
                 logger.log_event(
                     "chat",
                     "eventsub_handshake_result",
@@ -881,10 +1001,10 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                 )
                 if not handshake_ok:
                     raise RuntimeError(f"handshake failed: {handshake_details}")
-                # rebuild channel subs
-                await self._batch_resolve_channels(self._channels)
-                for ch in self._channels:
-                    await self._subscribe_channel_chat(ch)
+
+                # subscribe / resubscribe work
+                await self._do_subscribe_cycle()
+
                 logger.log_event(
                     "chat",
                     "eventsub_reconnect_success",
@@ -895,6 +1015,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                     channel_count=len(self._channels),
                     channels=str(self._channels),
                 )
+
                 self._backoff = 1.0
                 now = time.monotonic()
                 self._last_activity = now
@@ -933,7 +1054,17 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         try:
             # Optionally, create a new ClientSession for each reconnect (advanced):
             # self._session = aiohttp.ClientSession()
-            ws = await self._session.ws_connect(self._ws_url, heartbeat=30)
+            headers = {}
+            if self._client_id:
+                headers["Client-Id"] = self._client_id
+            if self._token:
+                headers["Authorization"] = f"Bearer {self._token}"
+            ws = await self._session.ws_connect(
+                self._ws_url,
+                heartbeat=30,
+                headers=headers,
+                protocols=("twitch-eventsub-ws",),
+            )
             self._ws = ws
             # Log handshake request headers (aiohttp hides some, but we can log what we can)
             handshake_details = {
@@ -943,6 +1074,32 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
             welcome = await asyncio.wait_for(ws.receive(), timeout=10)
             handshake_details["welcome_type"] = str(getattr(welcome, "type", None))
             handshake_details["welcome_raw"] = getattr(welcome, "data", None)
+            # Explicitly record CLOSE/ERROR frames to help triage server-side
+            # rejections (for example Twitch sending a close code instead of the
+            # expected JSON TEXT welcome). Keep existing behavior of failing the
+            # handshake but provide richer details in logs.
+            if (
+                welcome.type == aiohttp.WSMsgType.CLOSE
+                or welcome.type == aiohttp.WSMsgType.CLOSING
+            ):
+                handshake_details["error"] = "closed_by_server"
+                # `welcome.data` is usually the close code; `welcome.extra` may
+                # contain additional reason text depending on the transport.
+                close_code = getattr(welcome, "data", None)
+                handshake_details["close_code"] = close_code
+                handshake_details["close_reason"] = getattr(welcome, "extra", None)
+                # Map known close codes to actions. We make conservative
+                # assumptions about codes that indicate authentication issues.
+                # If an auth-related code is observed, trigger the
+                # token-invalid callback (if configured) so higher layers can
+                # refresh tokens.
+                action = self._handle_close_action(close_code)
+                handshake_details["mapped_action"] = action
+                return False, handshake_details
+            if welcome.type == aiohttp.WSMsgType.ERROR:
+                handshake_details["error"] = "ws_error"
+                handshake_details["exception"] = getattr(welcome, "data", None)
+                return False, handshake_details
             if welcome.type != aiohttp.WSMsgType.TEXT:
                 handshake_details["error"] = "bad_welcome_type"
                 return False, handshake_details
@@ -951,6 +1108,10 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                 self._session_id = data.get("payload", {}).get("session", {}).get("id")
                 handshake_details["session_id"] = self._session_id
                 handshake_details["welcome_json"] = data
+                # On successful handshake, if we had a pending reconnect
+                # session id provided by Twitch, clear it — the session has
+                # now been established (either resumed or replaced).
+                self._pending_reconnect_session_id = None
             except Exception as e:
                 handshake_details["error"] = f"welcome_parse_error: {e}"
                 return False, handshake_details

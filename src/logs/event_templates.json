@@ -243,6 +243,8 @@
   "eventsub_list_unauthorized": "🚫 EventSub subscription list unauthorized.",
   "eventsub_token_invalid_callback_error": "⚠️ Error in EventSub token invalid callback: {error}",
     "eventsub_bad_welcome": "⚠️ EventSub bad welcome frame",
+  "eventsub_force_full_resubscribe": "🔄 EventSub forcing full resubscribe channels={channel_count}",
+  "eventsub_force_full_resubscribe_error": "⚠️ EventSub force_full_resubscribe error: {error}",
     "eventsub_batch_resolve_error": "💥 EventSub batch resolve error: {error}",
     "eventsub_cache_load_error": "⚠️ EventSub cache load error: {error}",
     "eventsub_cache_save_error": "⚠️ EventSub cache save error: {error}",
