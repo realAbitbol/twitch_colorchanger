@@ -7,6 +7,7 @@ import secrets
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import aiohttp
 
@@ -58,6 +59,8 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         # session id. Store it temporarily so reconnect attempts can try to
         # preserve continuity when connecting to the provided reconnect_url.
         self._pending_reconnect_session_id: str | None = None
+        # Track if we received a reconnect instruction that might have a stale session
+        self._reconnect_instruction_received: bool = False
 
         # Channel/subscription bookkeeping
         self._channels: list[str] = []
@@ -389,11 +392,37 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
             )
             # Remember the session id provided by Twitch so we can attempt to
             # resume the same session when connecting to the reconnect_url.
+            # Try to get it from session_info first, then fall back to parsing the URL
             maybe_id = (
                 session_info.get("id") if isinstance(session_info, dict) else None
             )
+            if not isinstance(maybe_id, str) and isinstance(new_url, str):
+                # Parse session ID from URL query parameters as fallback
+                try:
+                    parsed_url = urlparse(new_url)
+                    query_params = parse_qs(parsed_url.query)
+                    maybe_id = query_params.get("id", [None])[0]
+                except Exception as e:
+                    logger.log_event(
+                        "chat",
+                        "eventsub_url_parse_error",
+                        level=20,
+                        error=str(e),
+                        url=new_url,
+                    )
+
             if isinstance(maybe_id, str):
                 self._pending_reconnect_session_id = maybe_id
+                logger.log_event(
+                    "chat",
+                    "eventsub_pending_session_id_set",
+                    user=self._username,
+                    session_id=maybe_id,
+                    source="session_info" if session_info.get("id") else "url_parse",
+                )
+                # Mark that we received a reconnect instruction - the session ID
+                # might be stale by the time we try to reconnect
+                self._reconnect_instruction_received = True
             await self._safe_close()
             self._reconnect_requested = True
         else:
@@ -927,14 +956,15 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         await self._safe_close()
         # If Twitch provided a pending reconnect session id keep it so the
         # new connection can attempt to resume that session.
-        if self._pending_reconnect_session_id:
+        # However, if we're forcing a full resubscribe (e.g., due to session_stale),
+        # don't use the pending session id as it may be invalid.
+        if self._pending_reconnect_session_id and not self._force_full_resubscribe:
             self._session_id = self._pending_reconnect_session_id
         else:
             self._session_id = None
         # Clear the pending marker after consuming it.
         self._pending_reconnect_session_id = None
         self._consecutive_subscribe_401 = 0
-        self._token_invalid_flag = False
 
     async def _perform_handshake(self) -> tuple[bool, dict]:
         return await self._open_and_handshake_detailed()
