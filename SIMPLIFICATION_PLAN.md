@@ -91,22 +91,26 @@ To ensure complete execution and avoid leaving tasks half-finished:
 
 ## Phase 2: Logging Simplification
 
-### 2.1 Replace Event Logger
+### 2.1 Inline Human-Friendly Log Messages
 
-- Remove `src/logs/` directory entirely
-- Replace `BotLogger` with standard Python `logging` module
-- Remove event templates and structured logging
+- For each `logger.log_event(domain, action, ...)` call, replace it with the corresponding standard logging call using the message from event_templates.json inlined
+- Map the domain and action to the template in event_templates.json
+- For example, `logger.log_event("bot", "start", user=user)` becomes `logging.info(f"▶️ Starting bot user={user}")`
+- Manually replace each call without using scripts or sed commands
+- Preserve all parameters and formatting from the templates
+- Handle cases where custom `human` parameter is provided by using that instead of template
+- Update imports to use standard `logging` instead of custom logger
+- Map event levels to appropriate logging levels (INFO, WARNING, ERROR, DEBUG)
 
-### 2.2 Update All Logging Calls
+### 2.2 Remove Logging Infrastructure
 
-- Replace `logger.log_event()` calls with standard `logging.info()`, `logging.error()`, etc.
-- Remove event-specific parameters and templates
-- Simplify log messages to be direct and readable
+- After all log_event calls are replaced, remove `src/logs/` directory entirely
+- Remove any remaining references to BotLogger or custom logging
 
-### 2.3 Update Imports
+### 2.3 Update Tests
 
-- Remove imports of custom logger throughout codebase
-- Use `import logging` instead
+- Update any tests that mock or check log_event calls to use standard logging
+- Ensure test logging captures work with standard logging format
 
 ## Phase 3: Remove Overengineered Components
 
