@@ -125,6 +125,7 @@ Pipfile.lock
 # IDEs and editors
 .vscode/
 .idea/
+.kilocode/
 *.swp
 *.swo
 *~
