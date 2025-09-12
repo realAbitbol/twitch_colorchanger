@@ -59,6 +59,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         # session id. Store it temporarily so reconnect attempts can try to
         # preserve continuity when connecting to the provided reconnect_url.
         self._pending_reconnect_session_id: str | None = None
+        self._pending_challenge: str | None = None
         # Track if we received a reconnect instruction that might have a stale session
         self._reconnect_instruction_received: bool = False
 
@@ -367,13 +368,12 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         return None
 
     async def _handle_session_reconnect(self, data: dict[str, Any]) -> None:
-        payload = data.get("payload", {}) if isinstance(data, dict) else {}
-        session_info = payload.get("session", {}) if isinstance(payload, dict) else {}
-        new_url = (
-            session_info.get("reconnect_url")
-            if isinstance(session_info, dict)
-            else None
+        """Handle session_reconnect message with reduced cognitive complexity."""
+        # Extract info using helper (handles all type checks and parsing)
+        new_url, maybe_id, maybe_challenge, session_info = self._extract_reconnect_info(
+            data
         )
+
         logger.log_event(
             "chat",
             "eventsub_reconnect_instruction_received",
@@ -382,50 +382,8 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
             new_url=new_url,
             session_info=str(session_info),
         )
-        if isinstance(new_url, str) and new_url.startswith("wss://"):
-            self._ws_url = new_url
-            logger.log_event(
-                "chat",
-                "eventsub_reconnect_instruction_switching_url",
-                user=self._username,
-                new_url=new_url,
-            )
-            # Remember the session id provided by Twitch so we can attempt to
-            # resume the same session when connecting to the reconnect_url.
-            # Try to get it from session_info first, then fall back to parsing the URL
-            maybe_id = (
-                session_info.get("id") if isinstance(session_info, dict) else None
-            )
-            if not isinstance(maybe_id, str) and isinstance(new_url, str):
-                # Parse session ID from URL query parameters as fallback
-                try:
-                    parsed_url = urlparse(new_url)
-                    query_params = parse_qs(parsed_url.query)
-                    maybe_id = query_params.get("id", [None])[0]
-                except Exception as e:
-                    logger.log_event(
-                        "chat",
-                        "eventsub_url_parse_error",
-                        level=20,
-                        error=str(e),
-                        url=new_url,
-                    )
 
-            if isinstance(maybe_id, str):
-                self._pending_reconnect_session_id = maybe_id
-                logger.log_event(
-                    "chat",
-                    "eventsub_pending_session_id_set",
-                    user=self._username,
-                    session_id=maybe_id,
-                    source="session_info" if session_info.get("id") else "url_parse",
-                )
-                # Mark that we received a reconnect instruction - the session ID
-                # might be stale by the time we try to reconnect
-                self._reconnect_instruction_received = True
-            await self._safe_close()
-            self._reconnect_requested = True
-        else:
+        if not (isinstance(new_url, str) and new_url.startswith("wss://")):
             logger.log_event(
                 "chat",
                 "eventsub_reconnect_url_invalid",
@@ -434,6 +392,101 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                 session_info=str(session_info),
                 new_url=new_url,
             )
+            return
+
+        # Update state using helper
+        self._update_reconnect_state(new_url, maybe_id, maybe_challenge, session_info)
+
+        # Trigger reconnect
+        self._reconnect_instruction_received = True
+        await self._safe_close()
+        self._reconnect_requested = True
+
+    def _extract_reconnect_info(
+        self, data: dict[str, Any]
+    ) -> tuple[str | None, str | None, str | None, dict]:
+        """Extract reconnect URL, session ID, challenge, and session info with defensive parsing."""
+        if not isinstance(data, dict):
+            return None, None, None, {}
+
+        payload = data.get("payload", {})
+        if not isinstance(payload, dict):
+            return None, None, None, {}
+
+        session_info = payload.get("session", {})
+        if not isinstance(session_info, dict):
+            return None, None, None, {}
+
+        new_url = session_info.get("reconnect_url")
+        if not isinstance(new_url, str):
+            return None, None, None, session_info
+
+        # Try to get session ID from session_info
+        maybe_id = session_info.get("id")
+        if not isinstance(maybe_id, str):
+            maybe_id = None
+
+        # Parse URL for ID and challenge (fallback for ID, always for challenge)
+        maybe_challenge = None
+        try:
+            parsed_url = urlparse(new_url)
+            query_params = parse_qs(parsed_url.query)
+            if not isinstance(maybe_id, str):
+                maybe_id = query_params.get("id", [None])[0]
+            maybe_challenge = query_params.get("challenge", [None])[0]
+        except Exception as e:
+            logger.log_event(
+                "chat",
+                "eventsub_url_parse_error",
+                level=20,
+                error=str(e),
+                url=new_url,
+            )
+
+        return new_url, maybe_id, maybe_challenge, session_info
+
+    def _update_reconnect_state(
+        self,
+        new_url: str,
+        maybe_id: str | None,
+        maybe_challenge: str | None,
+        session_info: dict,
+    ) -> None:
+        """Update internal state for reconnect (URL, session ID, challenge, logging)."""
+        self._ws_url = new_url
+        logger.log_event(
+            "chat",
+            "eventsub_reconnect_instruction_switching_url",
+            user=self._username,
+            new_url=new_url,
+        )
+
+        if isinstance(maybe_id, str):
+            self._pending_reconnect_session_id = maybe_id
+            source = "session_info" if session_info.get("id") else "url_parse"
+            logger.log_event(
+                "chat",
+                "eventsub_pending_session_id_set",
+                user=self._username,
+                session_id=maybe_id,
+                source=source,
+                derived="url_parse" in source,
+            )
+        else:
+            self._pending_reconnect_session_id = None
+
+        if isinstance(maybe_challenge, str):
+            self._pending_challenge = maybe_challenge
+            source = "session_info" if session_info.get("id") else "url_parse"
+            logger.log_event(
+                "chat",
+                "eventsub_pending_challenge_set",
+                user=self._username,
+                challenge=maybe_challenge,
+                source=source if "session_info" in source else "url_parse",
+            )
+        else:
+            self._pending_challenge = None
 
     async def _handle_notification(self, data: dict[str, Any]) -> None:
         payload = data.get("payload")
@@ -1115,8 +1168,6 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
     async def _open_and_handshake_detailed(self):
         """Open WebSocket and parse welcome, logging all details for diagnostics."""
         try:
-            # Optionally, create a new ClientSession for each reconnect (advanced):
-            # self._session = aiohttp.ClientSession()
             headers = {}
             if self._client_id:
                 headers["Client-Id"] = self._client_id
@@ -1129,61 +1180,151 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                 protocols=("twitch-eventsub-ws",),
             )
             self._ws = ws
-            # Log handshake request headers (aiohttp hides some, but we can log what we can)
             handshake_details = {
                 "request_headers": dict(getattr(ws, "_request_headers", {})),
                 "url": self._ws_url,
             }
+
+            # Handle challenge if needed
+            challenge_handled = await self._handle_challenge_if_needed(
+                ws, handshake_details
+            )
+            if not challenge_handled:
+                return False, handshake_details
+
+            # Process welcome message
+            success, details = await self._process_welcome_message(
+                ws, handshake_details
+            )
+            if success:
+                self._pending_reconnect_session_id = None  # Clear on success
+            handshake_details.update(details)
+            return success, handshake_details
+
+        except Exception as e:
+            return False, {"exception": str(e)}
+
+    async def _handle_challenge_if_needed(self, ws, handshake_details):
+        """Handle challenge response flow if pending challenge exists."""
+        if not getattr(self, "_pending_challenge", None):
+            return True
+
+        logger.log_event(
+            "chat",
+            "eventsub_challenge_handshake_start",
+            user=self._username,
+            challenge=self._pending_challenge,
+            ws_url=self._ws_url,
+        )
+        handshake_details["challenge_handshake"] = True
+
+        # Wait for challenge message
+        try:
+            challenge_msg = await asyncio.wait_for(ws.receive(), timeout=10)
+            handshake_details["challenge_type"] = str(
+                getattr(challenge_msg, "type", None)
+            )
+
+            if challenge_msg.type != aiohttp.WSMsgType.TEXT:
+                handshake_details["challenge_error"] = "bad_challenge_type"
+                self._pending_challenge = None
+                return False
+
+            challenge_data = json.loads(challenge_msg.data)
+            received_challenge = challenge_data.get("challenge")
+            handshake_details["challenge_received"] = received_challenge
+            handshake_details["challenge_data"] = challenge_data
+
+            if not isinstance(received_challenge, str):
+                handshake_details["challenge_error"] = "no_challenge_value"
+                self._pending_challenge = None
+                return False
+
+            # Verify challenge
+            if received_challenge != self._pending_challenge:
+                logger.log_event(
+                    "chat",
+                    "eventsub_challenge_mismatch",
+                    level=30,
+                    user=self._username,
+                    expected=self._pending_challenge,
+                    received=received_challenge,
+                )
+                self._pending_challenge = None
+                return False
+
+            # Send response
+            response = {"type": "challenge_response", "challenge": received_challenge}
+            await ws.send_json(response)
+            logger.log_event(
+                "chat",
+                "eventsub_challenge_response_sent",
+                user=self._username,
+                challenge=received_challenge,
+            )
+            handshake_details["challenge_response_sent"] = True
+
+            self._pending_challenge = None
+            logger.log_event(
+                "chat",
+                "eventsub_challenge_waiting_welcome",
+                user=self._username,
+            )
+            return True
+
+        except Exception as e:
+            handshake_details["challenge_error"] = f"challenge_parse_error: {e}"
+            self._pending_challenge = None
+            return False
+
+    async def _process_welcome_message(self, ws, handshake_details):
+        """Process the welcome message after connection or challenge."""
+        try:
             welcome = await asyncio.wait_for(ws.receive(), timeout=10)
             handshake_details["welcome_type"] = str(getattr(welcome, "type", None))
             handshake_details["welcome_raw"] = getattr(welcome, "data", None)
-            # Explicitly record CLOSE/ERROR frames to help triage server-side
-            # rejections (for example Twitch sending a close code instead of the
-            # expected JSON TEXT welcome). Keep existing behavior of failing the
-            # handshake but provide richer details in logs.
-            if (
-                welcome.type == aiohttp.WSMsgType.CLOSE
-                or welcome.type == aiohttp.WSMsgType.CLOSING
-            ):
-                handshake_details["error"] = "closed_by_server"
-                # `welcome.data` is usually the close code; `welcome.extra` may
-                # contain additional reason text depending on the transport.
-                close_code = getattr(welcome, "data", None)
-                handshake_details["close_code"] = close_code
-                handshake_details["close_reason"] = getattr(welcome, "extra", None)
-                # Map known close codes to actions. We make conservative
-                # assumptions about codes that indicate authentication issues.
-                # If an auth-related code is observed, trigger the
-                # token-invalid callback (if configured) so higher layers can
-                # refresh tokens.
-                action = self._handle_close_action(close_code)
-                handshake_details["mapped_action"] = action
-                return False, handshake_details
+
+            # Handle close frames
+            if welcome.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING):
+                return await self._handle_close_frame(welcome, handshake_details)
+
+            # Handle errors
             if welcome.type == aiohttp.WSMsgType.ERROR:
                 handshake_details["error"] = "ws_error"
                 handshake_details["exception"] = getattr(welcome, "data", None)
                 return False, handshake_details
+
+            # Validate text message
             if welcome.type != aiohttp.WSMsgType.TEXT:
                 handshake_details["error"] = "bad_welcome_type"
                 return False, handshake_details
-            try:
-                data = json.loads(welcome.data)
-                self._session_id = data.get("payload", {}).get("session", {}).get("id")
-                handshake_details["session_id"] = self._session_id
-                handshake_details["welcome_json"] = data
-                # On successful handshake, if we had a pending reconnect
-                # session id provided by Twitch, clear it — the session has
-                # now been established (either resumed or replaced).
-                self._pending_reconnect_session_id = None
-            except Exception as e:
-                handshake_details["error"] = f"welcome_parse_error: {e}"
-                return False, handshake_details
+
+            # Parse JSON
+            data = json.loads(welcome.data)
+            self._session_id = data.get("payload", {}).get("session", {}).get("id")
+            handshake_details["session_id"] = self._session_id
+            handshake_details["welcome_json"] = data
+
             if not self._session_id:
                 handshake_details["error"] = "no_session_id"
                 return False, handshake_details
+
             return True, handshake_details
+
         except Exception as e:
-            return False, {"exception": str(e)}
+            handshake_details["error"] = f"welcome_parse_error: {e}"
+            return False, handshake_details
+
+    async def _handle_close_frame(self, welcome, handshake_details):
+        """Handle WebSocket close frames during handshake."""
+        handshake_details["error"] = "closed_by_server"
+        close_code = getattr(welcome, "data", None)
+        handshake_details["close_code"] = close_code
+        handshake_details["close_reason"] = getattr(welcome, "extra", None)
+
+        action = self._handle_close_action(close_code)
+        handshake_details["mapped_action"] = action
+        return False, handshake_details
 
     async def _safe_close(self) -> None:
         try:
