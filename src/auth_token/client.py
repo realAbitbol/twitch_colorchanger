@@ -139,8 +139,8 @@ class TokenClient:
                         refresh_token,
                         final_expiry,
                     )
-                logging.warning(
-                    f"⏳ Token valid but expiring soon - scheduling refresh user={username}"
+                logging.info(
+                    f"⏰ Token of {username} is still valid but expiring soon - scheduling refresh"
                 )
 
         # Need refresh token to proceed
@@ -189,7 +189,7 @@ class TokenClient:
                         expiry = datetime.now(UTC) + timedelta(seconds=safe_expires)
                     human_expires = format_duration(expires_in)
                     logging.info(
-                        f"Token refreshed (lifetime {human_expires}) user={username} attempt={1} expires_in={expires_in}"
+                        f"☑️ Token refreshed for user {username} (lifetime {human_expires})"
                     )
                     return TokenResult(
                         TokenOutcome.REFRESHED, new_access, new_refresh, expiry

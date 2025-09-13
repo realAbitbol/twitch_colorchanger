@@ -250,4 +250,4 @@ class ColorChangeService:
         self.bot.last_color = color
         if not is_preset:
             self.bot._hex_rejection_strikes = 0
-        logging.info(f"Color changed to {color}")
+        logging.info(f"🎨 Color of {self.bot.username} changed to {color}")

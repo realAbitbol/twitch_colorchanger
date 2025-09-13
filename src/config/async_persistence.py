@@ -114,7 +114,7 @@ def _log_batch_start(count: int) -> None:
         count: Number of pending updates.
     """
     try:  # noqa: SIM105
-        logging.info(
+        logging.debug(
             f"📤 Config batch flush count={count} debounce_seconds={_DEBOUNCE_SECONDS}"
         )
     except Exception as e:  # noqa: BLE001

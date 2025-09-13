@@ -189,7 +189,7 @@ class ConfigRepository:
             timestamp = int(time.time())
             backup_name = backup_dir / f"{config_path.name}.bak.{timestamp}"
             shutil.copy2(config_path, backup_name)
-            logging.info("🗄️ Config backup created")
+            logging.debug("🗄️ Config backup created")
             backups = sorted(
                 glob.glob(str(backup_dir / f"{config_path.name}.bak.*")),
                 reverse=True,
@@ -208,6 +208,6 @@ class ConfigRepository:
             with open(self.path, encoding="utf-8") as f:
                 data = json.load(f)
             users_list = data.get("users", []) if isinstance(data, dict) else []
-            logging.info(f"🔍 Verification read user_count={len(users_list)}")
+            logging.debug(f"🔍 Verification read user_count={len(users_list)}")
         except Exception as e:  # noqa: BLE001
             logging.error(f"💥 Atomic config save failed: {type(e).__name__}")

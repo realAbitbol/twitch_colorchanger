@@ -63,7 +63,7 @@ class ColorChanger:
         current_color = await self._get_current_color()
         if current_color:
             self.last_color = current_color
-            logging.info(
+            logging.debug(
                 f"🎨 Initialized with current color {current_color} user={self.username}"
             )
 
@@ -260,7 +260,7 @@ class ColorChanger:
             if isinstance(first, dict):
                 color = first.get("color")
                 if isinstance(color, str):
-                    logging.info(f"🎨 Current color is {color} user={self.username}")
+                    logging.info(f"🎨 Current color of {self.username} is {color}")
                     return color
         if status_code == 401:
             return None
