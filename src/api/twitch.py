@@ -12,6 +12,8 @@ from typing import Any
 
 import aiohttp
 
+from ..errors.handling import handle_api_error
+
 
 class TwitchAPI:
     """Asynchronous client for Twitch Helix API endpoints.
@@ -69,9 +71,15 @@ class TwitchAPI:
         async with self._session.request(
             method, url, headers=headers, params=params, json=json_body
         ) as resp:
+
+            async def operation():
+                return await resp.json()
+
             try:
-                data = await resp.json()
-            except Exception:  # noqa: BLE001
+                data = await handle_api_error(
+                    operation, f"Twitch API {method} {endpoint}"
+                )
+            except Exception:
                 data = {}
             return data, resp.status, dict(resp.headers)
 
@@ -85,14 +93,18 @@ class TwitchAPI:
         Returns:
             dict[str, Any] | None: Token validation payload if valid, None otherwise.
         """
-        url = "https://id.twitch.tv/oauth2/validate"
-        headers = {"Authorization": f"OAuth {access_token}"}
-        try:
+
+        async def operation():
+            url = "https://id.twitch.tv/oauth2/validate"
+            headers = {"Authorization": f"OAuth {access_token}"}
             async with self._session.get(url, headers=headers) as resp:
                 if resp.status == 200:
                     return await resp.json()
                 return None
-        except Exception:  # noqa: BLE001
+
+        try:
+            return await handle_api_error(operation, "Twitch token validation")
+        except Exception:
             return None
 
     async def get_users_by_login(
@@ -178,8 +190,7 @@ class TwitchAPI:
             "Content-Type": "application/json",
         }
 
-    @staticmethod
-    async def _safe_rows(resp: aiohttp.ClientResponse) -> list[dict[str, Any]]:
+    async def _safe_rows(self, resp: aiohttp.ClientResponse) -> list[dict[str, Any]]:
         """Safely extract data rows from an aiohttp response.
 
         Args:
@@ -188,9 +199,13 @@ class TwitchAPI:
         Returns:
             list[dict[str, Any]]: List of data dictionaries, or empty list on error.
         """
+
+        async def operation():
+            return await resp.json()
+
         try:
-            data = await resp.json()
-        except Exception:  # noqa: BLE001
+            data = await handle_api_error(operation, "Twitch API response parsing")
+        except Exception:
             return []
         if resp.status != 200 or not isinstance(data, dict):
             return []

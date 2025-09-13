@@ -15,10 +15,10 @@ async def test_start_all_bots_success():
     users_config = [
         {
             "username": "user1",
-            "access_token": "token1",
+            "access_token": "a" * 20,
             "refresh_token": "refresh1",
-            "client_id": "cid1",
-            "client_secret": "csec1",
+            "client_id": "b" * 10,
+            "client_secret": "c" * 10,
             "channels": ["#chan1"],
             "is_prime_or_turbo": True,
             "enabled": True,
@@ -63,10 +63,10 @@ async def test_start_all_bots_create_fails():
     users_config = [
         {
             "username": "user1",
-            "access_token": "token1",
+            "access_token": "a" * 20,
             "refresh_token": "refresh1",
-            "client_id": "cid1",
-            "client_secret": "csec1",
+            "client_id": "b" * 10,
+            "client_secret": "c" * 10,
             "channels": ["#chan1"],
             "is_prime_or_turbo": True,
             "enabled": True,
@@ -111,10 +111,10 @@ async def test_run_bots_success():
     users_config = [
         {
             "username": "user1",
-            "access_token": "token1",
+            "access_token": "a" * 20,
             "refresh_token": "refresh1",
-            "client_id": "cid1",
-            "client_secret": "csec1",
+            "client_id": "b" * 10,
+            "client_secret": "c" * 10,
             "channels": ["#chan1"],
             "is_prime_or_turbo": True,
             "enabled": True,
@@ -151,10 +151,10 @@ async def test_run_bots_start_fails():
     users_config = [
         {
             "username": "user1",
-            "access_token": "token1",
+            "access_token": "a" * 20,
             "refresh_token": "refresh1",
-            "client_id": "cid1",
-            "client_secret": "csec1",
+            "client_id": "b" * 10,
+            "client_secret": "c" * 10,
             "channels": ["#chan1"],
             "is_prime_or_turbo": True,
             "enabled": True,
@@ -191,10 +191,10 @@ async def test_create_bot_success():
     users_config = [
         {
             "username": "user1",
-            "access_token": "token1",
+            "access_token": "a" * 20,
             "refresh_token": "refresh1",
-            "client_id": "cid1",
-            "client_secret": "csec1",
+            "client_id": "b" * 10,
+            "client_secret": "c" * 10,
             "channels": ["#chan1"],
             "is_prime_or_turbo": True,
             "enabled": True,
@@ -202,10 +202,10 @@ async def test_create_bot_success():
     ]
     manager = BotManager(users_config, "test.conf", context=ctx)
 
-    bot = manager._create_bot(users_config[0])
+    bot = manager._create_bot(manager.users_config[0])
 
     assert bot.username == "user1"
-    assert bot.access_token == "token1"
+    assert bot.access_token == "a" * 20
     assert bot.channels == ["#chan1"]
     assert bot.enabled is True
 
@@ -216,10 +216,10 @@ async def test_create_bot_no_context():
     users_config = [
         {
             "username": "user1",
-            "access_token": "token1",
+            "access_token": "a" * 20,
             "refresh_token": "refresh1",
-            "client_id": "cid1",
-            "client_secret": "csec1",
+            "client_id": "b" * 10,
+            "client_secret": "c" * 10,
             "channels": ["#chan1"],
             "is_prime_or_turbo": True,
             "enabled": True,
@@ -241,10 +241,10 @@ async def test_restart_with_new_config_success():
     users_config = [
         {
             "username": "user1",
-            "access_token": "token1",
+            "access_token": "a" * 20,
             "refresh_token": "refresh1",
-            "client_id": "cid1",
-            "client_secret": "csec1",
+            "client_id": "b" * 10,
+            "client_secret": "c" * 10,
             "channels": ["#chan1"],
             "is_prime_or_turbo": True,
             "enabled": True,
@@ -254,10 +254,10 @@ async def test_restart_with_new_config_success():
     manager.new_config = [
         {
             "username": "user2",
-            "access_token": "token2",
+            "access_token": "d" * 20,
             "refresh_token": "refresh2",
-            "client_id": "cid2",
-            "client_secret": "csec2",
+            "client_id": "e" * 10,
+            "client_secret": "f" * 10,
             "channels": ["#chan2"],
             "is_prime_or_turbo": True,
             "enabled": True,
@@ -299,10 +299,10 @@ async def test_restart_with_new_config_start_fails():
     users_config = [
         {
             "username": "user1",
-            "access_token": "token1",
+            "access_token": "a" * 20,
             "refresh_token": "refresh1",
-            "client_id": "cid1",
-            "client_secret": "csec1",
+            "client_id": "b" * 10,
+            "client_secret": "c" * 10,
             "channels": ["#chan1"],
             "is_prime_or_turbo": True,
             "enabled": True,
@@ -312,10 +312,10 @@ async def test_restart_with_new_config_start_fails():
     manager.new_config = [
         {
             "username": "user2",
-            "access_token": "token2",
+            "access_token": "d" * 20,
             "refresh_token": "refresh2",
-            "client_id": "cid2",
-            "client_secret": "csec2",
+            "client_id": "e" * 10,
+            "client_secret": "f" * 10,
             "channels": ["#chan2"],
             "is_prime_or_turbo": True,
             "enabled": True,

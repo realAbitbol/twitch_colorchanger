@@ -262,7 +262,8 @@ async def test_log_scopes_if_possible_success():
         http_session=session,
     )
 
-    with patch("src.api.twitch.TwitchAPI") as mock_api_class:
+    # Updated patch path to src.bot.token_refresher.TwitchAPI to match import location
+    with patch("src.bot.token_refresher.TwitchAPI") as mock_api_class:
         mock_api = MagicMock()
         mock_api.validate_token.return_value = {"scopes": ["user:read:chat", "user:manage:chat_color"]}
         mock_api_class.return_value = mock_api
@@ -310,7 +311,8 @@ async def test_log_scopes_if_possible_validation_fails():
         http_session=session,
     )
 
-    with patch("src.api.twitch.TwitchAPI") as mock_api_class:
+    # Updated patch path to src.bot.token_refresher.TwitchAPI to match import location
+    with patch("src.bot.token_refresher.TwitchAPI") as mock_api_class:
         mock_api = MagicMock()
         mock_api.validate_token.side_effect = Exception("Validation failed")
         mock_api_class.return_value = mock_api
@@ -336,13 +338,14 @@ async def test_normalize_channels_if_needed_changed():
         http_session=session,
     )
 
-    with patch("src.bot.core.normalize_channels_list", return_value=(["#test", "#test2"], True)) as mock_norm, \
-         patch.object(bot, "_persist_normalized_channels", new_callable=AsyncMock) as mock_persist:
+    # Updated patch path to src.bot.token_refresher.normalize_channels_list to match import location
+    with patch("src.bot.token_refresher.normalize_channels_list", return_value=(["#test", "#test2"], True)) as mock_norm, \
+          patch.object(bot, "_persist_normalized_channels", new_callable=AsyncMock) as mock_persist:
         result = await bot._normalize_channels_if_needed()
 
         assert result == ["#test", "#test2"]
         assert bot.channels == ["#test", "#test2"]
-        mock_norm.assert_called_once_with(["test", "Test2"])
+        mock_norm.assert_called_once_with(["#test", "#Test2"])
         mock_persist.assert_called_once()
 
 
@@ -362,8 +365,9 @@ async def test_normalize_channels_if_needed_no_change():
         http_session=session,
     )
 
-    with patch("src.bot.core.normalize_channels_list", return_value=(["#test"], False)) as mock_norm, \
-         patch.object(bot, "_persist_normalized_channels", new_callable=AsyncMock) as mock_persist:
+    # Updated patch path to src.bot.token_refresher.normalize_channels_list to match import location
+    with patch("src.bot.token_refresher.normalize_channels_list", return_value=(["#test"], False)) as mock_norm, \
+          patch.object(bot, "_persist_normalized_channels", new_callable=AsyncMock) as mock_persist:
         result = await bot._normalize_channels_if_needed()
 
         assert result == ["#test"]
@@ -579,7 +583,8 @@ async def test_persist_token_changes_success():
         config_file="test.conf",
     )
 
-    with patch("src.bot.core.async_update_user_in_config", new_callable=AsyncMock) as mock_update:
+    # Updated patch path to src.bot.token_refresher.async_update_user_in_config to match import location
+    with patch("src.bot.token_refresher.async_update_user_in_config", new_callable=AsyncMock) as mock_update:
         mock_update.return_value = True
         await bot._persist_token_changes()
 
@@ -623,8 +628,9 @@ async def test_persist_token_changes_update_fails():
         config_file="test.conf",
     )
 
-    with patch("src.bot.core.async_update_user_in_config", new_callable=AsyncMock) as mock_update, \
-         patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+    # Updated patch path to src.bot.token_refresher.async_update_user_in_config to match import location
+    with patch("src.bot.token_refresher.async_update_user_in_config", new_callable=AsyncMock) as mock_update, \
+          patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
         mock_update.return_value = False
         await bot._persist_token_changes()
 

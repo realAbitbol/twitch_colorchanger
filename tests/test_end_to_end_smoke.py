@@ -65,7 +65,7 @@ async def test_end_to_end_smoke(tmp_path: Path, monkeypatch):
         assert dummy.refresh_calls >= 1, "Expected at least one refresh in smoke test (manual or background)"
         # Simulate persistence of updated tokens via queue
         cfg = tmp_path / "users.json"
-        await queue_user_update({"username": "smoke", "channels": ["#a"]}, str(cfg))
+        await queue_user_update({"username": "smoke", "channels": ["#a"], "access_token": "a" * 20, "client_id": "b" * 10, "client_secret": "c" * 10}, str(cfg))
         await flush_pending_updates(str(cfg))
         assert cfg.exists()
         content = json.loads(cfg.read_text())

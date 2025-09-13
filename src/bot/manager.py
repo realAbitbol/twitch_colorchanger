@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 import aiohttp
 
 from ..application_context import ApplicationContext
+from ..config.model import UserConfig
 from ..manager import ManagerStatistics
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -56,7 +57,8 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             config_file: Path to configuration file for persistence.
             context: Application context with shared services.
         """
-        self.users_config = users_config
+        # Convert dict configs to UserConfig dataclasses for type safety
+        self.users_config = [UserConfig.from_dict(u) for u in users_config]
         self.config_file = config_file
         self.bots: list[TwitchColorBot] = []
         self.tasks: list[asyncio.Task[Any]] = []
@@ -86,7 +88,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                 self.bots.append(bot)
             except Exception as e:  # noqa: BLE001
                 logging.error(
-                    f"💥 Failed to create bot: {str(e)} user={user_config.get('username')}"
+                    f"💥 Failed to create bot: {str(e)} user={user_config.username}"
                 )
         if not self.bots:
             logging.error("⚠️ No bots created - aborting start")
@@ -100,31 +102,31 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         logging.debug("✅ All bots started successfully")
         return True
 
-    def _create_bot(self, user_config: dict[str, Any]) -> TwitchColorBot:
+    def _create_bot(self, user_config: UserConfig) -> TwitchColorBot:
         """Create a TwitchColorBot instance from user configuration.
 
         Args:
-            user_config: User configuration dictionary.
+            user_config: User configuration dataclass.
 
         Returns:
             Configured TwitchColorBot instance.
         """
         if not self.context or not self.context.session:
             raise RuntimeError("Context/session not initialized")
-        username = user_config["username"]
+        username = user_config.username
         bot = TwitchColorBot(
             context=self.context,
-            token=user_config["access_token"],
-            refresh_token=user_config.get("refresh_token", ""),
-            client_id=user_config.get("client_id", ""),
-            client_secret=user_config.get("client_secret", ""),
+            token=user_config.access_token or "",
+            refresh_token=user_config.refresh_token or "",
+            client_id=user_config.client_id or "",
+            client_secret=user_config.client_secret or "",
             nick=username,
-            channels=user_config["channels"],
+            channels=user_config.channels,
             http_session=self.context.session,
-            is_prime_or_turbo=user_config.get("is_prime_or_turbo", True),
+            is_prime_or_turbo=user_config.is_prime_or_turbo,
             config_file=self.config_file,
             user_id=None,
-            enabled=user_config.get("enabled", True),
+            enabled=user_config.enabled,
         )
         logging.debug(f"🆕 Bot created: {username}")
         return bot
@@ -202,7 +204,11 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         self.bots.clear()
         self.tasks.clear()
         old_count = len(self.users_config)
-        self.users_config = self.new_config
+        self.users_config = (
+            [UserConfig.from_dict(u) for u in self.new_config]
+            if self.new_config
+            else []
+        )
         new_count = len(self.users_config)
         logging.info(f"🛠️ Configuration updated old={old_count} new={new_count}")
         success = await self._start_all_bots()
@@ -211,7 +217,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             try:
                 # Prune tokens for users no longer present
                 if self.context and self.context.token_manager:
-                    active = {u.get("username", "").lower() for u in self.users_config}
+                    active = {u.username.lower() for u in self.users_config}
                     self.context.token_manager.prune(active)
             except Exception as e:  # noqa: BLE001
                 logging.debug(f"⚠️ Error pruning tokens: {str(e)}")

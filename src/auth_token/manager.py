@@ -446,6 +446,7 @@ class TokenManager:
         self._hook_tasks.append(task)
 
         def _cb(t: asyncio.Task[T]) -> None:  # noqa: D401
+            self._hook_tasks.remove(t)
             if t.cancelled():
                 return
             exc = t.exception()
@@ -515,9 +516,9 @@ class TokenManager:
                     )
                 last_loop = now
                 await asyncio.sleep(base * _jitter_rng.uniform(0.5, 1.5))
-            except asyncio.CancelledError:
-                raise
             except Exception as e:  # noqa: BLE001
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logging.error(f"💥 Background token manager loop error: {str(e)}")
                 await asyncio.sleep(base * 2)
 
@@ -526,7 +527,7 @@ class TokenManager:
     ) -> None:
         """Handle refresh/validation logic for a single user (extracted to reduce complexity)."""
         remaining = self._remaining_seconds(info)
-        self._log_remaining_detail(username, info, remaining)
+        self._log_remaining_detail(username, remaining)
         # Unified unknown-expiry + periodic validation resolution.
         remaining = await self._maybe_periodic_or_unknown_resolution(
             username, info, remaining
@@ -608,9 +609,7 @@ class TokenManager:
             )
             return self._remaining_seconds(info)
 
-    def _log_remaining_detail(
-        self, username: str, info: TokenInfo, remaining: float | None
-    ) -> None:
+    def _log_remaining_detail(self, username: str, remaining: float | None) -> None:
         # Emit remaining time every cycle for observability (even when no refresh triggered).
         if remaining is None:
             logging.debug(
@@ -628,13 +627,6 @@ class TokenManager:
         else:
             icon = "🔐"
         # Expiry timestamp not included in human message (simplified per request).
-        if info.expiry:
-            # Still normalize timezone (side-effect free; retained if future logging re-introduces expiry).
-            exp_dt = info.expiry
-            if exp_dt.tzinfo is None:
-                _ = exp_dt.replace(tzinfo=UTC)
-            else:
-                _ = exp_dt.astimezone(UTC)
         # Build a clearer human message: explicitly mention token remaining time (no extra parenthetical details).
         logging.debug(
             f"{icon} Access token validity: {human} remaining user={username} remaining_seconds={int_remaining}"
