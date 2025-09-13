@@ -15,7 +15,18 @@ from typing import Any
 
 
 class ConfigRepository:
+    """Repository for managing user configuration files.
+
+    Handles loading, saving, and caching of user configurations with
+    atomic writes and backup management.
+    """
+
     def __init__(self, path: str | os.PathLike[str]):
+        """Initialize the ConfigRepository.
+
+        Args:
+            path: Path to the configuration file.
+        """
         self.path = str(path)
         self._last_checksum: str | None = None
         self._file_mtime: float | None = None
@@ -23,6 +34,11 @@ class ConfigRepository:
         self._cached_users: list[dict[str, Any]] | None = None
 
     def load_raw(self) -> list[dict[str, Any]]:
+        """Load raw user configurations from the file.
+
+        Returns:
+            List of user config dictionaries.
+        """
         try:
             st = os.stat(self.path)
             mtime = st.st_mtime
@@ -66,6 +82,14 @@ class ConfigRepository:
             return []
 
     def _compute_checksum(self, users: list[dict[str, Any]]) -> str:
+        """Compute SHA256 checksum of user configurations.
+
+        Args:
+            users: List of user config dictionaries.
+
+        Returns:
+            Hexadecimal checksum string.
+        """
         h = hashlib.sha256()
         # Stable JSON representation
         payload = json.dumps(
@@ -75,6 +99,14 @@ class ConfigRepository:
         return h.hexdigest()
 
     def save_users(self, users: list[dict[str, Any]]) -> bool:
+        """Save user configurations to the file.
+
+        Args:
+            users: List of user config dictionaries.
+
+        Returns:
+            True if the file was written, False if skipped due to no changes.
+        """
         checksum = self._compute_checksum(users)
         if self._last_checksum == checksum:
             logging.info(f"Skipped save (checksum match) users={len(users)}")
@@ -86,6 +118,7 @@ class ConfigRepository:
         return True
 
     def _prepare_dir(self) -> None:
+        """Prepare the configuration directory if it doesn't exist."""
         config_dir = os.path.dirname(self.path)
         if config_dir and not os.path.exists(config_dir):
             os.makedirs(config_dir, exist_ok=True)
@@ -101,6 +134,11 @@ class ConfigRepository:
                 pass
 
     def _atomic_write(self, data: dict[str, Any]) -> None:
+        """Perform atomic write of configuration data.
+
+        Args:
+            data: Configuration data to write.
+        """
         config_path = Path(self.path)
         lock_path = config_path.with_suffix(".lock")
         temp_path: str | None = None
@@ -139,6 +177,11 @@ class ConfigRepository:
                 pass
 
     def _create_backup(self, config_path: Path) -> None:
+        """Create a rotating backup of the configuration file.
+
+        Args:
+            config_path: Path to the configuration file.
+        """
         if not (config_path.exists() and config_path.is_file()):
             return
         try:  # pragma: no cover - filesystem timing nuances
@@ -160,6 +203,7 @@ class ConfigRepository:
             logging.debug(f"💥 Config backup failed: {str(e)}")
 
     def verify_readback(self) -> None:
+        """Verify that the saved configuration can be read back successfully."""
         try:
             with open(self.path, encoding="utf-8") as f:
                 data = json.load(f)

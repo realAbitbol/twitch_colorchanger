@@ -14,25 +14,58 @@ from .device_flow import DeviceCodeFlow
 
 
 class TokenProvisioner:
+    """Handles token provisioning for users.
+
+    Provides methods to provision tokens, either from existing ones or
+    through interactive device flow authorization.
+    """
+
     def __init__(self, session: aiohttp.ClientSession):
+        """Initialize the token provisioner.
+
+        Args:
+            session: HTTP session for API requests.
+        """
         self.session = session
 
     async def provision(
         self,
-        username: str,
         client_id: str,
         client_secret: str,
         access_token: str | None,
         refresh_token: str | None,
         expiry: datetime | None,
     ) -> tuple[str | None, str | None, datetime | None]:
+        """Provision tokens for a user.
+
+        If tokens are provided, returns them; otherwise initiates interactive authorization.
+
+        Args:
+            client_id: Twitch client ID.
+            client_secret: Twitch client secret.
+            access_token: Existing access token.
+            refresh_token: Existing refresh token.
+            expiry: Existing expiry datetime.
+
+        Returns:
+            Tuple of (access_token, refresh_token, expiry).
+        """
         if access_token and refresh_token:
             return access_token, refresh_token, expiry
-        return await self._interactive_authorize(username, client_id, client_secret)
+        return await self._interactive_authorize(client_id, client_secret)
 
     async def _interactive_authorize(
-        self, username: str, client_id: str, client_secret: str
+        self, client_id: str, client_secret: str
     ) -> tuple[str | None, str | None, datetime | None]:
+        """Perform interactive device flow authorization.
+
+        Args:
+            client_id: Twitch client ID.
+            client_secret: Twitch client secret.
+
+        Returns:
+            Tuple of (access_token, refresh_token, expiry) on success, None otherwise.
+        """
         flow = DeviceCodeFlow(client_id, client_secret)
         try:
             device_data = await flow.request_device_code()
@@ -52,6 +85,7 @@ class TokenProvisioner:
             lifetime = token_data.get("expires_in")
             expiry = None
             if lifetime:
+                # Apply safety buffer to expiry
                 safe = max(lifetime - TOKEN_REFRESH_SAFETY_BUFFER_SECONDS, 0)
                 expiry = datetime.now(UTC) + timedelta(seconds=safe)
             logging.info(f"Authorized (token lifetime {format_duration(lifetime)})")

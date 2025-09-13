@@ -14,7 +14,12 @@ class DeviceCodeFlow:
     """Handles OAuth Device Authorization Grant flow for automatic token generation"""
 
     def __init__(self, client_id: str, client_secret: str):
-        """Initialize device flow state."""
+        """Initialize the device code flow handler.
+
+        Args:
+            client_id: Twitch application client ID.
+            client_secret: Twitch application client secret.
+        """
         self.client_id = client_id
         self.client_secret = client_secret
         # Public OAuth endpoint constants (well-known; not secrets or passwords)
@@ -27,7 +32,11 @@ class DeviceCodeFlow:
         self.poll_interval = 5  # seconds
 
     async def request_device_code(self) -> dict[str, Any] | None:
-        """Request a device code from Twitch"""
+        """Request a device code from Twitch for OAuth flow.
+
+        Returns:
+            Device code data on success, None on failure.
+        """
         data = {
             "client_id": self.client_id,
             # Include EventSub chat reading scope so subscriptions succeed.
@@ -58,7 +67,17 @@ class DeviceCodeFlow:
     async def poll_for_tokens(
         self, device_code: str, expires_in: int
     ) -> dict[str, Any] | None:
-        """Poll for token authorization completion"""
+        """Poll Twitch for token authorization completion.
+
+        Continuously polls until authorization succeeds, fails, or times out.
+
+        Args:
+            device_code: Device code from initial request.
+            expires_in: Total seconds before device code expires.
+
+        Returns:
+            Token data on success, None on failure or timeout.
+        """
         data = {
             "client_id": self.client_id,
             "client_secret": self.client_secret,
@@ -85,6 +104,7 @@ class DeviceCodeFlow:
                             return result
 
                         if response.status == 400:
+                            # Handle specific polling errors (pending, slow_down, etc.)
                             error_result = self._handle_polling_error(
                                 result, elapsed, poll_count
                             )
@@ -113,17 +133,26 @@ class DeviceCodeFlow:
     def _handle_polling_error(
         self, result: dict[str, Any], elapsed: int, poll_count: int
     ) -> dict[str, Any] | None:
-        """Handle polling errors and return None to continue, or a value to return"""
+        """Handle specific polling errors from Twitch API.
+
+        Args:
+            result: Response JSON from polling request.
+            elapsed: Seconds elapsed since polling started.
+            poll_count: Number of polls performed.
+
+        Returns:
+            None to continue polling, empty dict to stop.
+        """
         # Twitch API returns errors in 'message' field, not 'error'
         error = result.get("message", result.get("error", "unknown"))
         error_description = result.get("error_description", "")
 
-        # Log the full error details for debugging (only for non-pending errors)
+        # Log full error details for debugging (only for non-pending errors)
         if error != "authorization_pending":
             logging.debug(f"🧪 Polling error details logged details={str(result)}")
 
         if error == "authorization_pending":
-            # Still waiting for user authorization
+            # Still waiting for user authorization; continue polling
             if poll_count % 6 == 0:  # Show message every 30 seconds
                 logging.info(
                     f"Waiting for authorization {format_duration(elapsed)} elapsed polls={poll_count}"
@@ -131,7 +160,7 @@ class DeviceCodeFlow:
             return None  # Continue polling
 
         if error == "slow_down":
-            # Increase polling interval
+            # Server requests slower polling; adjust interval
             self.poll_interval = min(self.poll_interval + 1, 10)
             logging.warning(
                 f"Server requested slower polling interval={self.poll_interval}s elapsed={elapsed} polls={poll_count}"
@@ -148,7 +177,7 @@ class DeviceCodeFlow:
             logging.warning(f"User denied access elapsed={elapsed} polls={poll_count}")
             return {}  # Stop polling
 
-        # Unknown error
+        # Unknown error; stop polling
         if error_description:
             logging.error(f"💥 Device flow error: {error} {error_description}")
         else:
@@ -156,9 +185,16 @@ class DeviceCodeFlow:
         return {}  # Stop polling
 
     async def get_user_tokens(self, username: str) -> tuple[str, str] | None:
-        """
-        Complete device code flow to get user tokens
-        Returns (access_token, refresh_token) on success, None on failure
+        """Complete the full device code flow to obtain user tokens.
+
+        Orchestrates the three-step process: request device code, prompt user,
+        and poll for authorization completion.
+
+        Args:
+            username: Username for logging purposes.
+
+        Returns:
+            Tuple of (access_token, refresh_token) on success, None on failure.
         """
         logging.info(
             f"Starting device authorization user={username} poll_interval={self.poll_interval}"

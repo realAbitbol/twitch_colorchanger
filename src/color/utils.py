@@ -29,6 +29,15 @@ TWITCH_PRESET_COLORS: Sequence[str] = (
 
 
 def _filter_exclude(colors: Sequence[str], exclude: Iterable[str] | None) -> list[str]:
+    """Filter out excluded colors from a list.
+
+    Args:
+        colors (Sequence[str]): The list of colors to filter.
+        exclude (Iterable[str] | None): Colors to exclude.
+
+    Returns:
+        list[str]: Filtered list of colors.
+    """
     if not exclude:
         return list(colors)
     exclude_set = {e.lower() for e in exclude if e}
@@ -38,8 +47,11 @@ def _filter_exclude(colors: Sequence[str], exclude: Iterable[str] | None) -> lis
 def get_random_preset(exclude: str | Iterable[str] | None = None) -> str:
     """Return a random Twitch preset color.
 
-    exclude can be a single color or iterable of colors to avoid.
-    Falls back to full list if exclusion removes all options.
+    Args:
+        exclude (str | Iterable[str] | None): Colors to exclude. Can be a single color or iterable.
+
+    Returns:
+        str: A random preset color, excluding specified colors if possible.
     """
     if isinstance(exclude, str):
         excl_iter: Iterable[str] | None = [exclude]
@@ -53,7 +65,14 @@ def get_random_preset(exclude: str | Iterable[str] | None = None) -> str:
 
 
 def get_random_hex(exclude: str | Iterable[str] | None = None) -> str:
-    """Generate a visually pleasing random hex color (HSL strategy)."""
+    """Generate a visually pleasing random hex color using HSL strategy.
+
+    Args:
+        exclude (str | Iterable[str] | None): Colors to exclude.
+
+    Returns:
+        str: A random hex color string.
+    """
     if isinstance(exclude, str):
         exclude_set = {exclude.lower()}
     elif exclude:

@@ -22,6 +22,25 @@ _jitter_rng = SystemRandom()
 
 
 class BotManager:  # pylint: disable=too-many-instance-attributes
+    """Manager for multiple TwitchColorBot instances.
+
+    Handles creation, lifecycle management, and coordination of multiple bot instances.
+    Provides restart functionality for configuration changes and graceful shutdown.
+    Manages shared HTTP sessions and statistics aggregation across all bots.
+
+    Attributes:
+        users_config: List of user configuration dictionaries.
+        config_file: Path to configuration file for persistence.
+        bots: List of active TwitchColorBot instances.
+        tasks: List of asyncio tasks for bot execution.
+        running: Whether the manager is currently running.
+        shutdown_initiated: Flag for shutdown initiation.
+        restart_requested: Flag for restart request.
+        new_config: New configuration for restart.
+        context: Application context with shared services.
+        http_session: Shared aiohttp ClientSession.
+    """
+
     tasks: list[asyncio.Task[Any]]
 
     def __init__(
@@ -30,6 +49,13 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         config_file: str | None = None,
         context: ApplicationContext | None = None,
     ) -> None:
+        """Initialize the BotManager.
+
+        Args:
+            users_config: List of user configuration dictionaries.
+            config_file: Path to configuration file for persistence.
+            context: Application context with shared services.
+        """
         self.users_config = users_config
         self.config_file = config_file
         self.bots: list[TwitchColorBot] = []
@@ -43,6 +69,13 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         self._stats_service = ManagerStatistics()
 
     async def _start_all_bots(self) -> bool:
+        """Start all bots from the user configuration.
+
+        Creates bot instances, launches their tasks, and sets running state.
+
+        Returns:
+            True if all bots started successfully, False otherwise.
+        """
         logging.info(f"▶️ Starting all bots (count={len(self.users_config)})")
         if not self.context:
             raise RuntimeError("ApplicationContext required")
@@ -68,6 +101,14 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         return True
 
     def _create_bot(self, user_config: dict[str, Any]) -> TwitchColorBot:
+        """Create a TwitchColorBot instance from user configuration.
+
+        Args:
+            user_config: User configuration dictionary.
+
+        Returns:
+            Configured TwitchColorBot instance.
+        """
         if not self.context or not self.context.session:
             raise RuntimeError("Context/session not initialized")
         username = user_config["username"]
@@ -89,6 +130,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         return bot
 
     async def _stop_all_bots(self) -> None:
+        """Stop all running bots and clean up resources."""
         if not self.running:
             return
         logging.warning("🛑 Stopping all bots")
@@ -99,6 +141,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         logging.info("🛑 All bots stopped")
 
     def _cancel_all_tasks(self) -> None:
+        """Cancel all running bot tasks."""
         for i, task in enumerate(self.tasks):
             try:
                 if task and not task.done():
@@ -108,6 +151,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                 logging.warning(f"💥 Error cancelling task index={i}: {str(e)}")
 
     def _close_all_bots(self) -> None:
+        """Close all bot instances."""
         for i, bot in enumerate(self.bots):
             try:
                 bot.close()
@@ -118,6 +162,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                 )
 
     async def _wait_for_task_completion(self) -> None:
+        """Wait for all bot tasks to complete and log any exceptions."""
         if not self.tasks:
             return
         try:
@@ -133,6 +178,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             self.tasks.clear()
 
     def stop(self) -> None:
+        """Initiate shutdown of all bots."""
         self.shutdown_initiated = True
         try:
             loop = asyncio.get_running_loop()
@@ -141,11 +187,23 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             pass
 
     def request_restart(self, new_users_config: list[dict[str, Any]]) -> None:
+        """Request a restart with new user configuration.
+
+        Args:
+            new_users_config: New list of user configuration dictionaries.
+        """
         logging.info("🔄 Config change detected - scheduling restart")
         self.new_config = new_users_config
         self.restart_requested = True
 
     async def _restart_with_new_config(self) -> bool:
+        """Restart all bots with the new configuration.
+
+        Saves statistics, stops old bots, starts new ones, and restores statistics.
+
+        Returns:
+            True if restart successful, False otherwise.
+        """
         if not self.new_config:
             return False
         logging.info("🔄 Restarting with new configuration")
@@ -172,18 +230,31 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         return success
 
     def _save_statistics(self) -> dict[str, dict[str, int]]:
+        """Save current bot statistics for restoration after restart.
+
+        Returns:
+            Dictionary of saved statistics.
+        """
         bots_iter: Iterable[_BotProto] = cast(Iterable["_BotProto"], self.bots)
         return self._stats_service.save(bots_iter)
 
     def _restore_statistics(self, saved: dict[str, dict[str, int]]) -> None:
+        """Restore saved statistics to the new bot instances.
+
+        Args:
+            saved: Dictionary of saved statistics.
+        """
         bots_iter: Iterable[_BotProto] = cast(Iterable["_BotProto"], self.bots)
         self._stats_service.restore(bots_iter, saved)
 
     def print_statistics(self) -> None:
+        """Print aggregated statistics for all bots."""
         bots_iter: Iterable[_BotProto] = cast(Iterable["_BotProto"], self.bots)
         self._stats_service.aggregate(bots_iter)
 
     def setup_signal_handlers(self) -> None:  # pragma: no cover
+        """Set up signal handlers for graceful shutdown on SIGINT/SIGTERM."""
+
         def handler(signum: int, _frame: object | None) -> None:  # noqa: D401
             # Idempotent signal handler: only trigger once
             if self.shutdown_initiated:
@@ -199,6 +270,13 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
 
 
 async def _run_main_loop(manager: BotManager) -> None:
+    """Run the main event loop for the bot manager.
+
+    Monitors for shutdown/restart signals and handles bot task completion.
+
+    Args:
+        manager: The BotManager instance to monitor.
+    """
     while manager.running:
         await asyncio.sleep(1)
         if manager.shutdown_initiated:
@@ -209,7 +287,7 @@ async def _run_main_loop(manager: BotManager) -> None:
             ok = await manager._restart_with_new_config()
             if not ok:
                 logging.error("⚠️ Restart failed - keeping previous config")
-            continue
+                continue
         if all(task.done() for task in manager.tasks):
             logging.warning("⚠️ All bot tasks completed unexpectedly")
             logging.info("⚠️ Likely authentication or connection issue")
@@ -219,6 +297,15 @@ async def _run_main_loop(manager: BotManager) -> None:
 async def run_bots(
     users_config: list[dict[str, Any]], config_file: str | None = None
 ) -> None:
+    """Run the bot application with the given configuration.
+
+    Creates application context, initializes bot manager, starts bots,
+    and handles shutdown gracefully.
+
+    Args:
+        users_config: List of user configuration dictionaries.
+        config_file: Path to configuration file for persistence.
+    """
     from ..application_context import ApplicationContext  # local import
 
     context = await ApplicationContext.create()

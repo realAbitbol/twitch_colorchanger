@@ -29,6 +29,14 @@ _jitter_rng = SystemRandom()
 
 
 class TokenState(Enum):
+    """Enumeration of token freshness states.
+
+    Attributes:
+        FRESH: Token is recently obtained or refreshed.
+        STALE: Token is valid but nearing expiry.
+        EXPIRED: Token has expired and needs refresh.
+    """
+
     FRESH = "fresh"
     STALE = "stale"
     EXPIRED = "expired"
@@ -36,6 +44,22 @@ class TokenState(Enum):
 
 @dataclass
 class TokenInfo:
+    """Container for token information and metadata.
+
+    Attributes:
+        username: Associated username.
+        access_token: Current access token.
+        refresh_token: Refresh token for obtaining new access tokens.
+        client_id: Twitch client ID.
+        client_secret: Twitch client secret.
+        expiry: Token expiry datetime.
+        state: Current token state.
+        refresh_lock: Lock for thread-safe refresh operations.
+        last_validation: Timestamp of last validation.
+        forced_unknown_attempts: Count of forced refreshes for unknown expiry.
+        original_lifetime: Baseline lifetime in seconds when first known.
+    """
+
     username: str
     access_token: str
     refresh_token: str
@@ -52,16 +76,34 @@ class TokenInfo:
 
 
 class TokenManager:
+    """Singleton manager for handling Twitch OAuth tokens.
+
+    Manages token validation, refresh, and background monitoring for multiple users.
+    Uses a singleton pattern to ensure single instance per event loop.
+    """
+
     _instance = None  # Simple singleton; not thread-safe by design (single event loop).
     background_task: asyncio.Task[Any] | None
 
     def __new__(cls, http_session: aiohttp.ClientSession) -> TokenManager:
+        """Create or return the singleton instance.
+
+        Args:
+            http_session: HTTP session for API requests.
+
+        Returns:
+            The singleton TokenManager instance.
+        """
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
 
     def __init__(self, http_session: aiohttp.ClientSession):
-        """Initialize the token manager singleton instance."""
+        """Initialize the token manager singleton instance.
+
+        Args:
+            http_session: HTTP session for making API requests.
+        """
         # Guard: if already initialized (singleton), skip re-initialization.
         if getattr(self, "_inst_initialized", False):  # pragma: no cover - simple guard
             return
@@ -83,6 +125,11 @@ class TokenManager:
         self._inst_initialized = True
 
     async def start(self) -> None:
+        """Start the token manager and background refresh loop.
+
+        Performs initial validation and launches the background task for
+        periodic token management.
+        """
         if self.running:
             return
         # Defensive: if a previous background task is still lingering (e.g. rapid
@@ -157,6 +204,10 @@ class TokenManager:
             )
 
     async def stop(self) -> None:
+        """Stop the token manager and background refresh loop.
+
+        Cancels the background task and cleans up resources.
+        """
         if not self.running:
             return
         self.running = False
@@ -288,6 +339,15 @@ class TokenManager:
     async def ensure_fresh(
         self, username: str, force_refresh: bool = False
     ) -> TokenOutcome:
+        """Ensure the user's token is fresh, refreshing if necessary.
+
+        Args:
+            username: Username to check/refresh token for.
+            force_refresh: Force refresh regardless of expiry.
+
+        Returns:
+            Outcome of the ensure fresh operation.
+        """
         info = self.tokens.get(username)
         if not info:
             return TokenOutcome.FAILED
@@ -406,6 +466,14 @@ class TokenManager:
         return task
 
     async def validate(self, username: str) -> TokenOutcome:
+        """Validate a user's access token remotely.
+
+        Args:
+            username: Username to validate token for.
+
+        Returns:
+            VALID if token is valid, FAILED otherwise.
+        """
         info = self.tokens.get(username)
         if not info:
             return TokenOutcome.FAILED

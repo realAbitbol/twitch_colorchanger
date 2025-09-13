@@ -1,3 +1,5 @@
+"""Service for handling Twitch color change operations."""
+
 from __future__ import annotations
 
 import asyncio
@@ -12,10 +14,28 @@ if TYPE_CHECKING:  # pragma: no cover
 
 
 class ColorChangeService:
+    """Service for managing Twitch color changes.
+
+    Handles color change requests, retries, fallbacks, and error handling.
+    """
+
     def __init__(self, bot: TwitchColorBot) -> None:
+        """Initialize the color change service.
+
+        Args:
+            bot (TwitchColorBot): The bot instance to perform color changes on.
+        """
         self.bot = bot
 
     async def change_color(self, hex_color: str | None = None) -> bool:
+        """Change the bot's color to the specified hex or a random color.
+
+        Args:
+            hex_color (str | None): Specific hex color to change to, or None for random.
+
+        Returns:
+            bool: True if the color change was successful, False otherwise.
+        """
         if hex_color:
             color = hex_color
             allow_fallback = False
@@ -38,14 +58,15 @@ class ColorChangeService:
         allow_refresh: bool = True,
         fallback_to_preset: bool = True,
     ) -> bool:
-        """Core color change operation with unified retry/status handling.
+        """Perform the core color change operation with retry and status handling.
 
-        Parameters
-        ----------
-        color: Target color (hex like #aabbcc or preset name).
-        allow_refresh: Whether a 401 triggers a token refresh attempt.
-        fallback_to_preset: Whether a failure on a non-preset color should fall back
-            to a random preset color.
+        Args:
+            color (str): Target color (hex like #aabbcc or preset name).
+            allow_refresh (bool): Whether a 401 triggers a token refresh attempt.
+            fallback_to_preset (bool): Whether to fall back to preset on non-preset failure.
+
+        Returns:
+            bool: True if successful, False otherwise.
         """
         # Determine if this is a preset color (case-insensitive lookup)
         lowered = color.lower()
@@ -76,6 +97,15 @@ class ColorChangeService:
         )
 
     async def _issue_request(self, color: str, action: str) -> ColorRequestResult:
+        """Issue a color change request to the bot.
+
+        Args:
+            color (str): The color to change to.
+            action (str): The action type for the request.
+
+        Returns:
+            ColorRequestResult: The result of the request.
+        """
         params = {"user_id": self.bot.user_id, "color": color}
         # _perform_color_request is defined on the bot and returns a ColorRequestResult
         # but lacks a precise return annotation; cast here to satisfy typing.
@@ -85,14 +115,36 @@ class ColorChangeService:
         )
 
     def _on_success(self, color: str, is_preset: bool) -> bool:
+        """Handle successful color change.
+
+        Args:
+            color (str): The color that was changed to.
+            is_preset (bool): Whether the color is a preset.
+
+        Returns:
+            bool: Always True.
+        """
         self._record_success(color, is_preset)
         return True
 
     def _on_internal_error(self) -> bool:
+        """Handle internal error during color change.
+
+        Returns:
+            bool: Always False.
+        """
         logging.error("Internal error changing color")
         return False
 
     def _on_rate_limited(self, status_code: int) -> bool:
+        """Handle rate limit error.
+
+        Args:
+            status_code (int): The HTTP status code.
+
+        Returns:
+            bool: Always False.
+        """
         logging.warning(f"Rate limited: {status_code}")
         return False
 
@@ -103,6 +155,16 @@ class ColorChangeService:
         allow_refresh: bool,
         fallback_to_preset: bool,
     ) -> bool:
+        """Handle unauthorized error, attempting token refresh.
+
+        Args:
+            color (str): The color being changed to.
+            allow_refresh (bool): Whether to allow token refresh.
+            fallback_to_preset (bool): Whether to fallback to preset.
+
+        Returns:
+            bool: True if retry succeeds, False otherwise.
+        """
         if not allow_refresh:
             return False
         if await self.bot._check_and_refresh_token(force=True):
@@ -120,6 +182,16 @@ class ColorChangeService:
         status_code: int,
         fallback_to_preset: bool,
     ) -> bool:
+        """Handle generic failure, with fallback logic.
+
+        Args:
+            is_preset (bool): Whether the color is a preset.
+            status_code (int): The HTTP status code.
+            fallback_to_preset (bool): Whether to fallback to preset.
+
+        Returns:
+            bool: True if fallback succeeds, False otherwise.
+        """
         # Persistent Turbo/Prime detection: track repeated hex rejections
         if not is_preset and status_code in (400, 403):
             await self._handle_hex_rejection(status_code)
@@ -136,10 +208,13 @@ class ColorChangeService:
         return False
 
     async def _handle_hex_rejection(self, status_code: int) -> None:
-        """On repeated 400/403 for hex, disable random hex and persist to config.
+        """Handle repeated hex color rejections by disabling random hex.
 
-        After two strikes, we assume lack of Turbo/Prime for hex colors and
-        flip use_random_colors to False, then invoke a bot hook to persist.
+        After two strikes, assume lack of Turbo/Prime and disable random hex,
+        then persist the change.
+
+        Args:
+            status_code (int): The rejection status code (400 or 403).
         """
         strikes = getattr(self.bot, "_hex_rejection_strikes", 0) + 1
         self.bot._hex_rejection_strikes = strikes
@@ -155,11 +230,22 @@ class ColorChangeService:
                     await res
 
     def _select_color(self) -> str:
+        """Select a random color based on bot settings.
+
+        Returns:
+            str: The selected color (hex or preset).
+        """
         if self.bot.use_random_colors:
             return get_random_hex(exclude=self.bot.last_color)
         return get_random_preset(exclude=self.bot.last_color)
 
     def _record_success(self, color: str, is_preset: bool) -> None:
+        """Record a successful color change.
+
+        Args:
+            color (str): The color that was changed to.
+            is_preset (bool): Whether the color is a preset.
+        """
         self.bot.increment_colors_changed()
         self.bot.last_color = color
         if not is_preset:

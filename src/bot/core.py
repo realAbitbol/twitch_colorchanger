@@ -29,6 +29,30 @@ CHAT_COLOR_ENDPOINT = "chat/color"
 
 
 class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
+    """Core bot class for managing Twitch color changes.
+
+    Handles authentication, chat connection, message processing, and color change logic
+    for a single Twitch user. Integrates with EventSub for real-time chat events and
+    manages token refresh, configuration persistence, and error recovery.
+
+    Attributes:
+        context: Application context providing shared services.
+        username: Twitch username for the bot.
+        access_token: Current OAuth access token.
+        refresh_token: OAuth refresh token for token renewal.
+        client_id: Twitch API client ID.
+        client_secret: Twitch API client secret.
+        user_id: Twitch user ID.
+        channels: List of channels to join.
+        use_random_colors: Whether to use random hex colors (Prime/Turbo users).
+        config_file: Path to configuration file for persistence.
+        enabled: Whether automatic color changes are enabled.
+        running: Runtime state flag.
+        messages_sent: Counter for sent messages.
+        colors_changed: Counter for color changes.
+        last_color: Last set color.
+    """
+
     OAUTH_PREFIX = "oauth:"
 
     def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -46,6 +70,22 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         user_id: str | None = None,
         enabled: bool = True,
     ) -> None:
+        """Initialize the TwitchColorBot instance.
+
+        Args:
+            context: Application context with shared services.
+            token: Initial OAuth access token (may include 'oauth:' prefix).
+            refresh_token: OAuth refresh token for renewal.
+            client_id: Twitch API client ID.
+            client_secret: Twitch API client secret.
+            nick: Twitch username.
+            channels: List of channel names to join.
+            http_session: Shared aiohttp ClientSession.
+            is_prime_or_turbo: Whether user has Prime/Turbo for hex colors.
+            config_file: Path to config file for persistence.
+            user_id: Optional pre-known Twitch user ID.
+            enabled: Whether to enable automatic color changes.
+        """
         self.context = context
         self.username = nick
         self.access_token = (
@@ -109,6 +149,12 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             logging.warning(f"Persist detection error: {str(e)}")
 
     async def start(self) -> None:
+        """Start the bot's main execution loop.
+
+        Initializes token management, establishes chat connection, and begins
+        listening for messages. Handles setup failures gracefully by stopping
+        early if critical components cannot be initialized.
+        """
         logging.info(f"▶️ Starting bot user={self.username}")
         self.running = True
         if not self._setup_token_manager():
@@ -197,6 +243,14 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         self.listener_task.add_done_callback(self._listener_task_done)
 
     def _listener_task_done(self, task: asyncio.Task[Any]) -> None:
+        """Callback for listener task completion.
+
+        Logs errors if the task failed, with defensive error handling for logging
+        failures themselves.
+
+        Args:
+            task: The completed asyncio task.
+        """
         if task.cancelled():
             return
         exc = task.exception()
@@ -213,6 +267,15 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     async def _join_additional_channels(
         self, backend: Any, normalized_channels: list[str]
     ) -> None:  # noqa: ANN401
+        """Join additional channels beyond the first.
+
+        Iterates through normalized channels starting from the second and attempts
+        to join each. Logs warnings for join failures but continues with others.
+
+        Args:
+            backend: Chat backend instance.
+            normalized_channels: List of normalized channel names.
+        """
         for channel in normalized_channels[1:]:
             try:
                 await backend.join_channel(channel)
@@ -228,6 +291,18 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         max_backoff: float = 60.0,
         max_attempts: int = 5,
     ) -> None:
+        """Attempt to reconnect chat backend with exponential backoff.
+
+        Retries connection initialization up to max_attempts with increasing delays.
+        Stops if bot is no longer running or reconnection succeeds.
+
+        Args:
+            error: The original exception that triggered reconnection.
+            cb: Callback to attach to new listener task.
+            initial_backoff: Initial delay in seconds.
+            max_backoff: Maximum delay in seconds.
+            max_attempts: Maximum number of reconnection attempts.
+        """
         backoff = initial_backoff
         attempts = 0
         current_error = error
@@ -256,6 +331,11 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 continue
 
     async def stop(self) -> None:
+        """Stop the bot and clean up resources.
+
+        Disconnects chat backend, waits for listener task to finish, flushes
+        pending config updates, and sets running flag to False.
+        """
         logging.warning(f"🛑 Stopping bot user={self.username}")
         self.running = False
         await self._disconnect_chat_backend()
@@ -282,6 +362,11 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         return True
 
     async def _ensure_user_id(self) -> bool:
+        """Ensure user_id is available, fetching from API if needed.
+
+        Returns:
+            True if user_id is available or successfully retrieved, False otherwise.
+        """
         if self.user_id:
             return True
         user_info = await self._get_user_info()
@@ -293,6 +378,10 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         return False
 
     async def _prime_color_state(self) -> None:
+        """Initialize last_color with the user's current chat color.
+
+        Fetches the current color from Twitch API and sets it as the last known color.
+        """
         current_color = await self._get_current_color()
         if current_color:
             self.last_color = current_color
@@ -301,6 +390,11 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             )
 
     async def _log_scopes_if_possible(self) -> None:
+        """Log the scopes of the current access token if possible.
+
+        Validates the token with Twitch API and logs the associated scopes.
+        Silently handles validation failures.
+        """
         try:
             from ..api.twitch import TwitchAPI  # local import
 
@@ -322,6 +416,13 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             )
 
     async def _normalize_channels_if_needed(self) -> list[str]:
+        """Normalize channel names and persist if changed.
+
+        Applies channel normalization rules and updates config if necessary.
+
+        Returns:
+            List of normalized channel names.
+        """
         normalized_channels, was_changed = normalize_channels_list(self.channels)
         if was_changed:
             logging.info(
@@ -334,6 +435,17 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         return normalized_channels
 
     async def _init_and_connect_backend(self, normalized_channels: list[str]) -> bool:
+        """Initialize and connect the chat backend.
+
+        Creates EventSub backend, sets up message handlers, connects to the first
+        channel, and registers with token manager.
+
+        Args:
+            normalized_channels: List of normalized channel names.
+
+        Returns:
+            True if connection successful, False otherwise.
+        """
         self.chat_backend = EventSubChatBackend(http_session=self.context.session)
         backend = self.chat_backend
         # Route all messages (including commands like !rip) through a single handler
@@ -364,6 +476,10 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         return True
 
     async def _disconnect_chat_backend(self) -> None:
+        """Disconnect the chat backend if connected.
+
+        Attempts to gracefully disconnect the EventSub backend.
+        """
         backend = self.chat_backend
         if backend is not None:
             try:
@@ -372,6 +488,10 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 logging.warning(f"Disconnect error: {str(e)}")
 
     async def _wait_for_listener_task(self) -> None:
+        """Wait for the listener task to complete with timeout.
+
+        Waits up to 2 seconds for the task to finish, cancels on timeout.
+        """
         if self.listener_task and not self.listener_task.done():
             try:
                 await asyncio.wait_for(self.listener_task, timeout=2.0)
@@ -383,6 +503,16 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 logging.warning(f"Listener task error: {str(e)}")
 
     async def handle_message(self, sender: str, channel: str, message: str) -> None:
+        """Handle incoming chat messages.
+
+        Processes messages sent by the bot user, handling toggle commands,
+        color change commands, and triggering automatic color changes.
+
+        Args:
+            sender: Username of the message sender.
+            channel: Channel where the message was sent.
+            message: The message content.
+        """
         if sender.lower() != self.username.lower():
             return
         self.messages_sent += 1
@@ -398,6 +528,11 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             await self._change_color()
 
     def _is_color_change_allowed(self) -> bool:
+        """Check if automatic color changes are currently allowed.
+
+        Returns:
+            True if enabled, False otherwise.
+        """
         return bool(getattr(self, "enabled", True))
 
     async def _maybe_handle_ccc(self, raw: str, msg_lower: str) -> bool:
@@ -476,6 +611,11 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         return True
 
     async def _persist_enabled_flag(self, flag: bool) -> None:
+        """Persist the enabled flag to configuration.
+
+        Args:
+            flag: The enabled state to persist.
+        """
         if not self.config_file:
             return
         user_config = self._build_user_config()
@@ -486,6 +626,16 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             logging.warning(f"Persist flag error: {str(e)}")
 
     async def _check_and_refresh_token(self, force: bool = False) -> bool:
+        """Check and refresh the access token if needed.
+
+        Ensures the token is fresh and updates the backend if token changed.
+
+        Args:
+            force: Force token refresh even if not expired.
+
+        Returns:
+            True if token is valid/fresh, False otherwise.
+        """
         # Use attached TokenManager if available; otherwise fall back to context
         tm = self.token_manager or getattr(self.context, "token_manager", None)
         if not tm:
@@ -511,9 +661,19 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             return False
 
     async def _get_user_info(self) -> dict[str, Any] | None:
+        """Fetch user information from Twitch API.
+
+        Returns:
+            User info dict or None if failed.
+        """
         return await self._get_user_info_impl()
 
     async def _make_user_info_request(self) -> tuple[dict[str, Any] | None, int]:
+        """Make the actual API request for user info.
+
+        Returns:
+            Tuple of (response data, status code).
+        """
         data, status_code, _ = await self.api.request(
             "GET",
             "users",
@@ -523,9 +683,24 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         return data, status_code
 
     def _calculate_retry_delay(self, attempt: int) -> float:
+        """Calculate exponential backoff delay for retries.
+
+        Args:
+            attempt: Current attempt number (0-based).
+
+        Returns:
+            Delay in seconds, capped at 60.
+        """
         return min(1 * (2**attempt), 60)
 
     async def _get_user_info_impl(self) -> dict[str, Any] | None:
+        """Implementation of user info fetching with retries.
+
+        Handles API errors and retries with exponential backoff.
+
+        Returns:
+            User info dict or None if all attempts failed.
+        """
         for attempt in range(6):
             try:
                 data, status_code = await self._make_user_info_request()
@@ -551,6 +726,16 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     def _process_user_info_response(
         self, data: dict[str, Any] | None, status_code: int, attempt: int
     ) -> dict[str, Any] | None:
+        """Process the response from user info API request.
+
+        Args:
+            data: Response data dict.
+            status_code: HTTP status code.
+            attempt: Current attempt number.
+
+        Returns:
+            User info dict or None for retry/error.
+        """
         if (
             status_code == 200
             and data
@@ -571,9 +756,21 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         return None
 
     async def _get_current_color(self) -> str | None:
+        """Fetch the user's current chat color from Twitch API.
+
+        Returns:
+            Color string or None if failed.
+        """
         return await self._get_current_color_impl()
 
     async def _get_current_color_impl(self) -> str | None:
+        """Implementation of current color fetching with retries.
+
+        Handles API errors and retries with exponential backoff.
+
+        Returns:
+            Color string or None if all attempts failed.
+        """
         for attempt in range(6):
             try:
                 data, status_code = await self._make_color_request()
@@ -597,6 +794,11 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         return None
 
     async def _make_color_request(self) -> tuple[dict[str, Any] | None, int]:
+        """Make the actual API request for current color.
+
+        Returns:
+            Tuple of (response data, status code).
+        """
         params = {"user_id": self.user_id}
         data, status_code, _ = await self.api.request(
             "GET",
@@ -610,6 +812,16 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     def _process_color_response(
         self, data: dict[str, Any] | None, status_code: int, attempt: int
     ) -> str | None:
+        """Process the response from color API request.
+
+        Args:
+            data: Response data dict.
+            status_code: HTTP status code.
+            attempt: Current attempt number.
+
+        Returns:
+            Color string or None for retry/error.
+        """
         if status_code == 200 and data and data.get("data"):
             first = data["data"][0]
             if isinstance(first, dict):
@@ -675,6 +887,15 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     def _handle_color_response(
         self, status_code: int, attempt: int
     ) -> ColorRequestResult | None:
+        """Handle HTTP response for color change request.
+
+        Args:
+            status_code: HTTP status code.
+            attempt: Current attempt number.
+
+        Returns:
+            ColorRequestResult or None for retry.
+        """
         from ..color.models import (  # local import
             ColorRequestResult,
             ColorRequestStatus,
@@ -711,6 +932,15 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     def _handle_color_exception(
         self, e: Exception, attempt: int
     ) -> ColorRequestResult | None:
+        """Handle exceptions during color change request.
+
+        Args:
+            e: The exception that occurred.
+            attempt: Current attempt number.
+
+        Returns:
+            ColorRequestResult or None for retry.
+        """
         from ..color.models import (  # local import
             ColorRequestResult,
             ColorRequestStatus,
@@ -723,9 +953,18 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         return ColorRequestResult(ColorRequestStatus.INTERNAL_ERROR, error=str(e))
 
     def increment_colors_changed(self) -> None:
+        """Increment the counter for successful color changes."""
         self.colors_changed += 1
 
     async def _change_color(self, hex_color: str | None = None) -> bool:
+        """Change the user's chat color.
+
+        Args:
+            hex_color: Specific color to set, or None for random.
+
+        Returns:
+            True if color change was successful.
+        """
         # Local import only when needed to avoid circular dependency at import time
         if self._color_service is None:
             from ..color import ColorChangeService  # local import
@@ -734,6 +973,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         return await self._color_service.change_color(hex_color)
 
     async def _persist_token_changes(self) -> None:
+        """Persist updated token information to configuration."""
         if not self._validate_config_prerequisites():
             return
         user_config = self._build_user_config()
@@ -743,6 +983,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 return
 
     async def _persist_normalized_channels(self) -> None:
+        """Persist normalized channel list to configuration."""
         config_file = getattr(self, "config_file", None)
         if config_file is None:
             return
@@ -755,6 +996,11 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             logging.warning(f"Persist channels error: {str(e)}")
 
     def _validate_config_prerequisites(self) -> bool:
+        """Validate that required config fields are present for persistence.
+
+        Returns:
+            True if all prerequisites are met.
+        """
         if not getattr(self, "config_file", None):
             logging.warning(
                 f"📁 No config file specified cannot persist tokens user={self.username}"
@@ -769,6 +1015,11 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         return True
 
     def _build_user_config(self) -> dict[str, Any]:
+        """Build user configuration dict from current instance state.
+
+        Returns:
+            Dict containing all user configuration fields.
+        """
         # Direct attribute access; mixin consumer guarantees these attributes.
         username = self.username
         channels = self.channels
@@ -786,6 +1037,16 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     async def _attempt_config_save(
         self, user_config: dict[str, Any], attempt: int, max_retries: int
     ) -> bool:
+        """Attempt to save user config with error handling.
+
+        Args:
+            user_config: Configuration dict to save.
+            attempt: Current attempt number.
+            max_retries: Maximum number of retries.
+
+        Returns:
+            True if save was successful.
+        """
         config_file = self.config_file
         if config_file is None:
             return False
@@ -810,6 +1071,16 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     async def _handle_config_save_error(
         self, error: Exception, attempt: int, max_retries: int
     ) -> bool:
+        """Handle config save errors with retry logic.
+
+        Args:
+            error: The exception that occurred.
+            attempt: Current attempt number.
+            max_retries: Maximum number of retries.
+
+        Returns:
+            True if should stop retrying, False to retry.
+        """
         if attempt < max_retries - 1:
             logging.warning(f"Config save retry {attempt + 1}: {str(error)}")
             await asyncio.sleep(0.1 * (attempt + 1))
@@ -821,6 +1092,11 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             return True
 
     def _extract_color_error_snippet(self) -> str | None:
+        """Extract error message from last color change response.
+
+        Returns:
+            Error message string or None if not available.
+        """
         try:  # pragma: no cover - defensive
             payload: dict[str, Any] | None = self._last_color_change_payload
             if payload is None:
@@ -833,10 +1109,12 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             return None
 
     def close(self) -> None:
+        """Close the bot and mark as not running."""
         logging.info(f"🔻 Closing bot user={self.username}")
         self.running = False
 
     def print_statistics(self) -> None:
+        """Log current bot statistics."""
         logging.info(
             f"📊 Statistics user={self.username} messages={self.messages_sent} colors={self.colors_changed}"
         )

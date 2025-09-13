@@ -33,11 +33,62 @@ EVENTSUB_CHAT_MESSAGE = "channel.chat.message"
 
 
 class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
+    """EventSub WebSocket chat backend for Twitch.
+
+    Lightweight implementation focusing on channel.chat.message events filtered
+    for the bot user acting as chatter. This avoids re-implementing full TwitchIO.
+
+    Attributes:
+        _session (aiohttp.ClientSession): HTTP session for API calls.
+        _api (TwitchAPI): Twitch API client instance.
+        _ws_url (str): Current WebSocket URL, may change via reconnect.
+        _ws (aiohttp.ClientWebSocketResponse | None): Active WebSocket connection.
+        _message_handler (MessageHandler | None): Callback for chat messages.
+        _color_handler (MessageHandler | None): Callback for color commands.
+        _token (str | None): OAuth access token.
+        _client_id (str | None): Twitch client ID.
+        _username (str | None): Bot username.
+        _user_id (str | None): Bot user ID.
+        _primary_channel (str | None): Primary channel login.
+        _session_id (str | None): Current EventSub session ID.
+        _pending_reconnect_session_id (str | None): Session ID for reconnect.
+        _pending_challenge (str | None): Pending challenge for handshake.
+        _channels (list[str]): List of joined channels.
+        _channel_ids (dict[str, str]): Mapping of login to user ID.
+        _stop_event (asyncio.Event): Event to signal shutdown.
+        _reconnect_requested (bool): Flag for reconnect request.
+        _cache_path (Path): Path to broadcaster ID cache file.
+        _scopes (set[str]): Validated OAuth scopes.
+        _backoff (float): Current reconnect backoff time.
+        _last_activity (float): Timestamp of last WebSocket activity.
+        _next_sub_check (float): Next subscription verification time.
+        _stale_threshold (float): Threshold for stale connection.
+        _max_backoff (float): Maximum backoff time.
+        _audit_interval (float): Interval for subscription audits.
+        _fast_audit_min (float): Minimum fast audit delay.
+        _fast_audit_max (float): Maximum fast audit delay.
+        _fast_audit_pending (bool): Flag for pending fast audit.
+        _consecutive_subscribe_401 (int): Count of consecutive 401 errors.
+        _token_invalid_flag (bool): Flag indicating token invalidity.
+        _force_full_resubscribe (bool): Flag to force full resubscribe.
+        _token_invalid_callback (Callable | None): Callback for token invalidation.
+    """
+
     def set_token_invalid_callback(self, callback):
-        """Set a callback to be called when token is invalid and needs refresh."""
+        """Sets the callback for token invalidation events.
+
+        Args:
+            callback (Callable): Function to call when the token becomes invalid.
+        """
         self._token_invalid_callback = callback
 
     def __init__(self, http_session: aiohttp.ClientSession | None = None) -> None:
+        """Initialize the EventSub chat backend.
+
+        Args:
+            http_session (aiohttp.ClientSession | None): Optional HTTP session to use.
+                If None, a new session is created.
+        """
         self._session = http_session or aiohttp.ClientSession()
         self._api = TwitchAPI(self._session)
 
@@ -108,16 +159,18 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
 
     # --- token lifecycle integration -------------------------------------------------
     def update_access_token(self, new_token: str | None) -> None:
-        """Update access token in place after an external refresh.
+        """Updates the access token after external refresh.
 
-        Keeps EventSub WebSocket subscription flow aligned with latest token,
+        Keeps the EventSub WebSocket subscription flow aligned with the latest token,
         reducing windows where a stale token might trigger invalid events.
-        Lightweight (just assignment + flag reset) so safe to call from hooks.
+        Lightweight operation safe to call from hooks.
+
+        Args:
+            new_token (str | None): The new access token. If None or invalid, ignored.
         """
-        if not new_token or not isinstance(new_token, str):  # defensive
+        if not new_token or not isinstance(new_token, str):  # defensive check
             return
-        # If a token_invalid flag was previously set due to stale token, clear it
-        # so normal subscription verification can proceed with fresh credentials.
+        # Clear token invalid flag if previously set, allowing normal verification
         previously_invalid = self._token_invalid_flag
         self._token = new_token
         if previously_invalid:
@@ -126,15 +179,21 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             logging.info("🔄 EventSub token recovered")
 
     def _jitter(self, a: float, b: float) -> float:
-        """Return scheduling jitter using a non-crypto but system-derived source.
+        """Returns scheduling jitter using a non-crypto source.
 
-        Uses secrets.randbelow to avoid lint/security warnings tied to pseudo RNG
-        while the quality requirements remain minimal.
+        Uses secrets.randbelow to avoid lint warnings while meeting minimal quality needs.
+
+        Args:
+            a (float): Minimum value.
+            b (float): Maximum value.
+
+        Returns:
+            float: Random value between a and b.
         """
         if b <= a:
             return a
         span = b - a
-        # 1e6 discrete steps of jitter resolution
+        # 1e6 discrete steps for jitter resolution
         r = secrets.randbelow(1_000_000) / 1_000_000.0
         return a + r * span
 
@@ -147,6 +206,23 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         client_id: str | None,
         client_secret: str | None = None,  # not used presently
     ) -> bool:
+        """Connects to Twitch EventSub WebSocket and subscribes to chat messages.
+
+        Performs initial setup including credential capture, client validation,
+        cache loading, handshake, channel resolution, user ID setup, scope recording,
+        and subscription to the primary channel.
+
+        Args:
+            token (str): OAuth access token.
+            username (str): Bot username.
+            primary_channel (str): Primary channel to join.
+            user_id (str | None): Bot user ID, if known.
+            client_id (str | None): Twitch client ID.
+            client_secret (str | None): Client secret (currently unused).
+
+        Returns:
+            bool: True if connection and subscription successful, False otherwise.
+        """
         self._capture_initial_credentials(
             token, username, primary_channel, user_id, client_id, client_secret
         )
@@ -175,6 +251,16 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         client_id: str | None,
         client_secret: str | None,
     ) -> None:
+        """Captures initial credentials and sets up basic state.
+
+        Args:
+            token (str): OAuth token.
+            username (str): Bot username.
+            primary_channel (str): Primary channel.
+            user_id (str | None): Bot user ID.
+            client_id (str | None): Client ID.
+            client_secret (str | None): Client secret (ignored).
+        """
         self._token = token
         self._username = username.lower()
         self._user_id = user_id
@@ -185,6 +271,11 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         _ = client_secret  # reserved
 
     def _validate_client_id(self) -> bool:
+        """Validates that client ID is present and a string.
+
+        Returns:
+            bool: True if valid, False otherwise.
+        """
         if not self._client_id or not isinstance(self._client_id, str):
             logging.error("🚫 EventSub missing client id")
             return False
@@ -262,6 +353,17 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             self._scopes = set()
 
     async def join_channel(self, channel: str) -> bool:
+        """Joins a channel and subscribes to its chat messages.
+
+        Resolves the channel ID if not cached, subscribes to chat events,
+        and updates the cache.
+
+        Args:
+            channel (str): Channel name to join.
+
+        Returns:
+            bool: True if joined successfully, False otherwise.
+        """
         channel_l = channel.lower()
         if channel_l in self._channels:
             return True
@@ -275,6 +377,11 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         return True
 
     async def listen(self) -> None:  # noqa: D401
+        """Listens for WebSocket messages and handles them.
+
+        Runs the main event loop, processing messages, verifying subscriptions,
+        and handling reconnections until stopped.
+        """
         if not self._ws:
             return
         while not self._stop_event.is_set():
@@ -291,6 +398,11 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
                 break
 
     async def disconnect(self) -> None:
+        """Disconnects from the WebSocket and cleans up resources.
+
+        Sets the stop event, closes the WebSocket connection gracefully,
+        and clears the WebSocket reference.
+        """
         self._stop_event.set()
         if self._ws and not self._ws.closed:
             try:
@@ -300,9 +412,20 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         self._ws = None
 
     def update_token(self, new_token: str) -> None:
+        """Updates the access token.
+
+        Args:
+            new_token (str): The new access token.
+        """
         self._token = new_token
 
     def set_message_handler(self, handler: MessageHandler) -> None:
+        """Sets the handler for incoming chat messages.
+
+        Args:
+            handler (MessageHandler): Function to handle messages, called with
+                (username, channel, message).
+        """
         self._message_handler = handler
 
     async def _handle_text(self, raw: str) -> None:

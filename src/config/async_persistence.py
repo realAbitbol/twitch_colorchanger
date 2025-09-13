@@ -44,6 +44,12 @@ async def _get_user_lock(username: str) -> asyncio.Lock:
     logical record while allowing unrelated users to persist concurrently in
     future if parallelism is later introduced. (Current implementation keeps
     sequential writes, but this preserves correctness if that changes.)
+
+    Args:
+        username: The username to get the lock for.
+
+    Returns:
+        The asyncio.Lock associated with the username.
     """
     # Normalize once to lower; callers already lowercase but be defensive.
     uname = username.lower()
@@ -60,6 +66,7 @@ async def _get_user_lock(username: str) -> asyncio.Lock:
 
 
 async def _prune_user_locks() -> None:
+    """Prune inactive user locks after TTL to prevent unbounded growth."""
     now = time.time()
     async with _USER_LOCKS_LOCK:
         stale = [
@@ -78,6 +85,11 @@ async def _prune_user_locks() -> None:
 
 
 async def _flush(config_file: str) -> None:
+    """Flush pending user updates to the config file.
+
+    Args:
+        config_file: Path to the configuration file.
+    """
     global _FLUSH_TASK
     async with _LOCK:
         pending = list(_PENDING.values())
@@ -96,6 +108,11 @@ async def _flush(config_file: str) -> None:
 
 
 def _log_batch_start(count: int) -> None:
+    """Log the start of a batch flush operation.
+
+    Args:
+        count: Number of pending updates.
+    """
     try:  # noqa: SIM105
         logging.info(
             f"📤 Config batch flush count={count} debounce_seconds={_DEBOUNCE_SECONDS}"
@@ -105,6 +122,12 @@ def _log_batch_start(count: int) -> None:
 
 
 def _log_batch_result(failures: int, attempted: int) -> None:
+    """Log the result of a batch flush operation.
+
+    Args:
+        failures: Number of failed updates.
+        attempted: Total number of attempted updates.
+    """
     if failures:
         logging.warning(
             f"⚠️ Batch flush had partial failures count={failures} attempted={attempted}"
@@ -112,6 +135,15 @@ def _log_batch_result(failures: int, attempted: int) -> None:
 
 
 async def _persist_batch(pending: list[dict[str, Any]], config_file: str) -> int:
+    """Persist a batch of user configurations to the config file.
+
+    Args:
+        pending: List of user config dictionaries to persist.
+        config_file: Path to the configuration file.
+
+    Returns:
+        Number of failed persistence operations.
+    """
     failures = 0
     for uc in pending:
         uname = str(uc.get("username", "")).lower()
@@ -137,6 +169,11 @@ async def _persist_batch(pending: list[dict[str, Any]], config_file: str) -> int
 
 
 async def _schedule_flush(config_file: str) -> None:
+    """Schedule a flush after the debounce delay.
+
+    Args:
+        config_file: Path to the configuration file.
+    """
     await asyncio.sleep(_DEBOUNCE_SECONDS)
     await _flush(config_file)
 
@@ -146,6 +183,10 @@ async def queue_user_update(user_config: dict[str, Any], config_file: str) -> No
 
     Multiple rapid calls within the debounce window collapse into a single
     write per username (last-wins merge at dict level).
+
+    Args:
+        user_config: Dictionary containing user configuration data.
+        config_file: Path to the configuration file.
     """
     uname = str(user_config.get("username", "")).lower()
     if not uname:
@@ -160,7 +201,11 @@ async def queue_user_update(user_config: dict[str, Any], config_file: str) -> No
 
 
 async def flush_pending_updates(config_file: str) -> None:
-    """Force an immediate flush (e.g., before shutdown)."""
+    """Force an immediate flush (e.g., before shutdown).
+
+    Args:
+        config_file: Path to the configuration file.
+    """
     await _flush(config_file)
 
 
@@ -169,7 +214,12 @@ async def async_update_user_in_config(
 ) -> bool:
     """Run ``update_user_in_config`` in the default thread executor.
 
-    Returns the boolean result from the underlying synchronous function.
+    Args:
+        user_config: Dictionary containing user configuration data.
+        config_file: Path to the configuration file.
+
+    Returns:
+        Boolean result from the underlying synchronous function.
     """
     loop = asyncio.get_event_loop()
     uname = str(user_config.get("username", "")).lower()

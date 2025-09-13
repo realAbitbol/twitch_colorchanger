@@ -14,9 +14,25 @@ import aiohttp
 
 
 class TwitchAPI:
+    """Asynchronous client for Twitch Helix API endpoints.
+
+    Provides methods to interact with Twitch API for user validation, user ID resolution, and raw requests.
+
+    Attributes:
+        BASE_URL (str): The base URL for Twitch Helix API.
+    """
+
     BASE_URL = "https://api.twitch.tv/helix"
 
     def __init__(self, session: aiohttp.ClientSession):
+        """Initialize the TwitchAPI client.
+
+        Args:
+            session (aiohttp.ClientSession): The aiohttp session to use for requests.
+
+        Raises:
+            ValueError: If session is not provided.
+        """
         if not session:
             raise ValueError("aiohttp session required")
         self._session = session
@@ -31,7 +47,19 @@ class TwitchAPI:
         params: dict[str, Any] | None = None,
         json_body: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], int, dict[str, str]]:
-        """Perform raw Helix request returning (json, status, headers)."""
+        """Perform a raw HTTP request to the Twitch Helix API.
+
+        Args:
+            method (str): HTTP method (e.g., 'GET', 'POST').
+            endpoint (str): API endpoint path (without base URL).
+            access_token (str): OAuth access token for authorization.
+            client_id (str): Twitch application client ID.
+            params (dict[str, Any] | None): Query parameters for the request.
+            json_body (dict[str, Any] | None): JSON body for the request.
+
+        Returns:
+            tuple[dict[str, Any], int, dict[str, str]]: A tuple containing the JSON response data, HTTP status code, and response headers.
+        """
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Client-Id": client_id,
@@ -49,10 +77,13 @@ class TwitchAPI:
 
     # ---- High level helpers ----
     async def validate_token(self, access_token: str) -> dict[str, Any] | None:
-        """Validate OAuth token and return payload with scopes.
+        """Validate an OAuth access token using Twitch's validation endpoint.
 
-        Uses Twitch validation endpoint outside Helix base URL.
-        Returns dict or None on failure.
+        Args:
+            access_token (str): The OAuth access token to validate.
+
+        Returns:
+            dict[str, Any] | None: Token validation payload if valid, None otherwise.
         """
         url = "https://id.twitch.tv/oauth2/validate"
         headers = {"Authorization": f"OAuth {access_token}"}
@@ -67,11 +98,15 @@ class TwitchAPI:
     async def get_users_by_login(
         self, *, access_token: str, client_id: str, logins: list[str]
     ) -> dict[str, str]:
-        """Resolve many login names to user IDs.
+        """Resolve Twitch login names to user IDs.
 
-        Helix allows up to 100 "login" query params per request. We chunk the input,
-        aggregate responses, and return a mapping of login(lowercased) -> user id.
-        Missing / unknown logins are simply absent from the result mapping.
+        Args:
+            access_token (str): OAuth access token.
+            client_id (str): Twitch application client ID.
+            logins (list[str]): List of login names to resolve.
+
+        Returns:
+            dict[str, str]: Mapping of lowercase login names to user IDs. Unknown logins are omitted.
         """
         if not logins:
             return {}
@@ -95,6 +130,14 @@ class TwitchAPI:
     # ---- internal helpers (kept simple to satisfy static checks) ----
     @staticmethod
     def _dedupe_logins(logins: list[str]) -> list[str]:
+        """Remove duplicates from a list of login names, preserving order and case-insensitively.
+
+        Args:
+            logins (list[str]): List of login names.
+
+        Returns:
+            list[str]: Deduplicated list of lowercase login names.
+        """
         seen: set[str] = set()
         out: list[str] = []
         for raw in logins:
@@ -106,11 +149,29 @@ class TwitchAPI:
 
     @staticmethod
     def _chunk(seq: list[str], size: int) -> Iterable[list[str]]:
+        """Split a sequence into chunks of specified size.
+
+        Args:
+            seq (list[str]): The sequence to chunk.
+            size (int): Maximum size of each chunk.
+
+        Yields:
+            Iterable[list[str]]: Chunks of the sequence.
+        """
         for i in range(0, len(seq), size):
             yield seq[i : i + size]
 
     @staticmethod
     def _auth_headers(access_token: str, client_id: str) -> dict[str, str]:
+        """Generate authorization headers for Twitch API requests.
+
+        Args:
+            access_token (str): OAuth access token.
+            client_id (str): Twitch application client ID.
+
+        Returns:
+            dict[str, str]: Dictionary of HTTP headers.
+        """
         return {
             "Authorization": f"Bearer {access_token}",
             "Client-Id": client_id,
@@ -119,6 +180,14 @@ class TwitchAPI:
 
     @staticmethod
     async def _safe_rows(resp: aiohttp.ClientResponse) -> list[dict[str, Any]]:
+        """Safely extract data rows from an aiohttp response.
+
+        Args:
+            resp (aiohttp.ClientResponse): The response object.
+
+        Returns:
+            list[dict[str, Any]]: List of data dictionaries, or empty list on error.
+        """
         try:
             data = await resp.json()
         except Exception:  # noqa: BLE001
