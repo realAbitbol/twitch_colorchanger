@@ -32,8 +32,6 @@ def _get_env_int(name: str, default: int) -> int:
     return default
 
 
-## Removed unused CONFIG_SAVE_TIMEOUT (async save no longer blocks)  # noqa: ERA001
-
 # Token expiry & refresh thresholds (unify scattered literals: 3600s & 300s)
 TOKEN_REFRESH_THRESHOLD_SECONDS = _get_env_int(
     "TOKEN_REFRESH_THRESHOLD_SECONDS", 3600

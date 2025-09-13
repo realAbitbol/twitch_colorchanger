@@ -161,8 +161,6 @@ class UserConfig(BaseModel):
         """
         return self.validate_basic()
 
-    # Removed ensure_prime_flag (unused).  # noqa: ERA001
-
 
 def normalize_user_list(
     users: list[dict[str, Any]],

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from contextlib import suppress
 from typing import Any
 
 from .core import update_user_in_config
@@ -113,12 +114,10 @@ def _log_batch_start(count: int) -> None:
     Args:
         count: Number of pending updates.
     """
-    try:  # noqa: SIM105
+    with suppress(Exception):
         logging.debug(
             f"📤 Config batch flush count={count} debounce_seconds={_DEBOUNCE_SECONDS}"
         )
-    except Exception as e:  # noqa: BLE001
-        logging.warning(f"⚠️ Error logging batch flush details: {str(e)}")
 
 
 def _log_batch_result(failures: int, attempted: int) -> None:
