@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -91,7 +92,8 @@ async def test_device_flow_slow_down_and_authorize(monkeypatch: pytest.MonkeyPat
         (200, {"access_token": "A", "refresh_token": "R"}),
     ]
     monkeypatch.setattr("aiohttp.ClientSession", lambda: _Session(scripted))
-    tokens = await flow.get_user_tokens("user")
+    with patch('asyncio.sleep', new_callable=AsyncMock):
+        tokens = await flow.get_user_tokens("user")
     if tokens != ("A", "R"):
         raise AssertionError("Expected tokens after slow_down + pending + success path")
     if flow.poll_interval <= 0:

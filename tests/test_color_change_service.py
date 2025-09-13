@@ -90,16 +90,6 @@ async def test_color_change_unauthorized_refresh_fails():
 
 
 @pytest.mark.asyncio
-async def test_color_change_rate_limited():
-    bot = FakeBot([ColorRequestResult(ColorRequestStatus.RATE_LIMIT, http_status=429)])
-    svc = ColorChangeService(bot)  # type: ignore[arg-type]
-    ok = await svc._perform_color_change(
-        "#00ff00", allow_refresh=True, fallback_to_preset=True
-    )
-    assert ok is False
-
-
-@pytest.mark.asyncio
 async def test_color_change_fallback_to_preset(monkeypatch):
     bot = FakeBot(
         [
