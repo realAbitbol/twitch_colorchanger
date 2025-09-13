@@ -626,17 +626,40 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         if not needed or not (self._token and self._client_id):
             return
         try:
-            mapping = await self._api.get_users_by_login(
-                access_token=self._token, client_id=self._client_id, logins=needed
+            # Validate token before API call
+            validation = await self._api.validate_token(self._token)
+            if not validation:
+                logging.error(f"🚫 EventSub token invalid user={self._username}")
+                return
+            logging.debug(
+                f"🔍 EventSub resolving channels user={self._username} needed={needed}"
             )
-            for login, uid in mapping.items():
-                self._channel_ids[login] = uid
+            # Strip '#' prefix for API call as Twitch expects login names without it
+            stripped_logins = [c.lstrip("#").lower() for c in needed]
+            mapping = await self._api.get_users_by_login(
+                access_token=self._token,
+                client_id=self._client_id,
+                logins=stripped_logins,
+            )
+            logging.debug(
+                f"📋 EventSub channel mapping user={self._username} mapping={mapping}"
+            )
+            # Map back to original channel names (with #)
+            for i, stripped in enumerate(stripped_logins):
+                original = needed[i]
+                uid = mapping.get(stripped)
+                if uid:
+                    self._channel_ids[original] = uid
             # Log any unresolved
             unresolved = [c for c in needed if c not in self._channel_ids]
             for miss in unresolved:
-                logging.warning(f"⚠️ EventSub channel lookup failed channel={miss}")
+                logging.warning(
+                    f"⚠️ EventSub channel lookup failed channel={miss} user={self._username}"
+                )
         except Exception as e:  # noqa: BLE001
-            logging.warning(f"💥 EventSub batch resolve error: {str(e)}")
+            logging.warning(
+                f"💥 EventSub batch resolve error user={self._username}: {str(e)}"
+            )
 
     # ---- cache helpers ----
     def _load_id_cache(self) -> None:
@@ -732,7 +755,7 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         self._on_subscribe_other(channel_login, status)
 
     def _on_subscribed(self, channel_login: str) -> None:
-        logging.info(f"✅ {self._username} joined #{channel_login}")
+        logging.info(f"✅ {self._username} joined {channel_login}")
         self._consecutive_subscribe_401 = 0
 
     async def _maybe_reconnect(self) -> bool:

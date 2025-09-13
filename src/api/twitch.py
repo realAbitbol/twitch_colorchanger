@@ -131,7 +131,15 @@ class TwitchAPI:
             async with self._session.get(
                 url, headers=headers, params=params_list
             ) as resp:
+                import logging
+
+                logging.debug(
+                    f"🔍 Twitch API get_users status={resp.status} logins={part}"
+                )
                 rows = await self._safe_rows(resp)
+                logging.debug(
+                    f"📋 Twitch API get_users rows={len(rows)} for logins={part}"
+                )
                 for entry in rows:
                     login = entry.get("login")
                     uid = entry.get("id")
