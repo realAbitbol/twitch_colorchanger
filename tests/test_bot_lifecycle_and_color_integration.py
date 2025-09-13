@@ -44,7 +44,6 @@ class DummyBackend:
         self.disconnected = True
         await asyncio.sleep(0)
 
-    # Handler registration (no-op storage)
     def set_message_handler(self, fn):  # noqa: D401, ANN001
         self._message_handler = fn
 

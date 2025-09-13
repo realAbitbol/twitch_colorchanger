@@ -1,9 +1,3 @@
-"""Color change orchestration service.
-
-Extracted from the legacy top-level module `color_change_service.py` and now
-packaged under `color`.
-"""
-
 from __future__ import annotations
 
 import asyncio
