@@ -190,7 +190,7 @@ async def test_update_hook_error_logged(monkeypatch, caplog):
             r.expiry = datetime.now(UTC) + timedelta(seconds=30)
             return r
 
-    monkeypatch.setattr(tm, "_get_client", lambda cid, cs: DummyClient())
+    monkeypatch.setattr(tm, "_get_client", lambda cid, _: DummyClient())
 
     async def bad_hook():  # raises after a tick
         await asyncio.sleep(0)
@@ -236,7 +236,7 @@ async def test_eventsub_propagation_hook(monkeypatch):
             r.expiry = datetime.now(UTC) + timedelta(seconds=30)
             return r
 
-    monkeypatch.setattr(tm, "_get_client", lambda cid, cs: DummyClient())
+    monkeypatch.setattr(tm, "_get_client", lambda cid, _: DummyClient())
 
     class Backend:
         def __init__(self):
@@ -292,7 +292,7 @@ async def test_validate_success_and_failure(monkeypatch):
                 return True, datetime.now(UTC) + timedelta(seconds=180)
             return False, None
 
-    monkeypatch.setattr(tm, "_get_client", lambda cid, cs: DummyClient())
+    monkeypatch.setattr(tm, "_get_client", lambda cid, _: DummyClient())
     out1 = await tm.validate("u")
     assert out1 == TokenOutcome.VALID and tm.tokens["u"].expiry is not None
     # Force min interval bypass so validation executed again

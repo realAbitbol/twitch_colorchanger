@@ -15,7 +15,6 @@ class DummyBackend:
     def __init__(self) -> None:  # noqa: D401
         self.connected = False
         self.disconnected = False
-        self.listen_started = False
         self._message_handler = None
         self._color_handler = None
 
@@ -37,7 +36,6 @@ class DummyBackend:
         await asyncio.sleep(0)
 
     async def listen(self) -> None:  # noqa: D401
-        self.listen_started = True
         await asyncio.sleep(0)
 
     async def disconnect(self) -> None:  # noqa: D401
@@ -46,9 +44,6 @@ class DummyBackend:
 
     def set_message_handler(self, fn):  # noqa: D401, ANN001
         self._message_handler = fn
-
-    def set_color_change_handler(self, fn):  # noqa: D401, ANN001
-        self._color_handler = fn
 
 
 @pytest.mark.asyncio()
@@ -78,7 +73,6 @@ async def test_bot_start_and_stop(monkeypatch: pytest.MonkeyPatch) -> None:
         return True
 
     async def _fake_run_loop():  # noqa: D401
-        dummy.listen_started = True
         # Simulate a trivial listen task
         await asyncio.sleep(0)
         return None

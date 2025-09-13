@@ -51,7 +51,7 @@ async def test_end_to_end_smoke(tmp_path: Path, monkeypatch):
         tm._upsert_token_info("smoke", "atk", "rtk", "cid", "csec", near_expiry)
         dummy = SmokeTokenClient()
         dummy.prime()
-        monkeypatch.setattr(tm, "_get_client", lambda cid, cs: dummy)
+        monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)
         await tm.start()
         # Manually drive a background iteration to avoid relying on sleep timing.
         info = tm.tokens.get("smoke")

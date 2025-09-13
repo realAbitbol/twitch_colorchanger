@@ -32,30 +32,6 @@ def _get_env_int(name: str, default: int) -> int:
     return default
 
 
-def _get_env_float(name: str, default: float) -> float:
-    """Retrieve a float value from an environment variable.
-
-    Attempts to parse the environment variable as a float. If the variable
-    is not set or cannot be parsed, logs a warning and returns the default value.
-
-    Args:
-        name: The name of the environment variable to read.
-        default: The default float value to return if parsing fails.
-
-    Returns:
-        The parsed float value from the environment, or the default if unavailable.
-    """
-    value = os.getenv(name)
-    if value is not None:
-        try:
-            return float(value)
-        except ValueError:
-            print(
-                f"Warning: Invalid float value for {name}='{value}', using default {default}"
-            )
-    return default
-
-
 ## Removed unused CONFIG_SAVE_TIMEOUT (async save no longer blocks)  # noqa: ERA001
 
 # Token expiry & refresh thresholds (unify scattered literals: 3600s & 300s)

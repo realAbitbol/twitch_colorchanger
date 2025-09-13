@@ -56,7 +56,7 @@ async def test_startup_initial_validation_refresh(monkeypatch):
 
         dummy = DummyTokenClient()
         dummy.prime("refresh_success")
-        monkeypatch.setattr(tm, "_get_client", lambda cid, cs: dummy)  # bypass network
+        monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)  # bypass network
 
         await tm.start()
         await asyncio.sleep(0)  # let background loop tick
@@ -76,7 +76,7 @@ async def test_force_refresh_path(monkeypatch):
         tm._upsert_token_info("bob", "atk2", "rtk2", "cid", "csec", expiry)
         dummy = DummyTokenClient()
         dummy.prime("refresh_success")
-        monkeypatch.setattr(tm, "_get_client", lambda cid, cs: dummy)
+        monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)
         outcome = await tm.ensure_fresh("bob", force_refresh=True)
         assert outcome in {TokenOutcome.REFRESHED, TokenOutcome.FAILED}
         assert dummy.refresh_calls and dummy.refresh_calls[0].endswith("!"), "Force flag not propagated"
@@ -91,7 +91,7 @@ async def test_failed_refresh_marks_state(monkeypatch):
         info = tm._upsert_token_info("carol", "tok", "rtok", "cid", "csec", expiry)
         dummy = DummyTokenClient()
         dummy.prime("refresh_fail")
-        monkeypatch.setattr(tm, "_get_client", lambda cid, cs: dummy)
+        monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)
         res = await tm.ensure_fresh("carol", force_refresh=True)
         assert res in {TokenOutcome.FAILED, TokenOutcome.REFRESHED}
         if res == TokenOutcome.FAILED:
@@ -107,7 +107,7 @@ async def test_register_update_hook_fires(monkeypatch):
         tm._upsert_token_info("dan", "tokd", "rtokd", "cid", "csec", expiry)
         dummy = DummyTokenClient()
         dummy.prime("refresh_success")
-        monkeypatch.setattr(tm, "_get_client", lambda cid, cs: dummy)
+        monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)
         fired: list[str] = []
 
         async def hook() -> None:

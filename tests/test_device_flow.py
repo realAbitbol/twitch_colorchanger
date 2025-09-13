@@ -33,10 +33,10 @@ class _Session:
         resp = _Resp(status, payload)
 
         class _CM:
-            async def __aenter__(self_inner):  # noqa: ANN001, D401
+            async def __aenter__(_self):  # noqa: ANN001, D401
                 return resp
 
-            async def __aexit__(self_inner, exc_type, exc, tb):  # noqa: ANN001, D401
+            async def __aexit__(_self, _exc_type, _exc, _tb):  # noqa: ANN001, D401
                 return False
 
         return _CM()
@@ -44,7 +44,7 @@ class _Session:
     async def __aenter__(self):  # noqa: D401
         return self
 
-    async def __aexit__(self, exc_type, exc, tb):  # noqa: D401
+    async def __aexit__(self, _exc_type, _exc, _tb):  # noqa: D401
         return False
 
 
@@ -153,7 +153,7 @@ class FakeResponse:
     async def __aenter__(self) -> FakeResponse:
         return self
 
-    async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: D401
+    async def __aexit__(self, _exc_type, _exc, _tb) -> None:  # noqa: D401
         return None
 
 
@@ -173,7 +173,7 @@ class FakeSession:
     async def __aenter__(self) -> FakeSession:
         return self
 
-    async def __aexit__(self, exc_type, exc, tb) -> None:
+    async def __aexit__(self, _exc_type, _exc, _tb) -> None:
         return None
 
 

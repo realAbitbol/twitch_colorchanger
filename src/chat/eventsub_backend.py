@@ -900,10 +900,7 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             self._token_invalid_flag = True
             if self._token_invalid_callback:
                 try:
-                    task = asyncio.create_task(self._token_invalid_callback())
-                    # keep a weak reference on the instance so GC doesn't
-                    # collect immediately in some event loop implementations
-                    self._last_token_refresh_task = task
+                    _ = asyncio.create_task(self._token_invalid_callback())
                 except Exception as e:
                     logging.info(
                         f"⚠️ Error in EventSub token invalid callback: {str(e)}"

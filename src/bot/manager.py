@@ -186,16 +186,6 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         except RuntimeError:
             pass
 
-    def request_restart(self, new_users_config: list[dict[str, Any]]) -> None:
-        """Request a restart with new user configuration.
-
-        Args:
-            new_users_config: New list of user configuration dictionaries.
-        """
-        logging.info("🔄 Config change detected - scheduling restart")
-        self.new_config = new_users_config
-        self.restart_requested = True
-
     async def _restart_with_new_config(self) -> bool:
         """Restart all bots with the new configuration.
 

@@ -86,7 +86,7 @@ async def test_unknown_expiry_forced_refresh_attempts_capped(monkeypatch):
         tm._upsert_token_info("ux", "acc", "ref", "cid", "csec", None)
         dummy = UnknownExpiryClient()
         dummy.prime()
-        monkeypatch.setattr(tm, "_get_client", lambda cid, cs: dummy)
+        monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)
         info = tm.get_info("ux")
         # Invoke unknown expiry handler multiple times
         for _ in range(5):
@@ -108,7 +108,7 @@ async def test_failed_refresh_sets_expired(monkeypatch):
         tm._upsert_token_info("rl", "acc2", "ref2", "cid", "csec", expiry)
         dummy = RateLimitFailClient()
         dummy.prime()
-        monkeypatch.setattr(tm, "_get_client", lambda cid, cs: dummy)
+        monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)
         outcome = await tm.ensure_fresh("rl", force_refresh=True)
         info = tm.get_info("rl")
         assert outcome == TokenOutcome.FAILED
@@ -125,7 +125,7 @@ async def test_proactive_drift_doubles_threshold_triggers_refresh(monkeypatch):
     tm._upsert_token_info("pd", "acc3", "ref3", "cid", "csec", expiry)
     dummy = ProactiveDriftClient()
     dummy.prime()
-    monkeypatch.setattr(tm, "_get_client", lambda cid, cs: dummy)
+    monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)
     info = tm.get_info("pd")
     assert info is not None
     info.last_validation = datetime.now(UTC).timestamp()

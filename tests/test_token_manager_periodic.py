@@ -59,7 +59,7 @@ async def test_periodic_validation_triggers_refresh(monkeypatch):
 
         dummy = PeriodicDummyClient()
         dummy.prime(validate_outcome=False, refresh_on_force=True)
-        monkeypatch.setattr(tm, "_get_client", lambda cid, cs: dummy)
+        monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)
 
         await tm.start()
         # Allow background loop + periodic validation cycle (a few ticks)
@@ -87,7 +87,7 @@ async def test_periodic_validation_success_no_refresh(monkeypatch):
 
         dummy = PeriodicDummyClient()
         dummy.prime(validate_outcome=True)
-        monkeypatch.setattr(tm, "_get_client", lambda cid, cs: dummy)
+        monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)
 
         await tm.start()
         for _ in range(10):
