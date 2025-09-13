@@ -4,7 +4,7 @@ import aiohttp
 import pytest
 
 from src.chat.eventsub_backend import EventSubChatBackend
-from src.token.manager import TokenInfo, TokenManager, TokenOutcome, TokenResult
+from src.auth_token.manager import TokenInfo, TokenManager, TokenOutcome, TokenResult
 
 
 class DummyClient:

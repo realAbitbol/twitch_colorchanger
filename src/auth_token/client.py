@@ -14,7 +14,6 @@ from ..constants import (
     TOKEN_REFRESH_THRESHOLD_SECONDS,
 )
 from ..errors.internal import NetworkError, OAuthError, ParsingError, RateLimitError
-from ..logs.logger import logger
 from ..utils import format_duration
 
 
@@ -82,8 +81,8 @@ class TokenClient:
                         refresh_token,
                         final_expiry,
                     )
-                logger.log_event(
-                    "token", "valid_but_expiring", level=logging.WARNING, user=username
+                logging.warning(
+                    f"⏳ Token valid but expiring soon - scheduling refresh user={username}"
                 )
 
         if not refresh_token:
@@ -115,13 +114,8 @@ class TokenClient:
                         )
                         expiry = datetime.now(UTC) + timedelta(seconds=safe_expires)
                     human_expires = format_duration(expires_in)
-                    logger.log_event(
-                        "token",
-                        "refresh_success",
-                        user=username,
-                        attempt=1,
-                        expires_in=expires_in,
-                        human=f"Token refreshed (lifetime {human_expires})",
+                    logging.info(
+                        f"Token refreshed (lifetime {human_expires}) user={username} attempt={1} expires_in={expires_in}"
                     )
                     return TokenResult(
                         TokenOutcome.REFRESHED, new_access, new_refresh, expiry
@@ -136,54 +130,21 @@ class TokenClient:
         except aiohttp.ClientError as e:
             raise NetworkError(f"Network error during token refresh: {e}") from e
         except ParsingError:
-            logger.log_event(
-                "token",
-                "refresh_invalid_response",
-                level=logging.ERROR,
-                missing_field="access_token",
-                user=username,
-            )
             return TokenResult(TokenOutcome.FAILED, None, None, None)
         except OAuthError:
-            logger.log_event(
-                "token",
-                "refresh_unauthorized",
-                level=logging.ERROR,
-                user=username,
-                status=401,
-                error_type="OAuthError",
-            )
             return TokenResult(TokenOutcome.FAILED, None, None, None)
         except RateLimitError:
-            logger.log_event(
-                "token",
-                "refresh_rate_limited",
-                level=logging.WARNING,
-                user=username,
-                status=429,
-            )
             return TokenResult(TokenOutcome.FAILED, None, None, None)
         except NetworkError as e:
-            logger.log_event(
-                "token",
-                "refresh_network_error",
-                level=logging.WARNING,
-                user=username,
-                error=str(e),
-                error_type=type(e).__name__,
+            logging.warning(
+                f"💥 Network error during token refresh attempt 1: {type(e).__name__} user={username} error={str(e)}"
             )
             return TokenResult(TokenOutcome.FAILED, None, None, None)
         except Exception as e:  # noqa: BLE001
             import traceback
 
-            logger.log_event(
-                "token",
-                "refresh_error",
-                level=logging.ERROR,
-                user=username,
-                error=str(e),
-                error_type=type(e).__name__,
-                traceback=traceback.format_exc(),
+            logging.error(
+                f"💥 Unexpected token refresh error: {type(e).__name__} user={username} error={str(e)} traceback={traceback.format_exc()}"
             )
             return TokenResult(TokenOutcome.FAILED, None, None, None)
 
@@ -206,67 +167,37 @@ class TokenClient:
                             expires_in - TOKEN_REFRESH_SAFETY_BUFFER_SECONDS, 0
                         )
                         expiry = datetime.now(UTC) + timedelta(seconds=safe_expires)
-                        logger.log_event(
-                            "token",
-                            "validated",
-                            level=logging.DEBUG,
-                            user=username,
-                            expires_in=expires_in,
-                            buffered_expires_in=safe_expires,
-                            human=f"Token valid (remaining {format_duration(expires_in)} raw, buffered {format_duration(safe_expires)})",
+                        logging.debug(
+                            f"Token valid (remaining {format_duration(expires_in)} raw, buffered {format_duration(safe_expires)}) user={username} expires_in={expires_in} buffered_expires_in={safe_expires}"
                         )
                     return True, expiry
                 if resp.status == 401:
                     # 401 here usually just means the stored access token is expired; a refresh will follow.
                     # Demote to INFO to avoid alarming users on normal startup token rotations.
-                    logger.log_event(
-                        "token",
-                        "validation_invalid",
-                        level=logging.INFO,
-                        user=username,
-                        status=resp.status,
+                    logging.info(
+                        f"❌ Token validation failed: invalid (status={resp.status}) user={username}"
                     )
                 elif resp.status == 429:
-                    logger.log_event(
-                        "token",
-                        "validation_rate_limited",
-                        level=logging.WARNING,
-                        user=username,
-                        status=resp.status,
+                    logging.warning(
+                        f"⏳ Token validation rate limited (status={resp.status}) user={username}"
                     )
                 else:
-                    logger.log_event(
-                        "token",
-                        "validation_failed_status",
-                        level=logging.WARNING,
-                        user=username,
-                        status=resp.status,
+                    logging.warning(
+                        f"❌ Token validation failed (status={resp.status}) user={username}"
                     )
                 return False, None
         except TimeoutError as e:
-            logger.log_event(
-                "token", "validation_timeout", level=logging.WARNING, user=username
-            )
+            logging.warning(f"⏱️ Token validation timeout user={username}")
             raise NetworkError("Token validation timeout") from e
         except aiohttp.ClientError as e:
-            logger.log_event(
-                "token",
-                "validation_network_error",
-                level=logging.WARNING,
-                user=username,
-                error_type=type(e).__name__,
+            logging.warning(
+                f"💥 Network error during token validation: {type(e).__name__} user={username}"
             )
             raise NetworkError(f"Network error during validation: {e}") from e
         except Exception as e:  # noqa: BLE001
             import traceback
 
-            logger.log_event(
-                "token",
-                "validation_error",
-                level=logging.ERROR,
-                user=username,
-                error=str(e),
-                error_type=type(e).__name__,
-                traceback=traceback.format_exc(),
+            logging.error(
+                f"💥 Unexpected error during token validation: {type(e).__name__} user={username} error={str(e)} traceback={traceback.format_exc()}"
             )
             return False, None

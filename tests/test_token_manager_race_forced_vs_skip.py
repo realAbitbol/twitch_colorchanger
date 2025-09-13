@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from src.token.manager import TokenInfo, TokenManager, TokenOutcome
+from src.auth_token.manager import TokenInfo, TokenManager, TokenOutcome
 
 
 class NoopClient:
@@ -22,15 +22,13 @@ class NoopClient:
 
 @pytest.mark.asyncio
 async def test_concurrent_forced_and_natural_refresh(monkeypatch):
-    from src.token.manager import TokenManager as _TM
+    from src.auth_token.manager import TokenManager as _TM
     _TM._instance = None  # type: ignore[attr-defined]
     tm = object.__new__(TokenManager)  # type: ignore[call-arg]
     tm.http_session = None
     tm.tokens = {}
     tm.background_task = None
     tm.running = False
-    from src.logs.logger import logger
-    tm.logger = logger
     tm._client_cache = {}
     tm._update_hooks = {}
     tm._hook_tasks = []

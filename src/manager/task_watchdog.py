@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from secrets import SystemRandom
 from typing import TYPE_CHECKING, Any
 
 from ..constants import TASK_WATCHDOG_INTERVAL
-from ..logs.logger import logger
 
 if TYPE_CHECKING:  # pragma: no cover
     from bot.manager import BotManager
@@ -29,15 +29,13 @@ class TaskWatchdog:
                 await asyncio.sleep(TASK_WATCHDOG_INTERVAL * jitter)
                 if not self.manager.running or self.manager.shutdown_initiated:
                     break
-                logger.log_event("manager", "task_watchdog_tick", level=10)
+                logging.debug("🕰️ Task watchdog tick")
                 self._check_task_health()
             except asyncio.CancelledError:
-                logger.log_event("manager", "task_watchdog_cancelled", level=30)
+                logging.warning("🛑 Task watchdog cancelled")
                 raise
             except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "manager", "task_watchdog_error", level=40, error=str(e)
-                )
+                logging.error(f"💥 Task watchdog error: {str(e)}")
                 await asyncio.sleep(30)
 
     def _check_task_health(self) -> None:
@@ -46,20 +44,16 @@ class TaskWatchdog:
         for i, task in enumerate(self.manager.tasks):
             if task.done():
                 if task.exception():
-                    logger.log_event(
-                        "manager",
-                        "task_exception_detected",
-                        level=30,
-                        index=i,
-                        error=str(task.exception()),
+                    logging.warning(
+                        f"💥 Task exception index={i}: {str(task.exception())}"
                     )
                 else:
-                    logger.log_event("manager", "task_completed", index=i)
+                    logging.info(f"✅ Task completed index={i}")
                 dead.append(i)
             else:
                 alive.append(task)
         if dead:
             self.manager.tasks = alive
-            logger.log_event("manager", "removed_dead_tasks", level=30, count=len(dead))
+            logging.warning(f"🧹 Removed dead tasks (count={len(dead)})")
         else:
-            logger.log_event("manager", "all_tasks_alive", level=10)
+            logging.debug("🟢 All tasks alive")

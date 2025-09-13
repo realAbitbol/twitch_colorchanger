@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from src.token.client import TokenClient, TokenOutcome
+from src.auth_token.client import TokenClient, TokenOutcome
 
 
 class FakeResp:

@@ -5,6 +5,7 @@ import fcntl
 import glob
 import hashlib
 import json
+import logging
 import os
 import shutil
 import stat
@@ -14,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 from ..constants import CONFIG_WRITE_DEBOUNCE
-from ..logs.logger import logger
 from . import globals as watcher_globals
 
 
@@ -66,13 +66,7 @@ class ConfigRepository:
         except FileNotFoundError:
             return []
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "config",
-                "load_error",
-                level=40,
-                error=str(e),
-                error_type=type(e).__name__,
-            )
+            logging.error(f"💥 Configuration load error: {type(e).__name__}")
             return []
 
     def _compute_checksum(self, users: list[dict[str, Any]]) -> str:
@@ -89,21 +83,14 @@ class ConfigRepository:
             try:
                 watcher_globals.pause_config_watcher()
             except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "config",
-                    "watcher_pause_failed",
-                    level=10,
-                    error=str(e),
-                    error_type=type(e).__name__,
+                logging.debug(
+                    f"💥 Failed to pause config watcher: {type(e).__name__} {str(e)}"
                 )
 
             checksum = self._compute_checksum(users)
             if self._last_checksum == checksum:
-                logger.log_event(
-                    "config",
-                    "save_skipped_checksum_match",
-                    checksum=checksum,
-                    user_count=len(users),
+                logging.info(
+                    f"⏭️ Skipped save (checksum match) checksum={checksum} users={len(users)}"
                 )
                 return False  # No write performed
 
@@ -124,24 +111,14 @@ class ConfigRepository:
                 time.sleep(min(CONFIG_WRITE_DEBOUNCE, 0.05))
             return True
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "config",
-                "save_failed",
-                level=40,
-                error=str(e),
-                error_type=type(e).__name__,
-            )
+            logging.error(f"💥 Config save failed: {type(e).__name__}")
             raise
         finally:
             try:
                 watcher_globals.resume_config_watcher()
             except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "config",
-                    "watcher_resume_failed",
-                    level=10,
-                    error=str(e),
-                    error_type=type(e).__name__,
+                logging.debug(
+                    f"💥 Failed to resume config watcher: {type(e).__name__} {str(e)}"
                 )
 
     def _prepare_dir(self) -> None:
@@ -182,20 +159,14 @@ class ConfigRepository:
                     temp_path = tmp.name
                 os.chmod(temp_path, 0o600)
                 os.rename(temp_path, self.path)
-                logger.log_event("config", "save_atomic_success", config_file=self.path)
+                logging.info("💾 Config saved atomically")
         except Exception as e:  # noqa: BLE001
             if temp_path and os.path.exists(temp_path):
                 try:
                     os.unlink(temp_path)
                 except OSError:
                     pass
-            logger.log_event(
-                "config",
-                "save_atomic_failed",
-                level=40,
-                error=str(e),
-                error_type=type(e).__name__,
-            )
+            logging.error(f"💥 Atomic config save failed: {type(e).__name__}")
             raise
         finally:
             try:
@@ -211,11 +182,7 @@ class ConfigRepository:
             timestamp = int(time.time())
             backup_name = backup_dir / f"{config_path.name}.bak.{timestamp}"
             shutil.copy2(config_path, backup_name)
-            logger.log_event(
-                "config",
-                "backup_created",
-                backup=str(backup_name.name),
-            )
+            logging.info("🗄️ Config backup created")
             backups = sorted(
                 glob.glob(str(backup_dir / f"{config_path.name}.bak.*")),
                 reverse=True,
@@ -226,28 +193,13 @@ class ConfigRepository:
                 except OSError:
                     pass
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "config",
-                "backup_failed",
-                level=10,
-                error=str(e),
-            )
+            logging.debug(f"💥 Config backup failed: {str(e)}")
 
     def verify_readback(self) -> None:
         try:
             with open(self.path, encoding="utf-8") as f:
                 data = json.load(f)
             users_list = data.get("users", []) if isinstance(data, dict) else []
-            logger.log_event(
-                "config",
-                "save_verification",
-                user_count=len(users_list),
-            )
+            logging.info(f"🔍 Verification read user_count={len(users_list)}")
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "config",
-                "save_atomic_failed",
-                level=40,
-                error=str(e),
-                error_type=type(e).__name__,
-            )
+            logging.error(f"💥 Atomic config save failed: {type(e).__name__}")

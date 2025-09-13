@@ -45,7 +45,7 @@ To ensure complete execution and avoid leaving tasks half-finished:
 1. Run `.venv/bin/python -m pytest` to ensure all tests pass
 2. Run `.venv/bin/python -m mypy src/` for type checking
 3. Run `.venv/bin/ruff check --fix src/` for linting
-4. Verify application starts and basic functionality works
+4. Verify application starts and basic functionality works (run from with the venv .venv)
 5. Check that removed directories/files are actually deleted
 
 ### Logging Refactor Specific Instructions

@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from src.token.manager import TokenInfo, TokenManager, TokenOutcome
+from src.auth_token.manager import TokenInfo, TokenManager, TokenOutcome
 
 
 class DummyClient:
@@ -26,7 +26,7 @@ class DummyClient:
 @pytest.mark.asyncio
 async def test_single_update_hook_invocation(monkeypatch):
     # Ensure clean singleton state
-    from src.token.manager import TokenManager as _TM  # local alias
+    from src.auth_token.manager import TokenManager as _TM  # local alias
     _TM._instance = None  # type: ignore[attr-defined]
     # Bypass custom __new__ (needs http_session) by using object.__new__
     tm = object.__new__(TokenManager)  # type: ignore[call-arg]
@@ -35,8 +35,6 @@ async def test_single_update_hook_invocation(monkeypatch):
     tm.tokens = {}
     tm.background_task = None
     tm.running = False
-    from src.logs.logger import logger
-    tm.logger = logger
     tm._client_cache = {}
     tm._update_hooks = {}
     tm._hook_tasks = []

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, cast
-
-from ..logs.logger import logger
 
 
 def _normalize_channels(channels: list[str] | Any) -> tuple[list[str], bool]:
@@ -76,14 +75,8 @@ class UserConfig:
         # Normalize channels
         normalized, channel_changed = _normalize_channels(self.channels)
         if channel_changed:
-            logger.log_event(
-                "config",
-                "channel_normalization_change",
-                username=self.username,
-                original_count=len(self.channels),
-                new_count=len(normalized),
-                original=self.channels,
-                new=normalized,
+            logging.info(
+                f"🛠️ Channel normalization change {self.channels}->{normalized}"
             )
             self.channels = normalized
             changed = True

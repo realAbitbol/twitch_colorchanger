@@ -6,8 +6,6 @@ to avoid a name collision (module vs package) introduced during refactor.
 
 from __future__ import annotations
 
-from ..logs.logger import logger
-
 __all__ = ["format_duration", "emit_startup_instructions"]
 
 
@@ -36,88 +34,33 @@ def format_duration(total_seconds: int | float | None) -> str:
 
 def emit_startup_instructions() -> None:
     """Emit structured log events with startup guidance."""
-    logger.log_event("startup", "instructions_header")
-    logger.log_event(
-        "startup",
-        "instructions_setup_step",
-        step=1,
-        text="Create a Twitch application: https://dev.twitch.tv/console/apps",
+    print("📘 Instructions")
+    print(
+        "🪜 Setup step 1: Create a Twitch application: https://dev.twitch.tv/console/apps"
     )
-    logger.log_event(
-        "startup",
-        "instructions_setup_step",
-        step=2,
-        text="Set OAuth Redirect URL to: https://twitchtokengenerator.com",
+    print(
+        "🪜 Setup step 2: Set OAuth Redirect URL to: https://twitchtokengenerator.com"
     )
-    logger.log_event(
-        "startup",
-        "instructions_setup_step",
-        step=3,
-        text="Copy your Client ID and Client Secret",
-    )
+    print("🪜 Setup step 3: Copy your Client ID and Client Secret")
 
-    logger.log_event("startup", "instructions_auto_section")
-    logger.log_event(
-        "startup",
-        "instructions_point",
-        text="Copy twitch_colorchanger.conf.sample to twitch_colorchanger.conf",
-    )
-    logger.log_event(
-        "startup", "instructions_point", text="Add username, client_id, client_secret"
-    )
-    logger.log_event(
-        "startup",
-        "instructions_point",
-        text="Run the bot; it handles token authorization automatically",
-    )
-    logger.log_event(
-        "startup",
-        "instructions_point",
-        text="Follow displayed URL and enter the code when prompted",
-    )
+    print("⚙️ Automatic configuration")
+    print("👉 Copy twitch_colorchanger.conf.sample to twitch_colorchanger.conf")
+    print("👉 Add username, client_id, client_secret")
+    print("👉 Run the bot; it handles token authorization automatically")
+    print("👉 Follow displayed URL and enter the code when prompted")
 
-    logger.log_event("startup", "instructions_manual_section")
-    logger.log_event(
-        "startup",
-        "instructions_point",
-        text="Generate tokens: https://twitchtokengenerator.com",
-    )
-    logger.log_event(
-        "startup",
-        "instructions_point",
-        text="Select scopes: chat:read, user:manage:chat_color",
-    )
-    logger.log_event(
-        "startup",
-        "instructions_point",
-        text="Save Access & Refresh Tokens in config file",
-    )
+    print("📝 Manual configuration")
+    print("👉 Generate tokens: https://twitchtokengenerator.com")
+    print("👉 Select scopes: chat:read, user:manage:chat_color")
+    print("👉 Save Access & Refresh Tokens in config file")
 
-    logger.log_event("startup", "instructions_how_it_works")
-    logger.log_event(
-        "startup", "instructions_point", text="Monitors your chat messages"
+    print("ℹ️ Features")
+    print("👉 Monitors your chat messages")
+    print("👉 Changes username color after each message")
+    print("👉 Supports preset Twitch and random hex colors")
+    print("👉 Handles multiple users simultaneously")
+    print("👉 Auto-refreshes tokens to minimize re-authorization")
+    print("👉 type 'cdd' to disable or 'cce' to enable in any joined channel.")
+    print(
+        "🔒 Security notice : Remember to never share your client id, client secret or your tokens!"
     )
-    logger.log_event(
-        "startup",
-        "instructions_point",
-        text="Changes username color after each message",
-    )
-    logger.log_event(
-        "startup",
-        "instructions_point",
-        text="Supports preset Twitch and random hex colors",
-    )
-    logger.log_event(
-        "startup", "instructions_point", text="Handles multiple users simultaneously"
-    )
-    logger.log_event(
-        "startup",
-        "instructions_point",
-        text="Auto-refreshes tokens to minimize re-authorization",
-    )
-    logger.log_event(
-        "startup",
-        "instructions_point",
-        text="type 'cdd' to disable or 'cce' to enable in any joined channel.",
-    )
-    logger.log_event("startup", "instructions_security_notice")

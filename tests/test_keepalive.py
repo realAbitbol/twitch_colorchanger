@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import aiohttp
 
-from src.token.manager import TokenManager, TokenInfo, TokenOutcome
+from src.auth_token.manager import TokenManager, TokenInfo, TokenOutcome
 from src.constants import TOKEN_MANAGER_PERIODIC_VALIDATION_INTERVAL
 
 

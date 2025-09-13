@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from typing import Protocol
-
-from ..logs.logger import logger
 
 
 class _StatsProto(Protocol):  # minimal protocol for bot.stats
@@ -28,7 +27,7 @@ class ManagerStatistics:
                 "messages_sent": bot.stats.messages_sent,
                 "colors_changed": bot.stats.colors_changed,
             }
-        logger.log_event("manager", "saved_statistics", level=10, bots=len(stats))
+        logging.debug(f"💾 Saved statistics (bots={len(stats)})")
         return stats
 
     def restore(
@@ -42,7 +41,7 @@ class ManagerStatistics:
                 bot.stats.colors_changed = data["colors_changed"]
                 restored += 1
         if restored:
-            logger.log_event("manager", "restored_statistics", level=10, bots=restored)
+            logging.debug(f"♻️ Restored statistics (bots={restored})")
 
     def aggregate(self, bots: Iterable[_BotProto]) -> None:
         bots_list = list(bots)
@@ -50,12 +49,8 @@ class ManagerStatistics:
             return None
         total_messages = sum(bot.stats.messages_sent for bot in bots_list)
         total_colors = sum(bot.stats.colors_changed for bot in bots_list)
-        logger.log_event(
-            "manager",
-            "aggregate_statistics",
-            bots=len(bots_list),
-            total_messages=total_messages,
-            total_color_changes=total_colors,
+        logging.info(
+            f"📊 Aggregate statistics bots={len(bots_list)} messages={total_messages} colors={total_colors}"
         )
         for bot in bots_list:
             bot.print_statistics()

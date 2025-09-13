@@ -9,7 +9,6 @@ from datetime import UTC, datetime, timedelta
 import aiohttp
 
 from ..constants import TOKEN_REFRESH_SAFETY_BUFFER_SECONDS
-from ..logs.logger import logger
 from ..utils import format_duration
 from .device_flow import DeviceCodeFlow
 
@@ -42,13 +41,7 @@ class TokenProvisioner:
             code = device_data["user_code"]
             verify_url = device_data["verification_uri"]
             expires_in = device_data["expires_in"]
-            logger.log_event(
-                "token",
-                "device_code_obtained",
-                user=username,
-                expires_in=expires_in,
-                human=f"Visit {verify_url} and enter code {code}",
-            )
+            logging.info(f"Visit {verify_url} and enter code {code}")
             token_data = await flow.poll_for_tokens(
                 device_data["device_code"], expires_in
             )
@@ -61,18 +54,10 @@ class TokenProvisioner:
             if lifetime:
                 safe = max(lifetime - TOKEN_REFRESH_SAFETY_BUFFER_SECONDS, 0)
                 expiry = datetime.now(UTC) + timedelta(seconds=safe)
-            logger.log_event(
-                "token",
-                "device_authorized",
-                user=username,
-                expires_in=lifetime,
-                human=f"Authorized (token lifetime {format_duration(lifetime)})",
-            )
+            logging.info(f"Authorized (token lifetime {format_duration(lifetime)})")
             return access, refresh, expiry
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "token", "device_authorize_error", level=logging.ERROR, error=str(e)
-            )
+            logging.error(f"💥 Device authorization error: {str(e)}")
             return None, None, None

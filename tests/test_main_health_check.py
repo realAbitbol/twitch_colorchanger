@@ -39,8 +39,8 @@ def test_health_check_pass(tmp_path: Path) -> None:  # type: ignore[no-untyped-d
     )
     if proc.returncode != 0:
         raise AssertionError(f"Health check expected success exit code 0 got {proc.returncode} output={proc.stdout}")
-    # Expect health_mode and health_pass messages (concise format shows human text only)
-    if "Health check mode" not in proc.stdout or "Health check passed" not in proc.stdout:
+    # Expect health_mode and health_pass messages
+    if "🩺 Health check mode" not in proc.stdout or "✅ Health check passed" not in proc.stdout:
         raise AssertionError(f"Expected health messages missing output={proc.stdout}")
 
 

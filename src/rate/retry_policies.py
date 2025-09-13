@@ -15,7 +15,6 @@ from random import SystemRandom
 from typing import TypeVar
 
 from ..errors.internal import InternalError
-from ..logs.logger import logger
 
 _rand = SystemRandom()
 
@@ -69,29 +68,13 @@ async def run_with_retry(
             last_error = e
             retriable = policy.is_retriable(e)
             if attempt == policy.max_attempts or not retriable:
-                logger.log_event(
-                    log_domain,
-                    log_action_give_up,
-                    level=logging.ERROR,
-                    attempt=attempt,
-                    max_attempts=policy.max_attempts,
-                    user=user,
-                    error=str(e),
-                    error_type=type(e).__name__,
-                    retriable=retriable,
+                logging.error(
+                    f"Retry policy {policy.name} giving up after {attempt} attempts user={user} error={str(e)} error_type={type(e).__name__} retriable={retriable} max_attempts={policy.max_attempts}"
                 )
                 raise
             delay = policy.compute_delay(attempt - 1)
-            logger.log_event(
-                log_domain,
-                log_action_attempt,
-                level=logging.WARNING,
-                attempt=attempt,
-                max_attempts=policy.max_attempts,
-                wait_time=round(delay, 3),
-                user=user,
-                error=str(e),
-                error_type=type(e).__name__,
+            logging.warning(
+                f"Retry policy {policy.name} attempt {attempt} of {policy.max_attempts} waiting {round(delay, 3)}s user={user} error={str(e)} error_type={type(e).__name__}"
             )
             await asyncio.sleep(delay)
     # Should not reach here

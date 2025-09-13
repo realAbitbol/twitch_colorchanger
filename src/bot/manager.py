@@ -18,7 +18,6 @@ from ..config.watcher import create_config_watcher
 from ..constants import (
     TASK_WATCHDOG_INTERVAL,  # noqa: F401 - may be used by watchdog service
 )
-from ..logs.logger import logger
 from ..manager import HealthMonitor, ManagerStatistics
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -54,7 +53,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         self._stats_service = ManagerStatistics()
 
     async def _start_all_bots(self) -> bool:
-        logger.log_event("manager", "start_all", count=len(self.users_config))
+        logging.info(f"▶️ Starting all bots (count={len(self.users_config)})")
         if not self.context:
             raise RuntimeError("ApplicationContext required")
         self.http_session = self.context.session
@@ -63,17 +62,13 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                 bot = self._create_bot(user_config)
                 self.bots.append(bot)
             except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "manager",
-                    "bot_create_failed",
-                    level=logging.ERROR,
-                    error=str(e),
-                    user=user_config.get("username"),
+                logging.error(
+                    f"💥 Failed to create bot: {str(e)} user={user_config.get('username')}"
                 )
         if not self.bots:
-            logger.log_event("manager", "no_bots", level=logging.ERROR)
+            logging.error("⚠️ No bots created - aborting start")
             return False
-        logger.log_event("manager", "launch_tasks", tasks=len(self.bots), level=10)
+        logging.debug(f"🚀 Launching bot tasks (count={len(self.bots)})")
         for bot in self.bots:
             self.tasks.append(asyncio.create_task(bot.start()))
         await asyncio.sleep(1)
@@ -81,7 +76,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         self.shutdown_initiated = False
         self._start_health_monitoring()
         self._start_task_watchdog()
-        logger.log_event("manager", "all_started", level=10)
+        logging.debug("✅ All bots started successfully")
         return True
 
     def _create_bot(self, user_config: dict[str, Any]) -> TwitchColorBot:
@@ -102,47 +97,36 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             user_id=None,
             enabled=user_config.get("enabled", True),
         )
-        logger.log_event("manager", "bot_created", user=username, level=10)
+        logging.debug(f"🆕 Bot created: {username}")
         return bot
 
     async def _stop_all_bots(self) -> None:
         if not self.running:
             return
-        logger.log_event("manager", "stopping_all", level=logging.WARNING)
+        logging.warning("🛑 Stopping all bots")
         self._cancel_all_tasks()
         self._close_all_bots()
         await self._wait_for_task_completion()
         self.running = False
-        logger.log_event("manager", "all_stopped")
+        logging.info("🛑 All bots stopped")
 
     def _cancel_all_tasks(self) -> None:
         for i, task in enumerate(self.tasks):
             try:
                 if task and not task.done():
                     task.cancel()
-                    logger.log_event("manager", "task_cancelled", index=i)
+                    logging.info(f"🛑 Cancelled task index={i}")
             except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "manager",
-                    "task_cancel_error",
-                    level=logging.WARNING,
-                    index=i,
-                    error=str(e),
-                )
+                logging.warning(f"💥 Error cancelling task index={i}: {str(e)}")
 
     def _close_all_bots(self) -> None:
         for i, bot in enumerate(self.bots):
             try:
                 bot.close()
-                logger.log_event("manager", "bot_closed", index=i, user=bot.username)
+                logging.info(f"🔻 Closed bot index={i} user={bot.username}")
             except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "manager",
-                    "bot_close_error",
-                    level=logging.WARNING,
-                    index=i,
-                    error=str(e),
-                    user=getattr(bot, "username", None),
+                logging.warning(
+                    f"💥 Error closing bot index={i}: {str(e)} user={getattr(bot, 'username', None)}"
                 )
 
     async def _wait_for_task_completion(self) -> None:
@@ -152,17 +136,11 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             results = await asyncio.gather(*self.tasks, return_exceptions=True)
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
-                    logger.log_event(
-                        "manager",
-                        "task_exception",
-                        level=logging.WARNING,
-                        index=i,
-                        error=str(result),
+                    logging.warning(
+                        f"💥 Task index={i} finished with exception: {str(result)}"
                     )
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "manager", "wait_tasks_error", level=logging.WARNING, error=str(e)
-            )
+            logging.warning(f"💥 Error waiting for task completion: {str(e)}")
         finally:
             self.tasks.clear()
 
@@ -175,14 +153,14 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             pass
 
     def request_restart(self, new_users_config: list[dict[str, Any]]) -> None:
-        logger.log_event("manager", "config_change_detected")
+        logging.info("🔄 Config change detected - scheduling restart")
         self.new_config = new_users_config
         self.restart_requested = True
 
     async def _restart_with_new_config(self) -> bool:
         if not self.new_config:
             return False
-        logger.log_event("manager", "restarting")
+        logging.info("🔄 Restarting with new configuration")
         saved = self._save_statistics()
         await self._stop_all_bots()
         self.bots.clear()
@@ -190,9 +168,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         old_count = len(self.users_config)
         self.users_config = self.new_config
         new_count = len(self.users_config)
-        logger.log_event(
-            "manager", "config_updated", old_users=old_count, new_users=new_count
-        )
+        logging.info(f"🛠️ Configuration updated old={old_count} new={new_count}")
         success = await self._start_all_bots()
         if success:
             self._restore_statistics(saved)
@@ -202,9 +178,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                     active = {u.get("username", "").lower() for u in self.users_config}
                     self.context.token_manager.prune(active)
             except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "manager", "token_prune_failed", level=logging.DEBUG, error=str(e)
-                )
+                logging.debug(f"⚠️ Error pruning tokens: {str(e)}")
         self.restart_requested = False
         self.new_config = None
         return success
@@ -224,7 +198,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                 self._health_monitor = HealthMonitor(self)
             task = self._health_monitor.start()
             self.tasks.append(task)
-            logger.log_event("manager", "started_health_monitor", level=10)
+            logging.debug("▶️ Started health monitor")
 
     def _start_task_watchdog(self) -> None:
         if self.running:
@@ -232,7 +206,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                 self._task_watchdog = TaskWatchdog(self)
             task = self._task_watchdog.start()
             self.tasks.append(task)
-            logger.log_event("manager", "started_task_watchdog", level=10)
+            logging.debug("▶️ Started task watchdog")
 
     def _save_statistics(self) -> dict[str, dict[str, int]]:
         bots_iter: Iterable[_BotProto] = cast(Iterable["_BotProto"], self.bots)
@@ -251,8 +225,8 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             # Idempotent signal handler: only trigger once
             if self.shutdown_initiated:
                 return
-            logger.log_event(
-                "manager", "signal_shutdown", level=logging.WARNING, signal=signum
+            logging.warning(
+                f"🛑 Signal received - initiating shutdown (signal={signum})"
             )
             self.shutdown_initiated = True
             # We don't directly stop bots here; main loop will detect flag and perform orderly shutdown
@@ -271,22 +245,13 @@ async def _setup_config_watcher(manager: BotManager, config_file: str | None) ->
 
         watcher = await create_config_watcher(config_file, restart_cb)
         set_global_watcher(watcher)
-        logger.log_event(
-            "manager", "config_watcher_enabled", file=config_file, level=10
-        )
+        logging.debug(f"👀 Config watcher enabled file={config_file}")
         return watcher
     except ImportError:
-        logger.log_event(
-            "manager", "config_watching_unavailable", level=logging.WARNING
-        )
+        logging.warning("⚠️ Config watching unavailable - install watchdog")
         return None
     except Exception as e:  # noqa: BLE001
-        logger.log_event(
-            "manager",
-            "config_watcher_start_failed",
-            level=logging.WARNING,
-            error=str(e),
-        )
+        logging.warning(f"💥 Failed to start config watcher: {str(e)}")
         return None
 
 
@@ -294,21 +259,17 @@ async def _run_main_loop(manager: BotManager) -> None:
     while manager.running:
         await asyncio.sleep(1)
         if manager.shutdown_initiated:
-            logger.log_event("manager", "shutdown_initiated", level=logging.WARNING)
+            logging.warning("🔻 Shutdown initiated - stopping bots")
             await manager._stop_all_bots()
             break
         if manager.restart_requested:
             ok = await manager._restart_with_new_config()
             if not ok:
-                logger.log_event(
-                    "manager", "restart_failed_keep_previous", level=logging.ERROR
-                )
+                logging.error("⚠️ Restart failed - keeping previous config")
             continue
         if all(task.done() for task in manager.tasks):
-            logger.log_event(
-                "manager", "all_tasks_completed_unexpectedly", level=logging.WARNING
-            )
-            logger.log_event("manager", "possible_auth_issue")
+            logging.warning("⚠️ All bot tasks completed unexpectedly")
+            logging.info("⚠️ Likely authentication or connection issue")
             break
 
 
@@ -335,34 +296,25 @@ async def run_bots(
         success = await manager._start_all_bots()
         if not success:
             return
-        logger.log_event("manager", "bots_running")
+        logging.info("🏃 Bots running - press Ctrl+C to stop")
         await _run_main_loop(manager)
     except KeyboardInterrupt:  # noqa: PERF203
-        logger.log_event("manager", "keyboard_interrupt", level=logging.WARNING)
+        logging.warning("⌨️ Keyboard interrupt")
     except Exception as e:  # noqa: BLE001
-        logger.log_event("manager", "fatal_error", level=logging.ERROR, error=str(e))
+        logging.error(f"💥 Fatal error: {str(e)}")
     finally:
         _cleanup_watcher(watcher)
         await manager._stop_all_bots()
-        from ..logs.logger import logger as _logger  # local to avoid cycles
-
-        _logger.log_event("app", "context_shutdown_begin")
+        logging.info("🔻 App initiating context shutdown")
         import asyncio as _asyncio
 
         try:
             await _asyncio.shield(context.shutdown())
         except Exception as e:  # noqa: BLE001
             if isinstance(e, asyncio.CancelledError):
-                _logger.log_event(
-                    "context",
-                    "shutdown_cancelled",
-                    level=logging.DEBUG,
-                    human="Shutdown cancelled (Ctrl+C)",
-                )
+                logging.debug("Shutdown cancelled (Ctrl+C)")
             else:
-                _logger.log_event(
-                    "context", "shutdown_error", level=logging.WARNING, error=str(e)
-                )
-        _logger.log_event("app", "context_shutdown_complete")
+                logging.warning("💥 Error during application context shutdown")
+        logging.info("✅ App completed context shutdown")
         manager.print_statistics()
-        logger.log_event("manager", "goodbye")
+        logging.info("👋 Goodbye")

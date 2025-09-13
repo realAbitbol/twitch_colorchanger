@@ -6,8 +6,6 @@ import logging
 import time
 from random import SystemRandom
 
-from ..logs.logger import logger
-
 
 class AdaptiveBackoff:
     def __init__(self) -> None:
@@ -35,7 +33,7 @@ class AdaptiveBackoff:
 
     def reset(self) -> None:
         if self._delay > 0:
-            logger.log_event("rate_limit", "backoff_reset", level=logging.DEBUG)
+            logging.debug("♻️ Adaptive backoff reset")
         self._delay = 0.0
         self._until = 0.0
         self._count = 0
@@ -55,10 +53,8 @@ class AdaptiveBackoff:
         jittered = max(0.5, new_delay + self._rng.uniform(-jitter, jitter))
         self._delay = jittered
         self._until = now + self._delay
-        logger.log_event(
-            "rate_limit",
-            "backoff_increase",
-            level=logging.WARNING if self._delay >= 5 else logging.DEBUG,
-            delay=round(self._delay, 2),
-            count=self._count,
+        level = logging.WARNING if self._delay >= 5 else logging.DEBUG
+        logging.log(
+            level,
+            f"🔼 Adaptive backoff increased to {round(self._delay, 2)}s (count={self._count})",
         )

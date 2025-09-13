@@ -7,7 +7,6 @@ from typing import Any, cast
 
 import aiohttp
 
-from ..logs.logger import logger
 from ..utils import format_duration
 
 
@@ -40,33 +39,19 @@ class DeviceCodeFlow:
                 async with session.post(self.device_code_url, data=data) as response:
                     if response.status == 200:
                         result = cast(dict[str, Any], await response.json())
-                        logger.log_event(
-                            "device_flow",
-                            "code_success",
-                            level=logging.INFO,
-                            client_id=self.client_id,
-                            interval=self.poll_interval,
+                        logging.info(
+                            f"🔑 Device code retrieved successfully client_id={self.client_id} interval={self.poll_interval}"
                         )
                         return result
                     error_data = cast(dict[str, Any], await response.json())
-                    logger.log_event(
-                        "device_flow",
-                        "code_error",
-                        level=logging.ERROR,
-                        client_id=self.client_id,
-                        error_data=str(error_data),
-                        status=response.status,
+                    logging.error(
+                        f"💥 Failed to obtain device code (status={response.status}) client_id={self.client_id} error_data={str(error_data)}"
                     )
                     return None
 
             except Exception as e:
-                logger.log_event(
-                    "device_flow",
-                    "code_exception",
-                    level=logging.ERROR,
-                    client_id=self.client_id,
-                    error=str(e),
-                    error_type=type(e).__name__,
+                logging.error(
+                    f"💥 Exception while requesting device code: {type(e).__name__} {str(e)} client_id={self.client_id}"
                 )
                 return None
 
@@ -94,14 +79,8 @@ class DeviceCodeFlow:
                         result = cast(dict[str, Any], await response.json())
 
                         if response.status == 200:
-                            logger.log_event(
-                                "device_flow",
-                                "authorization_success",
-                                level=logging.INFO,
-                                client_id=self.client_id,
-                                elapsed=elapsed,
-                                polls=poll_count,
-                                human=f"Authorized after {format_duration(elapsed)} (polls={poll_count})",
+                            logging.info(
+                                f"Authorized after {format_duration(elapsed)} (polls={poll_count}) client_id={self.client_id}"
                             )
                             return result
 
@@ -112,37 +91,22 @@ class DeviceCodeFlow:
                             if error_result is not None:
                                 return error_result
                         else:
-                            logger.log_event(
-                                "device_flow",
-                                "unexpected_response",
-                                level=logging.ERROR,
-                                status=response.status,
-                                result=str(result),
+                            logging.error(
+                                f"⚠️ Unexpected device token response: status={response.status} result={str(result)}"
                             )
                             return None
 
                 except Exception as e:
-                    logger.log_event(
-                        "device_flow",
-                        "poll_exception",
-                        level=logging.ERROR,
-                        error=str(e),
-                        error_type=type(e).__name__,
-                        elapsed=elapsed,
-                        polls=poll_count,
+                    logging.error(
+                        f"💥 Exception polling for tokens: {type(e).__name__} {str(e)} elapsed={elapsed} polls={poll_count}"
                     )
                     return None
 
                 # Wait before next poll
                 await asyncio.sleep(self.poll_interval)
 
-        logger.log_event(
-            "device_flow",
-            "timeout",
-            level=logging.ERROR,
-            client_id=self.client_id,
-            expires_in=expires_in,
-            human=f"Timed out after {format_duration(expires_in)}",
+        logging.error(
+            f"Timed out after {format_duration(expires_in)} client_id={self.client_id}"
         )
         return None
 
@@ -156,78 +120,39 @@ class DeviceCodeFlow:
 
         # Log the full error details for debugging (only for non-pending errors)
         if error != "authorization_pending":
-            logger.log_event(
-                "device_flow",
-                "poll_error_details",
-                level=logging.DEBUG,
-                details=str(result),
-            )
+            logging.debug(f"🧪 Polling error details logged details={str(result)}")
 
         if error == "authorization_pending":
             # Still waiting for user authorization
             if poll_count % 6 == 0:  # Show message every 30 seconds
-                logger.log_event(
-                    "device_flow",
-                    "waiting_authorization",
-                    level=logging.INFO,
-                    elapsed=elapsed,
-                    polls=poll_count,
-                    human=f"Waiting for authorization {format_duration(elapsed)} elapsed",
+                logging.info(
+                    f"Waiting for authorization {format_duration(elapsed)} elapsed polls={poll_count}"
                 )
             return None  # Continue polling
 
         if error == "slow_down":
             # Increase polling interval
             self.poll_interval = min(self.poll_interval + 1, 10)
-            logger.log_event(
-                "device_flow",
-                "slow_down",
-                level=logging.WARNING,
-                new_interval=self.poll_interval,
-                elapsed=elapsed,
-                polls=poll_count,
-                human=f"Server requested slower polling interval={self.poll_interval}s",
+            logging.warning(
+                f"Server requested slower polling interval={self.poll_interval}s elapsed={elapsed} polls={poll_count}"
             )
             return None  # Continue polling
 
         if error == "expired_token":
-            logger.log_event(
-                "device_flow",
-                "expired_token",
-                level=logging.ERROR,
-                elapsed=elapsed,
-                polls=poll_count,
-                human=f"Device code expired after {format_duration(elapsed)}",
+            logging.error(
+                f"Device code expired after {format_duration(elapsed)} polls={poll_count}"
             )
             return {}  # Stop polling
 
         if error == "access_denied":
-            logger.log_event(
-                "device_flow",
-                "access_denied",
-                level=logging.WARNING,
-                elapsed=elapsed,
-                polls=poll_count,
-                human="User denied access",
-            )
+            logging.warning(f"User denied access elapsed={elapsed} polls={poll_count}")
             return {}  # Stop polling
 
         # Unknown error
         if error_description:
-            logger.log_event(
-                "device_flow",
-                "error",
-                level=logging.ERROR,
-                error=error,
-                description=error_description,
-            )
+            logging.error(f"💥 Device flow error: {error} {error_description}")
         else:
-            logger.log_event(
-                "device_flow",
-                "unknown_error",
-                level=logging.ERROR,
-                error=error,
-            )
+            logging.error(f"💥 Unknown device flow error: {error}")
         return {}  # Stop polling
 
     async def get_user_tokens(self, username: str) -> tuple[str, str] | None:
@@ -235,19 +160,10 @@ class DeviceCodeFlow:
         Complete device code flow to get user tokens
         Returns (access_token, refresh_token) on success, None on failure
         """
-        logger.log_event(
-            "device_flow",
-            "start",
-            user=username,
-            poll_interval=self.poll_interval,
-            human="Starting device authorization",
+        logging.info(
+            f"Starting device authorization user={username} poll_interval={self.poll_interval}"
         )
-        logger.log_event(
-            "device_flow",
-            "authorization_required",
-            user=username,
-            human="Authorization required",
-        )
+        logging.info(f"Authorization required user={username}")
 
         # Step 1: Request device code
         device_data = await self.request_device_code()
@@ -260,21 +176,11 @@ class DeviceCodeFlow:
         expires_in = device_data["expires_in"]
 
         # Step 2: Display instructions to user
-        logger.log_event(
-            "device_flow",
-            "display_instructions",
-            user=username,
-            verification_uri=verification_uri,
-            code=user_code,
-            expires_minutes=expires_in // 60,
-            human=f"Open {verification_uri} and enter code {user_code} (expires in {format_duration(expires_in)})",
+        logging.info(
+            f"Open {verification_uri} and enter code {user_code} (expires in {format_duration(expires_in)}) user={username} expires_minutes={expires_in // 60}"
         )
-        logger.log_event(
-            "device_flow",
-            "waiting",
-            user=username,
-            interval=self.poll_interval,
-            human=f"Polling every {self.poll_interval}s for authorization",
+        logging.info(
+            f"Polling every {self.poll_interval}s for authorization user={username} interval={self.poll_interval}"
         )
 
         # Step 3: Poll for authorization
@@ -283,9 +189,7 @@ class DeviceCodeFlow:
             return None
         access_token = token_data["access_token"]
         refresh_token = token_data.get("refresh_token", "")
-        logger.log_event(
-            "device_flow", "tokens_obtained", user=username, human="Tokens obtained"
-        )
+        logging.info(f"Tokens obtained user={username}")
         return access_token, refresh_token
 
 

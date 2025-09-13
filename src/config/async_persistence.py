@@ -10,10 +10,10 @@ changing call sites.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Any
 
-from ..logs.logger import logger
 from .core import update_user_in_config
 
 __all__ = [
@@ -70,16 +70,11 @@ async def _prune_user_locks() -> None:
         if stale:
             try:
                 # Use placeholder names matching event template (removed, remaining)
-                logger.log_event(
-                    "config",
-                    "user_lock_prune",
-                    removed=len(stale),
-                    remaining=len(_USER_LOCKS),
+                logging.info(
+                    f"🧹 Pruned user locks removed={len(stale)} remaining={len(_USER_LOCKS)}"
                 )
             except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "config", "user_lock_prune_log_error", level=10, error=str(e)
-                )
+                logging.debug(f"⚠️ Error logging user lock prune details: {str(e)}")
 
 
 async def _flush(config_file: str) -> None:
@@ -97,34 +92,22 @@ async def _flush(config_file: str) -> None:
     try:
         await _prune_user_locks()
     except Exception as e:  # noqa: BLE001
-        logger.log_event("config", "batch_flush_prune_error", level=10, error=str(e))
+        logging.debug(f"⚠️ Error pruning user locks: {str(e)}")
 
 
 def _log_batch_start(count: int) -> None:
     try:  # noqa: SIM105
-        logger.log_event(
-            "config",
-            "batch_flush",
-            count=count,
-            debounce_seconds=_DEBOUNCE_SECONDS,
+        logging.info(
+            f"📤 Config batch flush count={count} debounce_seconds={_DEBOUNCE_SECONDS}"
         )
     except Exception as e:  # noqa: BLE001
-        logger.log_event(
-            "config",
-            "batch_flush_log_error",
-            level=30,
-            error=str(e),
-        )
+        logging.warning(f"⚠️ Error logging batch flush details: {str(e)}")
 
 
 def _log_batch_result(failures: int, attempted: int) -> None:
     if failures:
-        logger.log_event(
-            "config",
-            "batch_flush_partial_failures",
-            level=30,
-            failures=failures,
-            attempted=attempted,
+        logging.warning(
+            f"⚠️ Batch flush had partial failures count={failures} attempted={attempted}"
         )
 
 
@@ -147,12 +130,8 @@ async def _persist_batch(pending: list[dict[str, Any]], config_file: str) -> int
         except Exception as e:  # noqa: BLE001
             failures += 1
             if failures <= 3:
-                logger.log_event(
-                    "config",
-                    "batch_item_write_error",
-                    level=30,
-                    username=uname or uc.get("username"),
-                    error=str(e),
+                logging.warning(
+                    f"⚠️ Error writing batch item user={uname or uc.get('username')}: {str(e)}"
                 )
     return failures
 

@@ -7,8 +7,8 @@ from datetime import UTC, datetime, timedelta
 import aiohttp
 import pytest
 
-from src.token.client import TokenClient, TokenResult
-from src.token.manager import TokenManager, TokenOutcome
+from src.auth_token.client import TokenClient, TokenResult
+from src.auth_token.manager import TokenManager, TokenOutcome
 
 
 class PeriodicDummyClient(TokenClient):

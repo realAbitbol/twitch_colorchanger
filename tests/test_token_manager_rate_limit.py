@@ -5,9 +5,9 @@ from datetime import UTC, datetime, timedelta
 import aiohttp
 import pytest
 
-from src.token.client import TokenClient, TokenResult
-from src.token.client import TokenOutcome as ClientOutcome
-from src.token.manager import TokenManager
+from src.auth_token.client import TokenClient, TokenResult
+from src.auth_token.client import TokenOutcome as ClientOutcome
+from src.auth_token.manager import TokenManager
 
 
 class RateLimitedValidateClient(TokenClient):

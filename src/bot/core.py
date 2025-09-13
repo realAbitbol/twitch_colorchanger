@@ -11,9 +11,9 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover
+    from ..auth_token.manager import TokenManager
     from ..color import ColorChangeService
     from ..color.models import ColorRequestResult  # forward ref for type hints
-    from ..token.manager import TokenManager
 
 import aiohttp
 
@@ -22,7 +22,6 @@ from ..application_context import ApplicationContext
 from ..chat import BackendType, create_chat_backend
 from ..config.async_persistence import flush_pending_updates, queue_user_update
 from ..config.model import normalize_channels_list
-from ..logs.logger import logger
 from ..rate.retry_policies import (
     DEFAULT_NETWORK_RETRY,
     run_with_retry,
@@ -121,29 +120,21 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         user_config["is_prime_or_turbo"] = False
         try:
             await queue_user_update(user_config, self.config_file)
-            logger.log_event(
-                "bot",
-                "persist_prime_detection_disable",
-                user=self.username,
+            logging.info(
+                f"💾 Persisted Turbo/Prime detection (disabled random hex) user={self.username}"
             )
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "bot",
-                "persist_prime_detection_error",
-                level=logging.WARNING,
-                user=self.username,
-                error=str(e),
+            logging.warning(
+                f"⚠️ Persist Turbo/Prime detection error user={self.username}: {str(e)}"
             )
 
     async def start(self) -> None:
-        logger.log_event("bot", "start", user=self.username)
+        logging.info(f"▶️ Starting bot user={self.username}")
         self.running = True
         # ApplicationContext guarantees a token_manager; still guard defensively
         self.token_manager = self.context.token_manager
         if self.token_manager is None:  # pragma: no cover - defensive
-            logger.log_event(
-                "bot", "no_token_manager", level=logging.ERROR, user=self.username
-            )
+            logging.error(f"❌ No token manager available user={self.username}")
             return
         self._registrar = BotRegistrar(self.token_manager)
         await self._registrar.register(self)
@@ -154,12 +145,8 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                     self.username, self._maybe_get_color_keepalive
                 )
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "bot",
-                "keepalive_register_error",
-                level=logging.DEBUG,
-                user=self.username,
-                error=str(e),
+            logging.debug(
+                f"⚠️ Keepalive callback register error user={self.username} error={str(e)}"
             )
         if not await self._initialize_connection():
             return
@@ -169,9 +156,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         """Run primary chat backend listen task (IRC or EventSub)."""
         backend = self.chat_backend
         if backend is None:
-            logger.log_event(
-                "bot", "chat_not_initialized", level=logging.ERROR, user=self.username
-            )
+            logging.error(f"⚠️ Chat backend not initialized user={self.username}")
             return
         self._create_and_monitor_listener(backend)
         normalized_channels: list[str] = getattr(
@@ -185,9 +170,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             if task is not None:
                 await task
         except KeyboardInterrupt:
-            logger.log_event(
-                "bot", "shutdown_initiated", level=logging.WARNING, user=self.username
-            )
+            logging.warning(f"🔻 Shutting down bot user={self.username}")
         except Exception as e:  # noqa: BLE001
             await self._attempt_reconnect(e, self._listener_task_done)
         finally:
@@ -204,21 +187,12 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         exc = task.exception()
         if exc:
             try:
-                logger.log_event(
-                    "bot",
-                    "listener_task_error",
-                    level=logging.ERROR,
-                    user=self.username,
-                    error=str(exc),
-                    error_type=type(exc).__name__,
+                logging.error(
+                    f"💥 Listener task error user={self.username} type={type(exc).__name__} error={str(exc)}"
                 )
             except Exception as cb_e:  # noqa: BLE001
-                logger.log_event(
-                    "bot",
-                    "listener_task_log_fail",
-                    level=logging.DEBUG,
-                    user=self.username,
-                    error=str(cb_e),
+                logging.debug(
+                    f"⚠️ Failed logging listener task error user={self.username}: {str(cb_e)}"
                 )
 
     async def _join_additional_channels(
@@ -228,13 +202,8 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             try:
                 await backend.join_channel(channel)
             except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "bot",
-                    "join_channel_error",
-                    level=logging.WARNING,
-                    user=self.username,
-                    channel=channel,
-                    error=str(e),
+                logging.warning(
+                    f"💥 Error joining channel {channel} user={self.username}: {str(e)}"
                 )
 
     async def _attempt_reconnect(
@@ -246,14 +215,8 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         current_error = error
         while attempts < max_attempts and self.running:
             attempts += 1
-            logger.log_event(
-                "bot",
-                "listener_crash_reconnect_attempt",
-                level=logging.WARNING,
-                user=self.username,
-                attempt=attempts,
-                error=str(current_error),
-                backoff=round(backoff, 2),
+            logging.warning(
+                f"🔄 Listener crashed - reconnect attempt {attempts} backoff={round(backoff, 2)}s user={self.username} error={str(current_error)}"
             )
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 60)
@@ -275,7 +238,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                 continue
 
     async def stop(self) -> None:
-        logger.log_event("bot", "stopping", level=logging.WARNING, user=self.username)
+        logging.warning(f"🛑 Stopping bot user={self.username}")
         self.running = False
         await self.scheduler.stop()
         await self._cancel_token_task()
@@ -287,12 +250,8 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                 await flush_pending_updates(self.config_file)
             except Exception as e:  # noqa: BLE001
                 # Log at debug to avoid noisy shutdown warnings; still visible for diagnostics.
-                logger.log_event(
-                    "bot",
-                    "flush_pending_updates_error",
-                    level=logging.DEBUG,
-                    user=self.username,
-                    error=str(e),
+                logging.debug(
+                    f"⚠️ Error flushing pending config updates user={self.username}: {str(e)}"
                 )
         self.running = False
         await asyncio.sleep(0.1)
@@ -306,9 +265,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             return False
         await self._prime_color_state()
         btype = BackendType.EVENTSUB
-        logger.log_event(
-            "bot", "using_chat_backend", user=self.username, backend=btype.value
-        )
+        logging.info(f"🔀 Using chat backend {btype.value} user={self.username}")
         await self._log_scopes_if_possible()
         normalized_channels = await self._normalize_channels_if_needed()
         if not await self._init_and_connect_backend(btype, normalized_channels):
@@ -322,25 +279,17 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         user_info = await self._get_user_info()
         if user_info and "id" in user_info:
             self.user_id = user_info["id"]
-            logger.log_event(
-                "bot",
-                "user_id_retrieved",
-                user=self.username,
-                user_id=self.user_id,
-                level=10,
-            )
+            logging.debug(f"🆔 Retrieved user_id {self.user_id} user={self.username}")
             return True
-        logger.log_event(
-            "bot", "user_id_failed", level=logging.ERROR, user=self.username
-        )
+        logging.error(f"❌ Failed to retrieve user_id user={self.username}")
         return False
 
     async def _prime_color_state(self) -> None:
         current_color = await self._get_current_color()
         if current_color:
             self.last_color = current_color
-            logger.log_event(
-                "bot", "initialized_color", user=self.username, color=current_color
+            logging.info(
+                f"🎨 Initialized with current color {current_color} user={self.username}"
             )
 
     async def _log_scopes_if_possible(self) -> None:
@@ -356,30 +305,19 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                 scopes_list = (
                     [str(s) for s in raw_scopes] if isinstance(raw_scopes, list) else []
                 )
-                logger.log_event(
-                    "bot",
-                    "token_scopes",
-                    user=self.username,
-                    scopes=";".join(scopes_list) if scopes_list else "<none>",
+                logging.info(
+                    f"🧪 Token scopes user={self.username} scopes={';'.join(scopes_list) if scopes_list else '<none>'}"
                 )
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "bot",
-                "token_scope_validation_error",
-                level=logging.DEBUG,
-                user=self.username,
-                error=str(e),
+            logging.debug(
+                f"🚫 Token scope validation error user={self.username} missing={str(e)}"
             )
 
     async def _normalize_channels_if_needed(self) -> list[str]:
         normalized_channels, was_changed = normalize_channels_list(self.channels)
         if was_changed:
-            logger.log_event(
-                "bot",
-                "normalized_channels",
-                user=self.username,
-                old_count=len(self.channels),
-                new_count=len(normalized_channels),
+            logging.info(
+                f"🛠️ Normalized channels old={len(self.channels)} new={len(normalized_channels)} user={self.username}"
             )
             self.channels = normalized_channels
             await self._persist_normalized_channels()
@@ -402,12 +340,8 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             try:
                 backend.set_token_invalid_callback(self._check_and_refresh_token)
             except Exception as e:
-                logger.log_event(
-                    "bot",
-                    "eventsub_backend_callback_register_error",
-                    user=self.username,
-                    level=logging.WARNING,
-                    error=str(e),
+                logging.warning(
+                    f"⚠️ Failed to register EventSub backend callback user={self.username}: {str(e)}"
                 )
         connected = await backend.connect(
             self.access_token,
@@ -418,23 +352,17 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             self.client_secret,
         )
         if not connected:
-            logger.log_event(
-                "bot", "connect_failed", level=logging.ERROR, user=self.username
-            )
+            logging.error(f"❌ Failed to connect user={self.username}")
             return False
         # Ensure EventSub backend receives token updates after refreshes
         try:
             if self.token_manager:
                 self.token_manager.register_eventsub_backend(self.username, backend)
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "bot",
-                "eventsub_backend_register_error",
-                level=20,
-                user=self.username,
-                error=str(e),
+            logging.info(
+                f"⚠️ Failed to register EventSub backend for token propagation user={self.username}: {str(e)}"
             )
-        logger.log_event("bot", "listener_start", user=self.username, level=10)
+        logging.debug(f"👂 Starting async message listener user={self.username}")
         return True
 
     async def _cancel_token_task(self) -> None:  # compatibility no-op
@@ -446,36 +374,22 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             try:
                 await backend.disconnect()
             except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "bot",
-                    "disconnect_error",
-                    level=logging.WARNING,
-                    user=self.username,
-                    error=str(e),
-                )
+                logging.warning(f"⚠️ Error disconnecting user={self.username}: {str(e)}")
 
     async def _wait_for_listener_task(self) -> None:
         if self.listener_task and not self.listener_task.done():
             try:
                 await asyncio.wait_for(self.listener_task, timeout=2.0)
             except TimeoutError:
-                logger.log_event(
-                    "bot",
-                    "waiting_listener_task_error",
-                    level=logging.WARNING,
-                    user=self.username,
-                    error="timeout",
+                logging.warning(
+                    f"💥 Error waiting for listener task user={self.username}: timeout"
                 )
                 self.listener_task.cancel()
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "bot",
-                    "waiting_listener_task_error",
-                    level=logging.WARNING,
-                    user=self.username,
-                    error=str(e),
+                logging.warning(
+                    f"💥 Error waiting for listener task user={self.username}: {str(e)}"
                 )
 
     async def handle_message(self, sender: str, channel: str, message: str) -> None:
@@ -511,17 +425,17 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             return False
         parts = raw.split(None, 1)
         if len(parts) != 2:
-            logger.log_event("bot", "ccc_invalid_argument", user=self.username, arg="")
+            logging.info(f"ℹ️ Ignoring invalid ccc argument user={self.username} arg=")
             return True
         desired = self._normalize_color_arg(parts[1])
         if not desired:
-            logger.log_event(
-                "bot", "ccc_invalid_argument", user=self.username, arg=parts[1]
+            logging.info(
+                f"ℹ️ Ignoring invalid ccc argument user={self.username} arg={parts[1]}"
             )
             return True
         if desired.startswith("#") and not getattr(self, "use_random_colors", True):
-            logger.log_event(
-                "bot", "ccc_hex_ignored_nonprime", user=self.username, color=desired
+            logging.info(
+                f"ℹ️ Ignoring hex via ccc for non-Prime user={self.username} color={desired}"
             )
             return True
         await self._change_color(desired)
@@ -564,10 +478,10 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         if target_enabled == currently_enabled:
             return True  # Command redundant; treat as handled (no spam)
         self.enabled = target_enabled
-        logger.log_event(
-            "bot",
-            "auto_color_enabled" if target_enabled else "auto_color_disabled",
-            user=self.username,
+        logging.info(
+            f"✅ Automatic color change enabled user={self.username}"
+            if target_enabled
+            else f"🚫 Automatic color change disabled user={self.username}"
         )
         await self._persist_enabled_flag(target_enabled)
         return True
@@ -580,12 +494,10 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         try:
             await queue_user_update(user_config, self.config_file)
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "bot",
-                "persist_disable_failed" if not flag else "persist_enable_failed",
-                level=logging.WARNING,
-                user=self.username,
-                error=str(e),
+            logging.warning(
+                f"⚠️ Failed to persist disable flag user={self.username}: {str(e)}"
+                if not flag
+                else f"⚠️ Failed to persist enable flag user={self.username}: {str(e)}"
             )
 
     async def _check_and_refresh_token(self, force: bool = False) -> bool:
@@ -606,25 +518,14 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                         try:
                             backend_local.update_token(info.access_token)
                         except Exception as e:  # noqa: BLE001
-                            logger.log_event(
-                                "bot",
-                                "token_update_backend_error",
-                                level=logging.DEBUG,
-                                user=self.username,
-                                error=str(e),
+                            logging.debug(
+                                f"⚠️ Error updating chat backend tokens user={self.username}: {str(e)}"
                             )
                 return outcome.name != "FAILED"
             return False
         except Exception as e:  # noqa: BLE001
-            import traceback
-
-            logger.log_event(
-                "bot",
-                "token_refresh_helper_error",
-                level=logging.ERROR,
-                user=self.username,
-                error=str(e),
-                traceback=traceback.format_exc(),
+            logging.error(
+                f"💥 Error in token refresh helper user={self.username}: {str(e)}"
             )
             return False
 
@@ -651,22 +552,12 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                 return None
             if status_code == 401:
                 return None
-            logger.log_event(
-                "bot",
-                "user_info_failed_status",
-                level=logging.ERROR,
-                user=self.username,
-                status_code=status_code,
+            logging.error(
+                f"❌ Failed to get user info status={status_code} user={self.username}"
             )
             return None
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "bot",
-                "user_info_error",
-                level=logging.ERROR,
-                user=self.username,
-                error=str(e),
-            )
+            logging.error(f"💥 Error getting user info user={self.username}: {str(e)}")
             return None
 
     async def _get_current_color(self) -> str | None:
@@ -694,8 +585,8 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                 if isinstance(first, dict):
                     color = first.get("color")
                     if isinstance(color, str):
-                        logger.log_event(
-                            "bot", "current_color_is", user=self.username, color=color
+                        logging.info(
+                            f"🎨 Current color is {color} user={self.username}"
                         )
                         return color
             elif status_code == 429:
@@ -703,15 +594,11 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                 return None
             elif status_code == 401:
                 return None
-            logger.log_event("bot", "no_current_color_set", user=self.username)
+            logging.info(f"⚠️ No current color set user={self.username}")
             return None
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "bot",
-                "get_current_color_error",
-                level=logging.WARNING,
-                user=self.username,
-                error=str(e),
+            logging.warning(
+                f"💥 Error getting current color user={self.username}: {str(e)}"
             )
             return None
 
@@ -779,73 +666,42 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
 
     async def _maybe_get_color_keepalive(self) -> None:
         # Keepalive should run even if auto color changes are disabled; we just annotate enabled state.
-        enabled = self._is_color_change_allowed()
         idle = time.time() - self._last_activity_ts
         if idle < self._keepalive_recent_activity:
-            logger.log_event(
-                "bot",
-                "keepalive_color_get_skip_recent",
-                user=self.username,
-                enabled=enabled,
-                idle=int(idle),
-                threshold=int(self._keepalive_recent_activity),
+            logging.info(
+                f"🫧 Keepalive GET skipped (recent activity) user={self.username}"
             )
             return
-        logger.log_event(
-            "bot",
-            "keepalive_color_get_attempt",
-            user=self.username,
-            enabled=enabled,
-        )
+        logging.info(f"🫧 Keepalive color GET attempt user={self.username}")
         try:
             color = await self._get_current_color_impl()
             if color:
                 self.last_color = color
-                logger.log_event(
-                    "bot",
-                    "keepalive_color_get_success",
-                    user=self.username,
-                    enabled=enabled,
-                    color=color,
+                logging.info(
+                    f"🫧 Keepalive color GET success user={self.username} color={color}"
                 )
             else:
-                logger.log_event(
-                    "bot",
-                    "keepalive_color_get_none",
-                    user=self.username,
-                    enabled=enabled,
+                logging.info(
+                    f"🫧 Keepalive color GET returned no color user={self.username}"
                 )
                 # If keepalive returns no color, force a token refresh and let
                 # TokenManager propagate/persist via its update hook.
                 try:
                     await self._check_and_refresh_token(force=True)
                 except Exception as e:  # noqa: BLE001
-                    logger.log_event(
-                        "token_manager",
-                        "keepalive_callback_error",
-                        user=self.username,
-                        level=logging.DEBUG,
-                        error=str(e),
+                    logging.debug(
+                        f"⚠️ Keepalive callback error user={self.username} error={str(e)}"
                     )
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "bot",
-                "keepalive_color_get_error",
-                level=logging.DEBUG,
-                user=self.username,
-                enabled=enabled,
-                error=str(e),
+            logging.debug(
+                f"⚠️ Keepalive color GET error user={self.username} error={str(e)}"
             )
             # If keepalive fails, force a token refresh to surface issues early.
             try:
                 await self._check_and_refresh_token(force=True)
             except Exception as e2:  # noqa: BLE001
-                logger.log_event(
-                    "token_manager",
-                    "keepalive_callback_error",
-                    user=self.username,
-                    level=logging.DEBUG,
-                    error=str(e2),
+                logging.debug(
+                    f"⚠️ Keepalive callback error user={self.username} error={str(e2)}"
                 )
 
     def _extract_color_error_snippet(self) -> str | None:
@@ -880,14 +736,10 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         return f" [⚠️ {remaining}/{limit} reqs, reset in {reset_in:.0f}s]"
 
     def close(self) -> None:
-        logger.log_event("bot", "closing_for_user", user=self.username)
+        logging.info(f"🔻 Closing bot user={self.username}")
         self.running = False
 
     def print_statistics(self) -> None:
-        logger.log_event(
-            "bot",
-            "statistics",
-            user=self.username,
-            messages=self.stats.messages_sent,
-            colors=self.stats.colors_changed,
+        logging.info(
+            f"📊 Statistics user={self.username} messages={self.stats.messages_sent} colors={self.stats.colors_changed}"
         )

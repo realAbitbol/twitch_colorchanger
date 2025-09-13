@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 import aiohttp
 import pytest
 
-from src.token.manager import TokenManager
+from src.auth_token.manager import TokenManager
 
 
 @pytest.mark.asyncio

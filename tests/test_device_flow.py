@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 import pytest
 
-from src.token.device_flow import DeviceCodeFlow
+from src.auth_token.device_flow import DeviceCodeFlow
 
 
 class _Resp:
@@ -136,8 +137,6 @@ async def test_device_flow_expired_token(monkeypatch: pytest.MonkeyPatch) -> Non
     if tokens is not None:
         raise AssertionError("Expected None for expired_token flow")
 
-import pytest
-
 
 class FakeResponse:
     def __init__(self, status: int, payload: dict[str, Any]):
@@ -179,6 +178,7 @@ class FakeSession:
 @pytest.mark.asyncio
 async def test_poll_success(monkeypatch, caplog):
     monkeypatch.setenv("DEBUG", "1")
+    caplog.set_level(logging.INFO)
     # First 400 authorization_pending then 200 success.
     responses = [
         (400, {"message": "authorization_pending"}),
@@ -192,12 +192,7 @@ async def test_poll_success(monkeypatch, caplog):
     df.poll_interval = 0  # speed
     result = await df.poll_for_tokens("dev-code", expires_in=5)
     assert result == {"access_token": "at1", "refresh_token": "rt1"}
-    # Event name is truncated with an ellipsis due to width; check fragment.
-    assert any(
-        ("authorization_success" in r.message)
-        or ("authorization_succe" in r.message)  # truncated variant
-        for r in caplog.records
-    )
+    assert any("Authorized after" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -222,7 +217,7 @@ async def test_poll_slow_down(monkeypatch, caplog):
     assert result["access_token"] == "at2"
     # Interval should have been incremented once (1 -> 2) due to slow_down.
     assert df.poll_interval == 2
-    assert any("device_flow_slow_down" in r.message for r in caplog.records)
+    assert any("Server requested slower polling" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -235,7 +230,7 @@ async def test_poll_expired_token(monkeypatch, caplog):
     result = await df.poll_for_tokens("dev-code", expires_in=10)
     # Current implementation returns {} for terminal errors.
     assert result == {}
-    assert any("device_flow_expired_token" in r.message for r in caplog.records)
+    assert any("Device code expired after" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -246,7 +241,7 @@ async def test_poll_access_denied(monkeypatch, caplog):
     df = DeviceCodeFlow("cid", "secret")
     result = await df.poll_for_tokens("dev-code", expires_in=10)
     assert result == {}
-    assert any("device_flow_access_denied" in r.message for r in caplog.records)
+    assert any("User denied access" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -259,4 +254,4 @@ async def test_poll_timeout(monkeypatch, caplog):
     df.poll_interval = 0
     result = await df.poll_for_tokens("dev-code", expires_in=0)
     assert result is None
-    assert any("device_flow_timeout" in r.message for r in caplog.records)
+    assert any("Timed out after" in r.message for r in caplog.records)
