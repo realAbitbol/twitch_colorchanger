@@ -81,8 +81,7 @@ async def test_bot_start_and_stop(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _fake_run_loop():  # noqa: D401
         dummy.listen_started = True
         # Simulate a trivial listen task
-        bot.irc_task = asyncio.create_task(asyncio.sleep(0))
-        await bot.irc_task
+        await asyncio.sleep(0)
         return None
 
     async def _fake_user_info():  # noqa: D401
