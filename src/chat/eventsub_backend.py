@@ -294,7 +294,7 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
                 headers=headers,
                 protocols=("twitch-eventsub-ws",),
             )
-            logging.info("🔌 EventSub WebSocket connected")
+            logging.info(f"🔌 EventSub WebSocket connected for {self._username}")
             welcome = await asyncio.wait_for(self._ws.receive(), timeout=10)
             if welcome.type != aiohttp.WSMsgType.TEXT:
                 logging.error("⚠️ EventSub bad welcome frame")

@@ -245,7 +245,7 @@ class TokenRefresher:
         try:
             success = await async_update_user_in_config(user_config, config_file)
             if success:
-                logging.info(f"💾 Token changes saved user={self.username}")
+                logging.debug(f"💾 Token changes saved user={self.username}")
                 return True
             # Fall through to generic handling below to trigger retries
             raise RuntimeError("update_user_in_config returned False")

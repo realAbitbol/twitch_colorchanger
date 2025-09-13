@@ -123,9 +123,9 @@ class MessageHandler:
             return True  # Command redundant; treat as handled (no spam)
         self.enabled = target_enabled
         logging.info(
-            f"✅ Automatic color change enabled user={self.username}"
+            f"🖍️ Automatic color change enabled for user {self.username}"
             if target_enabled
-            else f"🚫 Automatic color change disabled user={self.username}"
+            else f"🚫 Automatic color change disabled for user {self.username}"
         )
         await self._persist_enabled_flag(target_enabled)
         return True

@@ -287,7 +287,7 @@ class TwitchColorBot(MessageHandler, ColorChanger, TokenRefresher):  # pylint: d
         if not await self._ensure_user_id():
             return False
         await self._prime_color_state()
-        logging.info(f"🔀 Using EventSub chat backend user={self.username}")
+        logging.debug(f"🔀 Using EventSub chat backend user={self.username}")
         await self._log_scopes_if_possible()
         normalized_channels = await self._normalize_channels_if_needed()
         if not await self._init_and_connect_backend(normalized_channels):
