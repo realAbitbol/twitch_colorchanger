@@ -16,15 +16,11 @@ class FakeBot:
         self.username = "tester"
         self.use_random_colors = True
         self.last_color: str | None = None
-        self.colors_changed = 0
         self._results = results
         self._refresh_outcomes = refresh_outcomes or []
         self._refresh_index = 0
         self._result_index = 0
         self.user_id = "123"
-
-    def increment_colors_changed(self) -> None:
-        self.colors_changed += 1
 
     async def _perform_color_request(
         self, params: dict[str, Any], action: str
@@ -54,7 +50,6 @@ async def test_color_change_success_hex():
     )
     assert ok is True
     assert bot.last_color == "#123456"
-    assert bot.colors_changed == 1
 
 
 @pytest.mark.asyncio
@@ -72,7 +67,6 @@ async def test_color_change_unauthorized_then_refresh_success():
     )
     assert ok is True
     assert bot.last_color == "#abcdef"
-    assert bot.colors_changed == 1
 
 
 @pytest.mark.asyncio
@@ -86,7 +80,6 @@ async def test_color_change_unauthorized_refresh_fails():
         "#ff00ff", allow_refresh=True, fallback_to_preset=True
     )
     assert ok is False
-    assert bot.colors_changed == 0
 
 
 @pytest.mark.asyncio
@@ -106,4 +99,3 @@ async def test_color_change_fallback_to_preset(monkeypatch):
     )
     assert ok is True
     assert bot.last_color == "red"
-    assert bot.colors_changed == 1

@@ -13,14 +13,13 @@ class MessageHandler:
 
     # Expected attributes from consumer class
     username: str
-    messages_sent: int
     enabled: bool
     config_file: str | None
 
     async def handle_message(
         self,
         sender: str,
-        channel: str,  # noqa: S1172
+        _channel: str,
         message: str,
     ) -> None:
         """Handle incoming chat messages.
@@ -35,7 +34,6 @@ class MessageHandler:
         """
         if sender.lower() != self.username.lower():
             return
-        self.messages_sent += 1
         raw = message.strip()
         msg_lower = raw.lower()
         handled = await self._maybe_handle_toggle(msg_lower)

@@ -41,8 +41,6 @@ async def test_bot_init():
     assert bot.enabled is True
     assert bot.http_session == session
     assert bot.running is False
-    assert bot.messages_sent == 0
-    assert bot.colors_changed == 0
     assert bot.last_color is None
 
 

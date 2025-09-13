@@ -246,7 +246,6 @@ class ColorChangeService:
             color (str): The color that was changed to.
             is_preset (bool): Whether the color is a preset.
         """
-        self.bot.increment_colors_changed()
         self.bot.last_color = color
         if not is_preset:
             self.bot._hex_rejection_strikes = 0
