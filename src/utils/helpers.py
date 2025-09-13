@@ -6,10 +6,22 @@ __all__ = ["format_duration", "emit_startup_instructions"]
 def format_duration(total_seconds: int | float | None) -> str:
     """Return a human-friendly Hh Mm Ss string for a duration in seconds.
 
+    Args:
+        total_seconds: The duration in seconds. Can be int, float, or None.
+
+    Returns:
+        A string representing the duration in human-readable format (e.g., "1h 5m 5s").
+        Returns "unknown" if total_seconds is None.
+
     Examples:
-      65 -> "1m 5s"
-      3605 -> "1h 5m 5s" (hours, minutes, seconds)
-      59 -> "59s"
+        >>> format_duration(65)
+        '1m 5s'
+        >>> format_duration(3605)
+        '1h 5m 5s'
+        >>> format_duration(59)
+        '59s'
+        >>> format_duration(None)
+        'unknown'
     """
     if total_seconds is None:
         return "unknown"
@@ -27,7 +39,18 @@ def format_duration(total_seconds: int | float | None) -> str:
 
 
 def emit_startup_instructions() -> None:
-    """Emit structured log events with startup guidance."""
+    """Emit structured log events with startup guidance.
+
+    This function prints detailed instructions for setting up and configuring
+    the Twitch color changer bot, including setup steps, configuration options,
+    features, and security notices.
+
+    Args:
+        None
+
+    Returns:
+        None
+    """
     print("📘 Instructions")
     print(
         "🪜 Setup step 1: Create a Twitch application: https://dev.twitch.tv/console/apps"

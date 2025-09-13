@@ -18,6 +18,15 @@ from ..utils import format_duration
 
 
 class TokenOutcome(str, Enum):
+    """Enumeration of possible outcomes from token validation or refresh operations.
+
+    Attributes:
+        VALID: Token is valid and does not need refresh.
+        REFRESHED: Token was successfully refreshed.
+        SKIPPED: No action needed as token is within safe threshold.
+        FAILED: Operation failed.
+    """
+
     VALID = "valid"
     REFRESHED = "refreshed"
     SKIPPED = "skipped"  # no action needed; still within safe threshold
@@ -26,6 +35,15 @@ class TokenOutcome(str, Enum):
 
 @dataclass
 class TokenResult:
+    """Result of a token validation or refresh operation.
+
+    Attributes:
+        outcome: The outcome of the operation.
+        access_token: The access token, if available.
+        refresh_token: The refresh token, if available.
+        expiry: The expiry datetime, if available.
+    """
+
     outcome: TokenOutcome
     access_token: str | None
     refresh_token: str | None
@@ -33,14 +51,36 @@ class TokenResult:
 
 
 class TokenClient:
+    """Client for validating and refreshing Twitch OAuth tokens.
+
+    Handles HTTP requests to Twitch's OAuth endpoints for token validation
+    and refresh operations.
+    """
+
     def __init__(
         self, client_id: str, client_secret: str, http_session: aiohttp.ClientSession
     ):
+        """Initialize the token client.
+
+        Args:
+            client_id: Twitch application client ID.
+            client_secret: Twitch application client secret.
+            http_session: HTTP session for making requests.
+        """
         self.client_id = client_id
         self.client_secret = client_secret
         self.session = http_session
 
     async def validate(self, username: str, access_token: str) -> TokenResult:
+        """Validate an access token remotely.
+
+        Args:
+            username: Username associated with the token.
+            access_token: The access token to validate.
+
+        Returns:
+            TokenResult with VALID outcome if token is valid, FAILED otherwise.
+        """
         valid, expiry = await self._validate_remote(username, access_token)
         if valid:
             return TokenResult(TokenOutcome.VALID, access_token, None, expiry)
@@ -54,6 +94,22 @@ class TokenClient:
         expiry: datetime | None,
         force_refresh: bool = False,
     ) -> TokenResult:
+        """Ensure the token is fresh, refreshing if necessary.
+
+        Checks if refresh is needed based on expiry and threshold, validates
+        remotely if not forced, and refreshes if required.
+
+        Args:
+            username: Username associated with the token.
+            access_token: Current access token.
+            refresh_token: Refresh token, if available.
+            expiry: Known expiry datetime.
+            force_refresh: Force refresh regardless of expiry.
+
+        Returns:
+            TokenResult with outcome of the operation.
+        """
+        # Skip if not forced and expiry is far enough in the future
         if (
             not force_refresh
             and expiry
@@ -64,12 +120,14 @@ class TokenClient:
                 TokenOutcome.SKIPPED, access_token, refresh_token, expiry
             )
 
+        # If not forced, validate remotely first
         if not force_refresh:
             is_valid, remote_expiry = await self._validate_remote(
                 username, access_token
             )
             if is_valid:
                 final_expiry = remote_expiry or expiry
+                # Check if still within threshold after validation
                 if (
                     final_expiry
                     and (final_expiry - datetime.now(UTC)).total_seconds()
@@ -85,11 +143,26 @@ class TokenClient:
                     f"⏳ Token valid but expiring soon - scheduling refresh user={username}"
                 )
 
+        # Need refresh token to proceed
         if not refresh_token:
             return TokenResult(TokenOutcome.FAILED, None, None, expiry)
         return await self.refresh(username, refresh_token)
 
     async def refresh(self, username: str, refresh_token: str) -> TokenResult:
+        """Refresh an access token using the refresh token.
+
+        Makes a POST request to Twitch's token endpoint and parses the response.
+
+        Args:
+            username: Username associated with the token.
+            refresh_token: The refresh token to use.
+
+        Returns:
+            TokenResult with REFRESHED outcome on success, FAILED on error.
+
+        Raises:
+            NetworkError: On network-related failures.
+        """
         try:
             data = {
                 "grant_type": "refresh_token",
@@ -109,6 +182,7 @@ class TokenClient:
                         raise ParsingError("Missing access_token in refresh response")
                     expiry = None
                     if expires_in:
+                        # Apply safety buffer to avoid refreshing too late
                         safe_expires = max(
                             expires_in - TOKEN_REFRESH_SAFETY_BUFFER_SECONDS, 0
                         )
@@ -151,6 +225,15 @@ class TokenClient:
     async def _validate_remote(
         self, username: str, access_token: str
     ) -> tuple[bool, datetime | None]:
+        """Validate token remotely via Twitch's validate endpoint.
+
+        Args:
+            username: Username associated with the token.
+            access_token: Access token to validate.
+
+        Returns:
+            Tuple of (is_valid, expiry_datetime).
+        """
         try:
             url = "https://id.twitch.tv/oauth2/validate"
             timeout = aiohttp.ClientTimeout(total=30)
@@ -161,8 +244,7 @@ class TokenClient:
                     expires_in = data.get("expires_in")
                     expiry = None
                     if expires_in:
-                        # Apply the same safety buffer used on refresh so scheduling logic
-                        # never attempts a refresh too late due to unbuffered validate path.
+                        # Apply safety buffer to match refresh logic and prevent late refreshes
                         safe_expires = max(
                             expires_in - TOKEN_REFRESH_SAFETY_BUFFER_SECONDS, 0
                         )
@@ -172,8 +254,7 @@ class TokenClient:
                         )
                     return True, expiry
                 if resp.status == 401:
-                    # 401 here usually just means the stored access token is expired; a refresh will follow.
-                    # Demote to INFO to avoid alarming users on normal startup token rotations.
+                    # 401 indicates expired token; refresh will follow
                     logging.info(
                         f"❌ Token validation failed: invalid (status={resp.status}) user={username}"
                     )

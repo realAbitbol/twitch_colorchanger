@@ -27,7 +27,16 @@ log_level = logging.DEBUG if debug_env in ("true", "1", "yes") else logging.INFO
 
 # ANSI color codes for log levels
 class ColoredFormatter(logging.Formatter):
-    """Custom formatter with colored log levels"""
+    """Custom logging formatter that adds ANSI color codes to log levels.
+
+    This formatter enhances log output by coloring log level names using
+    ANSI escape sequences, making it easier to distinguish different log
+    levels in terminal output.
+
+    Attributes:
+        COLORS: Dictionary mapping log level names to ANSI color codes.
+        RESET: ANSI code to reset text formatting.
+    """
 
     COLORS = {
         "DEBUG": "\033[36m",  # Cyan
@@ -39,6 +48,17 @@ class ColoredFormatter(logging.Formatter):
     RESET = "\033[0m"
 
     def format(self, record):
+        """Format the log record with colored level names.
+
+        Applies color coding to the log level and formats the message
+        without including the logger name for cleaner output.
+
+        Args:
+            record: The LogRecord instance to format.
+
+        Returns:
+            The formatted log message string with colored level.
+        """
         # Get the colored level name with fixed width alignment
         level_name = record.levelname
         colored_level = f"{self.COLORS.get(level_name, '')}{level_name:<8}{self.RESET}"
@@ -73,6 +93,17 @@ _original_getLogger = logging.getLogger
 
 
 def patched_get_logger(name=None):
+    """Patched version of logging.getLogger that suppresses watchdog-related loggers.
+
+    This function wraps the original getLogger to disable logging from watchdog
+    and fsevents modules, which can produce excessive noise in the output.
+
+    Args:
+        name: The name of the logger to retrieve.
+
+    Returns:
+        The configured Logger instance, with watchdog loggers disabled if applicable.
+    """
     logger = _original_getLogger(name)
     if name and (
         name.startswith("watchdog") or "fsevents" in name or name == "fsevents"
@@ -108,7 +139,15 @@ fsevents_logger.addHandler(logging.NullHandler())
 
 
 async def main() -> None:
-    """Main function"""
+    """Main entry point for the Twitch Color Changer Bot application.
+
+    This function initializes the application by loading configuration,
+    setting up tokens, and starting the bot managers. It handles
+    various exceptions and ensures proper shutdown.
+
+    Raises:
+        SystemExit: If a critical error occurs during initialization.
+    """
     try:
         print("🚀 Starting Twitch Color Changer Bot")
         emit_startup_instructions()
@@ -132,6 +171,12 @@ async def main() -> None:
 # Best-effort safety net: ensure any lingering aiohttp session is closed
 @atexit.register
 def _cleanup_any_context() -> None:  # pragma: no cover - process exit path
+    """Cleanup function registered with atexit for emergency resource cleanup.
+
+    This function is called when the process exits and attempts to clean up
+    any remaining resources, particularly aiohttp sessions from the application
+    context. It performs lazy imports to avoid side effects if not needed.
+    """
     # Import lazily to avoid import side-effects if not needed
     from .application_context import (  # noqa: F401
         ApplicationContext,
