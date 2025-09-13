@@ -29,7 +29,6 @@ class InternalError(Exception):
     to indicate whether the error is suitable for automatic retry.
 
     Attributes:
-        transient: Boolean indicating if the error is transient and may be retried.
         data: Dictionary containing arbitrary structured context data.
 
     Args:
@@ -40,7 +39,6 @@ class InternalError(Exception):
         No specific exceptions raised beyond standard Exception behavior.
     """
 
-    transient: bool = False  # Override in subclasses if appropriate
     data: dict[str, object]
 
     def __init__(
@@ -68,10 +66,7 @@ class NetworkError(InternalError):
     transient network failures that may be retried.
 
     Attributes:
-        transient: Always True, indicating this error is suitable for retry.
     """
-
-    transient = True
 
 
 class OAuthError(InternalError):
@@ -81,10 +76,7 @@ class OAuthError(InternalError):
     permissions that are not suitable for automatic retry.
 
     Attributes:
-        transient: Always False, indicating this error should not be retried.
     """
-
-    transient = False
 
 
 class ParsingError(InternalError):
@@ -94,10 +86,7 @@ class ParsingError(InternalError):
     schema mismatches that typically cannot be resolved through retry.
 
     Attributes:
-        transient: Always False, indicating this error should not be retried.
     """
-
-    transient = False
 
 
 @dataclass
@@ -118,11 +107,9 @@ class RateLimitError(InternalError):
     """Exception raised when rate limiting is encountered.
 
     This error indicates that the application has exceeded the allowed
-    request rate and may be retried after a delay. The transient flag
-    is set to allow retry strategies to apply backoff.
+    request rate and may be retried after a delay.
 
     Attributes:
-        transient: Always True, indicating this error may be retried.
 
     Args:
         message: Optional error message, defaults to "Rate limited".
@@ -131,8 +118,6 @@ class RateLimitError(InternalError):
     Raises:
         No specific exceptions raised beyond standard Exception behavior.
     """
-
-    transient = True
 
     def __init__(
         self, message: str = "Rate limited", *, context: RateLimitContext | None = None

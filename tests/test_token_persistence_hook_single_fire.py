@@ -49,7 +49,7 @@ async def test_single_update_hook_invocation(monkeypatch):
     )
     tm.tokens["u"] = info
     dummy = DummyClient("newA", "newR")
-    monkeypatch.setattr(tm, "_get_client", lambda cid, cs: dummy)
+    monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)
 
     hook_calls = []
     async def hook():

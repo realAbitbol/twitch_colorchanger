@@ -37,7 +37,7 @@ async def test_concurrent_forced_and_natural_refresh(monkeypatch):
     info = TokenInfo("user", "A", "R", "cid", "csec", datetime.now(UTC)+timedelta(seconds=2))
     tm.tokens["user"] = info
     client = NoopClient()
-    monkeypatch.setattr(tm, "_get_client", lambda cid, cs: client)
+    monkeypatch.setattr(tm, "_get_client", lambda cid, _: client)
 
     # Launch one standard ensure_fresh and one forced concurrently
     res1, res2 = await asyncio.gather(

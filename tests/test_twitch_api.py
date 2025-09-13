@@ -32,10 +32,10 @@ class _Session:
         resp = self._queue.pop(0)
 
         class _CM:
-            async def __aenter__(self_inner):  # noqa: ANN001
+            async def __aenter__(_self):  # noqa: ANN001
                 return resp
 
-            async def __aexit__(self_inner, exc_type, exc, tb):  # noqa: ANN001
+            async def __aexit__(_self, _exc_type, _exc, _tb):  # noqa: ANN001
                 return False
 
         return _CM()
