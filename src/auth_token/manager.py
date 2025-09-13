@@ -20,7 +20,6 @@ from ..constants import (
     TOKEN_MANAGER_VALIDATION_MIN_INTERVAL,
     TOKEN_REFRESH_THRESHOLD_SECONDS,
 )
-from ..logs.logger import logger
 from ..utils import format_duration
 from .client import TokenClient, TokenOutcome, TokenResult
 
@@ -72,7 +71,7 @@ class TokenManager:
         self.tokens: dict[str, TokenInfo] = {}
         self.background_task: asyncio.Task[Any] | None = None
         self.running = False
-        self.logger = logger
+        self.logger = None
         self._client_cache: dict[tuple[str, str], TokenClient] = {}
         # Registered per-user async hooks (called after successful token refresh).
         # Multiple hooks can be registered (e.g., persist + propagate to backends).
@@ -95,31 +94,21 @@ class TokenManager:
         # stop/start where stop hasn't fully awaited cancellation yet), ensure it
         # is cancelled and awaited to avoid multiple loops.
         if self.background_task and not self.background_task.done():
-            self.logger.log_event(
-                "token_manager",
-                "stale_background_detected",
-                level=logging.DEBUG,
-                human="Cancelling stale background task before restart",
-            )
+            logging.debug("Cancelling stale background task before restart")
             try:
                 self.background_task.cancel()
                 await self.background_task
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001
-                self.logger.log_event(
-                    "token_manager",
-                    "stale_background_error",
-                    level=logging.DEBUG,
-                    error=str(e),
-                )
+                logging.debug(f"⚠️ Error cancelling stale background task: {str(e)}")
             finally:
                 self.background_task = None
         self.running = True
         # Initial validation pass before launching background loop
         await self._initial_validation_pass()
         self.background_task = asyncio.create_task(self._background_refresh_loop())
-        self.logger.log_event("token_manager", "start", level=10)
+        logging.debug("▶️ Started centralized token manager")
         await asyncio.sleep(0)
 
     async def _initial_validation_pass(self) -> None:
@@ -138,10 +127,8 @@ class TokenManager:
     async def _initial_validate_user(self, username: str, info: TokenInfo) -> None:
         try:
             if info.expiry is None:
-                self.logger.log_event(
-                    "token_manager",
-                    "startup_validation_skipped_unknown_expiry",
-                    user=username,
+                logging.info(
+                    f"❔ Startup validation skipped (unknown expiry) user={username}"
                 )
                 return
             outcome = await self.validate(username)
@@ -152,38 +139,26 @@ class TokenManager:
                     # Inline the conditional action so the audit tool (AST walker)
                     # can statically discover both template literals; previously this
                     # used a variable which made the two variants appear "unused".
-                    self.logger.log_event(
-                        "token_manager",
-                        "startup_validated_and_refreshed"
-                        if ref == TokenOutcome.REFRESHED
-                        else "startup_validated_within_threshold",
-                        user=username,
-                        remaining=int(remaining),
-                        refresh_outcome=ref.value,
-                    )
+                    if ref == TokenOutcome.REFRESHED:
+                        logging.info(
+                            f"✅ Startup validated & refreshed token user={username} remaining={int(remaining)}s outcome={ref.value}"
+                        )
+                    else:
+                        logging.info(
+                            f"⏳ Startup validated token within threshold (no refresh) user={username} remaining={int(remaining)}s outcome={ref.value}"
+                        )
                 else:
-                    self.logger.log_event(
-                        "token_manager",
-                        "startup_validated_ok",
-                        user=username,
-                        remaining=int(remaining),
+                    logging.info(
+                        f"✅ Startup validated token user={username} remaining={int(remaining)}s"
                     )
             else:
                 ref = await self.ensure_fresh(username, force_refresh=True)
-                self.logger.log_event(
-                    "token_manager",
-                    "startup_validation_forced_refresh",
-                    user=username,
-                    refresh_outcome=ref.value,
+                logging.info(
+                    f"🔄 Startup validation failed forcing refresh outcome={ref.value} user={username}"
                 )
         except Exception as e:  # noqa: BLE001
-            self.logger.log_event(
-                "token_manager",
-                "startup_validation_error",
-                user=username,
-                error=str(e),
-                error_type=type(e).__name__,
-                level=logging.DEBUG,
+            logging.debug(
+                f"⚠️ Startup validation error user={username} type={type(e).__name__} error={str(e)}"
             )
 
     async def stop(self) -> None:
@@ -196,12 +171,7 @@ class TokenManager:
                 await self.background_task
             except Exception as e:  # noqa: BLE001
                 if isinstance(e, asyncio.CancelledError):
-                    self.logger.log_event(
-                        "token_manager",
-                        "background_cancelled",
-                        level=logging.DEBUG,
-                        human="Background loop cancelled",
-                    )
+                    logging.debug("Background loop cancelled")
                 else:  # Re-raise unexpected exceptions
                     raise
             finally:
@@ -253,12 +223,8 @@ class TokenManager:
             try:
                 getattr(backend, propagate_attr)(info.access_token)
             except Exception as e:  # noqa: BLE001
-                self.logger.log_event(
-                    "token_manager",
-                    "eventsub_token_propagate_error",
-                    level=30,
-                    user=username,
-                    error=str(e),
+                logging.warning(
+                    f"⚠️ EventSub token propagation error user={username}: {str(e)}"
                 )
             # tiny await to satisfy linters that expect async use
             await asyncio.sleep(0)
@@ -307,9 +273,7 @@ class TokenManager:
         """Remove a user from token tracking (e.g., config removal)."""
         if username in self.tokens:
             del self.tokens[username]
-            self.logger.log_event(
-                "token_manager", "removed", level=logging.DEBUG, user=username
-            )
+            logging.debug(f"🗑️ Removed token entry user={username}")
             return True
         return False
 
@@ -319,11 +283,8 @@ class TokenManager:
         for u in to_remove:
             del self.tokens[u]
         if to_remove:
-            self.logger.log_event(
-                "token_manager",
-                "pruned",
-                removed=len(to_remove),
-                remaining=len(self.tokens),
+            logging.info(
+                f"🧹 Pruned tokens removed={len(to_remove)} remaining={len(self.tokens)}"
             )
         return len(to_remove)
 
@@ -423,13 +384,8 @@ class TokenManager:
                 # the task is retained and exceptions logged.
                 self._create_retained_task(hook(), category="update_hook")
             except Exception as e:  # noqa: BLE001
-                self.logger.log_event(
-                    "token_manager",
-                    "update_hook_error",
-                    level=logging.DEBUG,
-                    user=username,
-                    error=str(e),
-                    error_type=type(e).__name__,
+                logging.debug(
+                    f"⚠️ Update hook scheduling error user={username} type={type(e).__name__}"
                 )
 
     def _create_retained_task(
@@ -451,13 +407,8 @@ class TokenManager:
             if not exc:
                 return
             try:
-                self.logger.log_event(
-                    "token_manager",
-                    "retained_task_error",
-                    level=logging.DEBUG,
-                    category=category,
-                    error=str(exc),
-                    error_type=type(exc).__name__,
+                logging.debug(
+                    f"⚠️ Retained background task error category={category} error={str(exc)} type={type(exc).__name__}"
                 )
             except Exception as log_exc:  # pragma: no cover
                 logging.debug(
@@ -502,11 +453,8 @@ class TokenManager:
                 drift = now - last_loop
                 drifted = drift > (base * 3)
                 if drifted:
-                    self.logger.log_event(
-                        "token_manager",
-                        "loop_drift_detected",
-                        drift_seconds=int(drift),
-                        base_sleep=base,
+                    logging.info(
+                        f"⏱️ Token manager loop drift detected drift={int(drift)}s base={base}s"
                     )
                 for username, info in self.tokens.items():
                     await self._process_single_background(
@@ -517,12 +465,7 @@ class TokenManager:
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001
-                self.logger.log_event(
-                    "token_manager",
-                    "background_error",
-                    level=logging.ERROR,
-                    error=str(e),
-                )
+                logging.error(f"💥 Background token manager loop error: {str(e)}")
                 await asyncio.sleep(base * 2)
 
     async def _process_single_background(
@@ -539,11 +482,8 @@ class TokenManager:
             return
         if remaining < 0:
             info.state = TokenState.EXPIRED
-            self.logger.log_event(
-                "token_manager",
-                "unexpected_expired_state",
-                user=username,
-                remaining=remaining,
+            logging.warning(
+                f"⚠️ Unexpected expired state detected user={username} remaining={remaining}"
             )
             await self.ensure_fresh(username, force_refresh=True)
             return
@@ -581,12 +521,8 @@ class TokenManager:
             if outcome == TokenOutcome.VALID:
                 if updated_remaining is not None:
                     human_new = format_duration(max(0, int(updated_remaining)))
-                    self.logger.log_event(
-                        "token_manager",
-                        "periodic_validation_ok",
-                        user=username,
-                        remaining_human=human_new,
-                        remaining_seconds=int(updated_remaining),
+                    logging.info(
+                        f"✅ Periodic remote token validation ok for user {username} ({human_new} remaining)"
                     )
                 # Fire keepalive callback (async) if registered.
                 cb = self._keepalive_callbacks.get(username)
@@ -594,12 +530,8 @@ class TokenManager:
                     try:
                         self._create_retained_task(cb(), category="keepalive")
                     except Exception as e:  # noqa: BLE001
-                        self.logger.log_event(
-                            "token_manager",
-                            "keepalive_callback_error",
-                            user=username,
-                            level=logging.DEBUG,
-                            error=str(e),
+                        logging.debug(
+                            f"⚠️ Keepalive callback error user={username} error={str(e)}"
                         )
                 return updated_remaining
             # Failure -> forced refresh.
@@ -611,12 +543,8 @@ class TokenManager:
                 if pre_seconds is not None
                 else "unknown"
             )
-            self.logger.log_event(
-                "token_manager",
-                "periodic_validation_failed",
-                user=username,
-                remaining_human=pre_human,
-                remaining_seconds=pre_seconds,
+            logging.error(
+                f"❌ Periodic remote token validation failed for user {username} ({pre_human} remaining pre-refresh, {pre_seconds}s)"
             )
             ref_outcome = await self.ensure_fresh(username, force_refresh=True)
             post_remaining = self._remaining_seconds(info)
@@ -626,22 +554,13 @@ class TokenManager:
                 if post_seconds is not None
                 else "unknown"
             )
-            self.logger.log_event(
-                "token_manager",
-                "periodic_validation_forced_refresh",
-                user=username,
-                refresh_outcome=ref_outcome.value,
-                new_remaining_human=post_human,
-                new_remaining_seconds=post_seconds,
+            logging.info(
+                f"🔄 Forced refresh after failed periodic remote validation for user {username} outcome={ref_outcome.value} ({post_human} remaining, {post_seconds}s)"
             )
             return post_remaining
         except Exception as e:  # noqa: BLE001
-            self.logger.log_event(
-                "token_manager",
-                "periodic_validation_error",
-                user=username,
-                error=str(e),
-                error_type=type(e).__name__,
+            logging.warning(
+                f"⚠️ Periodic remote token validation error for user {username} type={type(e).__name__} error={str(e)}"
             )
             return self._remaining_seconds(info)
 
@@ -650,13 +569,8 @@ class TokenManager:
     ) -> None:
         # Emit remaining time every cycle for observability (even when no refresh triggered).
         if remaining is None:
-            self.logger.log_event(
-                "token_manager",
-                "remaining_time_detail",
-                level=logging.DEBUG,
-                user=username,
-                message="❔ Token expiry unknown (will validate / refresh)",
-                remaining_seconds=None,
+            logging.debug(
+                f"❔ Token expiry unknown (will validate / refresh) user={username} remaining_seconds=None"
             )
             return
         int_remaining = int(remaining)
@@ -678,13 +592,8 @@ class TokenManager:
             else:
                 _ = exp_dt.astimezone(UTC)
         # Build a clearer human message: explicitly mention token remaining time (no extra parenthetical details).
-        self.logger.log_event(
-            "token_manager",
-            "remaining_time_detail",
-            level=logging.DEBUG,
-            user=username,
-            message=f"{icon} Access token validity: {human} remaining",
-            remaining_seconds=int_remaining,
+        logging.debug(
+            f"{icon} Access token validity: {human} remaining user={username} remaining_seconds={int_remaining}"
         )
 
     async def _handle_unknown_expiry(self, username: str) -> None:
@@ -698,35 +607,19 @@ class TokenManager:
                 info_ref.forced_unknown_attempts += 1
                 forced = await self.ensure_fresh(username, force_refresh=True)
                 if forced == TokenOutcome.FAILED:
-                    self.logger.log_event(
-                        "token_manager",
-                        "expiry_unknown_forced_refresh_failed",
-                        user=username,
-                        attempt=info_ref.forced_unknown_attempts,
-                        max_attempts=3,
+                    logging.warning(
+                        f"⚠️ Forced refresh attempt failed resolving unknown expiry user={username} attempt={info_ref.forced_unknown_attempts}"
                     )
                 else:
-                    self.logger.log_event(
-                        "token_manager",
-                        "expiry_unknown_forced_refresh_success",
-                        user=username,
-                        attempt=info_ref.forced_unknown_attempts,
-                        max_attempts=3,
+                    logging.info(
+                        f"✅ Forced refresh resolved unknown expiry user={username} attempt={info_ref.forced_unknown_attempts}"
                     )
             else:
-                self.logger.log_event(
-                    "token_manager",
-                    "expiry_unknown_forced_refresh_exhausted",
-                    level=logging.WARNING,
-                    user=username,
-                    max_attempts=3,
+                logging.warning(
+                    f"⚠️ Forced refresh attempts exhausted resolving unknown expiry user={username}"
                 )
         else:
             if info_ref.forced_unknown_attempts:
                 info_ref.forced_unknown_attempts = 0
         if outcome == TokenOutcome.FAILED and info_ref.expiry is None:
-            self.logger.log_event(
-                "token_manager",
-                "expiry_unknown_validation_failed",
-                user=username,
-            )
+            logging.warning(f"⚠️ Validation failed with unknown expiry user={username}")

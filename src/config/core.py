@@ -8,7 +8,6 @@ import sys
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-from ..logs.logger import logger
 from .model import UserConfig  # normalize_user_list provided below
 from .repository import ConfigRepository
 
@@ -81,35 +80,23 @@ def _merge_user(
 
 
 def _log_update_invalid(uc: UserConfig) -> bool:
-    logger.log_event(
-        "config",
-        "update_user_invalid",
-        level=logging.WARNING,
-        username=uc.username or "Unknown",
+    logging.warning(
+        f"🚫 Rejected invalid user update username={uc.username or 'Unknown'}"
     )
     return False
 
 
 def _log_update_normalized(uc: UserConfig) -> None:
-    logger.log_event(
-        "config",
-        "update_user_normalized",
-        username=uc.username,
-        channel_count=len(uc.channels),
+    logging.info(
+        f"🛠️ User update normalized username={uc.username} channels={len(uc.channels)}"
     )
 
 
 def _log_update_failed(e: Exception, user_config_dict: dict[str, Any]) -> None:
-    logger.log_event(
-        "config",
-        "update_user_failed",
-        level=logging.ERROR,
-        error=str(e),
-        error_type=type(e).__name__,
-        username=user_config_dict.get("username")
-        if isinstance(user_config_dict, dict)
-        else None,
+    username = (
+        user_config_dict.get("username") if isinstance(user_config_dict, dict) else None
     )
+    logging.error(f"💥 Failed to update user in config: {username}")
 
 
 def _user_auth_valid(u: UserConfig, placeholders: set[str]) -> bool:
@@ -175,40 +162,22 @@ def get_configuration() -> list[dict[str, Any]]:
     config_file = os.environ.get("TWITCH_CONF_FILE", "twitch_colorchanger.conf")
     users = load_users_from_config(config_file)
     if not users:
-        logger.log_event(
-            "config", "no_config_file", level=logging.ERROR, config_file=config_file
-        )
-        logger.log_event(
-            "config",
-            "no_config_file_instruction",
-            level=logging.ERROR,
-            sample="twitch_colorchanger.conf.sample",
-        )
+        logging.error("📁 No configuration file found")
+        logging.error("📄 Instruction emitted for creating config file")
         sys.exit(1)
     valid_users = _validate_and_filter_users(users)
     if not valid_users:
-        logger.log_event(
-            "config", "no_valid_users", level=logging.ERROR, config_file=config_file
-        )
+        logging.error("⚠️ No valid user configurations found")
         sys.exit(1)
-    logger.log_event("config", "valid_users_found", user_count=len(valid_users))
+    logging.info(f"✅ Valid user configurations found count={len(valid_users)}")
     return valid_users
 
 
 def print_config_summary(users: Sequence[dict[str, Any]]) -> None:
-    logger.log_event("config", "summary", user_count=len(users), level=10)
-    for i, user in enumerate(users, 1):
-        logger.log_event(
-            "config",
-            "summary_user",
-            index=i,
-            username=user.get("username"),
-            channel_count=len(user.get("channels", [])),
-            channels=",".join(user.get("channels", [])),
-            is_prime_or_turbo=user.get("is_prime_or_turbo", True),
-            has_refresh_token=bool(user.get("refresh_token")),
-            level=10,
-        )
+    logging.debug(f"📊 Configuration summary (users={len(users)})")
+    for _i, user in enumerate(users, 1):
+        username = user.get("username")
+        logging.debug(f"👤 User summary {username}")
 
 
 def normalize_user_channels(
@@ -218,19 +187,9 @@ def normalize_user_channels(
     if any_changes:
         try:
             save_users_to_config(normalized_users, config_file)
-            logger.log_event(
-                "config",
-                "channel_normalization_saved",
-                user_count=len(normalized_users),
-            )
+            logging.info("💾 Channel normalization saved")
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "config",
-                "channel_normalization_save_failed",
-                level=logging.ERROR,
-                error=str(e),
-                error_type=type(e).__name__,
-            )
+            logging.error(f"💥 Failed saving normalization: {type(e).__name__}")
     return normalized_users, any_changes
 
 
@@ -240,7 +199,7 @@ async def setup_missing_tokens(
     import aiohttp
 
     from ..api.twitch import TwitchAPI
-    from ..token.provisioner import TokenProvisioner  # local import
+    from ..auth_token.provisioner import TokenProvisioner  # local import
 
     required_scopes = {"chat:read", "user:read:chat", "user:manage:chat_color"}
     updated_users: list[dict[str, Any]] = []
@@ -338,14 +297,8 @@ def _invalidate_for_missing_scopes(
     user.pop("access_token", None)
     user.pop("refresh_token", None)
     user.pop("token_expiry", None)
-    from ..logs.logger import logger as _logger  # local import
-
-    _logger.log_event(
-        "token",
-        "scopes_missing_invalidate",
-        user=user.get("username"),
-        required=";".join(sorted(required_scopes)),
-        current=";".join(sorted(current_set)) if current_set else "<none>",
+    logging.warning(
+        f"🚫 Token scopes missing required={';'.join(sorted(required_scopes))} got={';'.join(sorted(current_set)) if current_set else '<none>'} user={user.get('username')} invalidated=true"
     )
 
 
@@ -390,12 +343,6 @@ def _save_updated_config(
 ) -> None:
     try:
         save_users_to_config(updated_users, config_file)
-        logger.log_event("config", "tokens_update_saved", user_count=len(updated_users))
+        logging.info("💾 Tokens update saved")
     except Exception as e:  # noqa: BLE001
-        logger.log_event(
-            "config",
-            "tokens_update_save_failed",
-            level=logging.ERROR,
-            error=str(e),
-            error_type=type(e).__name__,
-        )
+        logging.error(f"💥 Tokens update save failed: {type(e).__name__}")

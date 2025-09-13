@@ -10,8 +10,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from ..logs.logger import logger
-
 
 @dataclass
 class ScheduledTask:
@@ -80,7 +78,7 @@ class AdaptiveScheduler:
         async with self._lock:
             self.scheduler_task = asyncio.create_task(self._run_scheduler())
 
-    logger.log_event("scheduler", "started", level=10)
+    logging.debug("▶️ Adaptive scheduler started")
 
     async def stop(self) -> None:
         """Stop the scheduler and cancel all tasks"""
@@ -99,10 +97,10 @@ class AdaptiveScheduler:
                 # Re-raise as per asyncio best practices
                 raise
 
-        # Clear all tasks
-        async with self._lock:
-            self.tasks.clear()
-        logger.log_event("scheduler", "stopped", level=logging.WARNING)
+            # Clear all tasks
+            async with self._lock:
+                self.tasks.clear()
+            logging.warning("🛑 Adaptive scheduler stopped")
 
     async def schedule_recurring(  # noqa: D401
         self,
@@ -145,13 +143,7 @@ class AdaptiveScheduler:
         async with self._lock:
             heapq.heappush(self.tasks, task)
 
-        logger.log_event(
-            "scheduler",
-            "scheduled_recurring",
-            level=logging.DEBUG,
-            task=name,
-            interval=interval,
-        )
+        logging.debug(f"🗓️ Scheduled recurring task name={name} interval={interval}s")
         return True
 
     async def schedule_once(  # noqa: D401
@@ -193,9 +185,7 @@ class AdaptiveScheduler:
         async with self._lock:
             heapq.heappush(self.tasks, task)
 
-        logger.log_event(
-            "scheduler", "scheduled_once", level=logging.DEBUG, task=name, delay=delay
-        )
+        logging.debug(f"🗓️ Scheduled one-time task name={name} delay={delay}s")
         return True
 
     async def cancel_task(self, name: str) -> bool:  # noqa: D401
@@ -208,7 +198,7 @@ class AdaptiveScheduler:
             self.tasks = [task for task in self.tasks if task.name != name]
             heapq.heapify(self.tasks)  # Rebuild heap
 
-        logger.log_event("scheduler", "cancelled_tasks_named", task=name)
+        logging.info(f"🛑 Cancelled tasks named {name}")
         return True
 
     async def reschedule_task(self, name: str, new_interval: float) -> bool:  # noqa: D401
@@ -224,12 +214,8 @@ class AdaptiveScheduler:
                     current_time = time.monotonic()
                     task.next_run = current_time + new_interval
                     heapq.heapify(self.tasks)  # Rebuild heap
-                    logger.log_event(
-                        "scheduler",
-                        "rescheduled_task",
-                        level=logging.DEBUG,
-                        task=name,
-                        interval=new_interval,
+                    logging.debug(
+                        f"🔄 Rescheduled task name={name} interval={new_interval}s"
                     )
                     return True
 
@@ -257,15 +243,11 @@ class AdaptiveScheduler:
                 await self._process_next_batch()
 
             except asyncio.CancelledError:
-                logger.log_event(
-                    "scheduler", "scheduler_cancelled", level=logging.DEBUG
-                )
+                logging.debug("🛑 Scheduler cancelled")
                 raise
 
             except Exception as e:
-                logger.log_event(
-                    "scheduler", "scheduler_error", level=logging.ERROR, error=str(e)
-                )
+                logging.error(f"💥 Scheduler error: {str(e)}")
                 # Wait a bit before retrying to avoid tight error loops
                 await asyncio.sleep(1.0)
 
@@ -313,17 +295,9 @@ class AdaptiveScheduler:
 
         except asyncio.CancelledError:
             # Don't log cancelled tasks as errors
-            logger.log_event(
-                "scheduler", "task_cancelled", level=logging.DEBUG, task=task.name
-            )
+            logging.debug(f"🛑 Task {task.name} cancelled")
             # Re-raise as per asyncio best practices
             raise
 
         except Exception as e:
-            logger.log_event(
-                "scheduler",
-                "task_failed",
-                level=logging.ERROR,
-                task=task.name,
-                error=str(e),
-            )
+            logging.error(f"💥 Task {task.name} failed: {str(e)}")

@@ -10,6 +10,7 @@ import os
 import sys
 import time
 
+# Import all modules first (required by E402)
 from .bot.manager import run_bots
 from .config import (
     get_configuration,
@@ -19,14 +20,99 @@ from .config import (
 )
 from .errors.handling import log_error
 from .health import read_status
-from .logs.logger import logger
 from .utils import emit_startup_instructions
+
+# Configure logging after imports to prevent other modules from configuring it
+debug_env = os.environ.get("DEBUG", "").lower()
+log_level = logging.DEBUG if debug_env in ("true", "1", "yes") else logging.INFO
+
+
+# ANSI color codes for log levels
+class ColoredFormatter(logging.Formatter):
+    """Custom formatter with colored log levels"""
+
+    COLORS = {
+        "DEBUG": "\033[36m",  # Cyan
+        "INFO": "\033[32m",  # Green
+        "WARNING": "\033[33m",  # Yellow
+        "ERROR": "\033[31m",  # Red
+        "CRITICAL": "\033[35m",  # Magenta
+    }
+    RESET = "\033[0m"
+
+    def format(self, record):
+        # Get the colored level name with fixed width alignment
+        level_name = record.levelname
+        colored_level = f"{self.COLORS.get(level_name, '')}{level_name:<8}{self.RESET}"
+
+        # Format the message without logger name
+        message = record.getMessage()
+
+        # Return formatted string with level and message
+        return f"{colored_level} {message}"
+
+
+formatter = ColoredFormatter("%(message)s")
+handler = logging.StreamHandler(sys.stderr)
+handler.setFormatter(formatter)
+
+# Configure logging with no logger name in format
+logging.basicConfig(
+    level=log_level,
+    handlers=[handler],
+    format="%(message)s",  # Use our formatter's format
+)
+logging.getLogger().setLevel(log_level)
+
+# Apply our formatter to all existing handlers
+root_logger = logging.getLogger()
+for h in root_logger.handlers:
+    h.setFormatter(formatter)
+
+# Disable watchdog logging after imports but before any logging calls
+# Monkey-patch logging.getLogger to disable watchdog loggers
+_original_getLogger = logging.getLogger
+
+
+def patched_get_logger(name=None):
+    logger = _original_getLogger(name)
+    if name and (
+        name.startswith("watchdog") or "fsevents" in name or name == "fsevents"
+    ):
+        logger.disabled = True
+        logger.setLevel(logging.CRITICAL)
+        logger.propagate = False
+        logger.handlers.clear()
+        # Add a null handler to completely suppress output
+        null_handler = logging.NullHandler()
+        null_handler.setLevel(logging.CRITICAL)
+        logger.addHandler(null_handler)
+        # Also ensure parent loggers don't propagate
+        logger.parent = None
+    return logger
+
+
+logging.getLogger = patched_get_logger
+
+# Also disable the main watchdog logger
+watchdog_logger = _original_getLogger("watchdog")
+watchdog_logger.disabled = True
+watchdog_logger.setLevel(logging.CRITICAL)
+watchdog_logger.propagate = False
+watchdog_logger.addHandler(logging.NullHandler())
+
+# Also disable fsevents logger specifically
+fsevents_logger = _original_getLogger("fsevents")
+fsevents_logger.disabled = True
+fsevents_logger.setLevel(logging.CRITICAL)
+fsevents_logger.propagate = False
+fsevents_logger.addHandler(logging.NullHandler())
 
 
 async def main() -> None:
     """Main function"""
     try:
-        logger.log_event("app", "start")
+        print("🚀 Starting Twitch Color Changer Bot")
         emit_startup_instructions()
         config_file = os.environ.get("TWITCH_CONF_FILE", "twitch_colorchanger.conf")
         loaded_config = get_configuration()
@@ -35,24 +121,16 @@ async def main() -> None:
         print_config_summary(users_config)
         await run_bots(users_config, config_file)
     except asyncio.CancelledError:
-        logger.log_event(
-            "app", "cancelled", level=logging.WARNING, human="Cancelled (Ctrl+C)"
-        )
+        logging.warning("Cancelled (Ctrl+C)")
         raise
     except KeyboardInterrupt:
-        logger.log_event("app", "interrupted", level=logging.WARNING)
+        logging.warning("👋 Application terminated by user")
     except Exception as e:  # noqa: BLE001
         log_error("Main application error", e)
-        logger.log_event(
-            "app",
-            "critical_error",
-            level=logging.CRITICAL,
-            error=str(e),
-            exc_info=True,
-        )
+        logging.critical(f"💥 Critical error occurred: {str(e)}", exc_info=True)
         sys.exit(1)
     finally:
-        logger.log_event("app", "shutdown_complete")
+        logging.info("✅ Application shutdown complete")
 
 
 # Best-effort safety net: ensure any lingering aiohttp session is closed
@@ -65,15 +143,13 @@ def _cleanup_any_context() -> None:  # pragma: no cover - process exit path
         )
     except Exception as e:  # noqa: BLE001
         # Log at debug to avoid noise
-        logger.log_event(
-            "app", "atexit_context_check_error", level=logging.DEBUG, error=str(e)
-        )
+        logging.debug(f"⚠️ Atexit context check error: {str(e)}")
 
 
 if __name__ == "__main__":
     # Simple health check mode
     if len(sys.argv) > 1 and sys.argv[1] == "--health-check":
-        logger.log_event("app", "health_mode")
+        print("🩺 Health check mode")
         try:
             # Basic config sanity check
             health_config = get_configuration()
@@ -90,55 +166,40 @@ if __name__ == "__main__":
             last_ok = status.get("last_reconnect_ok")
 
             if failures >= max_failures:
-                logger.log_event(
-                    "app",
-                    "health_fail",
-                    level=logging.ERROR,
-                    error=f"consecutive_reconnect_failures={failures}",
+                print(
+                    f"❌ Health check failed: consecutive_reconnect_failures={failures}"
                 )
                 sys.exit(1)
 
             now = time.time()
             if last_maintenance and (now - float(last_maintenance) > stale_threshold):
-                logger.log_event(
-                    "app",
-                    "health_fail",
-                    level=logging.ERROR,
-                    error=f"last_maintenance_stale={now - float(last_maintenance):.0f}s",
+                print(
+                    f"❌ Health check failed: last_maintenance_stale={now - float(last_maintenance):.0f}s"
                 )
                 sys.exit(1)
 
             # If we have an explicit last_ok timestamp too old, treat as failure
             if last_ok and (now - float(last_ok) > stale_threshold):
-                logger.log_event(
-                    "app",
-                    "health_fail",
-                    level=logging.ERROR,
-                    error=f"last_reconnect_ok_stale={now - float(last_ok):.0f}s",
+                print(
+                    f"❌ Health check failed: last_reconnect_ok_stale={now - float(last_ok):.0f}s"
                 )
                 sys.exit(1)
 
-            logger.log_event("app", "health_pass", user_count=len(health_config))
+            print(f"✅ Health check passed users={len(health_config)}")
             sys.exit(0)
         except Exception as e:  # noqa: BLE001
-            logger.log_event("app", "health_fail", level=logging.ERROR, error=str(e))
+            print(f"❌ Health check failed: {str(e)}")
             sys.exit(1)
 
     try:
         asyncio.run(main())
     except KeyboardInterrupt:  # pragma: no cover - signal handling
-        logger.log_event("app", "terminated_by_user")
+        logging.info("👋 Application terminated by user")
         sys.exit(0)
     except asyncio.CancelledError:
-        logger.log_event("app", "terminated_by_cancellation")
+        logging.info("🛑 Application terminated by cancellation signal")
         sys.exit(0)
     except Exception as e:  # noqa: BLE001
         log_error("Top-level error", e)
-        logger.log_event(
-            "app",
-            "top_level_error",
-            level=logging.CRITICAL,
-            error=str(e),
-            exc_info=True,
-        )
+        logging.critical(f"💥 Top-level critical error: {str(e)}", exc_info=True)
         sys.exit(1)

@@ -10,10 +10,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from ..logs.logger import logger
-
 if TYPE_CHECKING:  # pragma: no cover
-    from ..token.manager import TokenManager
+    from ..auth_token.manager import TokenManager
     from .core import TwitchColorBot
 
 
@@ -26,11 +24,9 @@ class BotRegistrar:
     async def register(self, bot: TwitchColorBot) -> None:
         # Register credentials with the token manager, set up persistence, then
         # trigger an initial freshness check (which may refresh + persist).
-        logger.log_event(
-            "bot", "registering_token_manager", user=bot.username, level=10
-        )
+        logging.debug(f"📝 Registering with token manager user={bot.username}")
         self._upsert_token(bot)
-        logger.log_event("token_manager", "registered", user=bot.username, level=10)
+        logging.debug(f"📝 Token manager: registered user={bot.username}")
         self._register_persistence_hook(bot)
         await self._initial_refresh_and_persist(bot)
 
@@ -51,13 +47,8 @@ class BotRegistrar:
         try:
             self._tm.register_update_hook(bot.username, bot._persist_token_changes)
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "bot",
-                "register_hook_failed",
-                level=logging.DEBUG,
-                user=bot.username,
-                error=str(e),
-                error_type=type(e).__name__,
+            logging.debug(
+                f"⚠️ Failed to register token update hook user={bot.username}: {str(e)}"
             )
 
     async def _initial_refresh_and_persist(self, bot: TwitchColorBot) -> None:
@@ -80,11 +71,6 @@ class BotRegistrar:
             try:
                 await bot._persist_token_changes()
             except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "bot",
-                    "token_persist_error",
-                    level=logging.DEBUG,
-                    user=bot.username,
-                    error=str(e),
-                    error_type=type(e).__name__,
+                logging.debug(
+                    f"💥 Token persistence error user={bot.username}: {str(e)}"
                 )

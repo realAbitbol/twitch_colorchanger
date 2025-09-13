@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import logging
 import time
 from typing import Any
 
 import aiohttp
 
+from .auth_token.manager import TokenManager
 from .health import write_status
-from .logs.logger import logger
 from .rate.rate_limiter import TwitchRateLimiter
-from .token.manager import TokenManager
 
 # Global reference for emergency cleanup if normal shutdown is interrupted
 GLOBAL_CONTEXT: ApplicationContext | None = None
@@ -55,10 +55,10 @@ class ApplicationContext:
     @classmethod
     async def create(cls) -> ApplicationContext:
         ctx = cls()
-        logger.log_event("context", "creating", level=10)
+        logging.debug("🧪 Creating application context")
         ctx.session = aiohttp.ClientSession()
         ctx._session_birth = time.time()
-        logger.log_event("context", "session_created", level=10)
+        logging.debug("🔗 HTTP session created")
         ctx.token_manager = TokenManager(ctx.session)
         # Register globally for atexit fallback
         global GLOBAL_CONTEXT  # noqa: PLW0603
@@ -77,20 +77,20 @@ class ApplicationContext:
                         "token_refresh", self.token_manager.background_task
                     )
             self._started = True
-            logger.log_event("context", "start", level=10)
+            logging.debug("🚀 Application context started")
             self._maintenance_task = asyncio.create_task(self._maintenance_loop())
             self._register_task("maintenance", self._maintenance_task)
 
     async def shutdown(self) -> None:
         async with self._lock:
-            logger.log_event("context", "shutdown_begin")
+            logging.info("🔻 Application context shutdown initiated")
             await self._cancel_maintenance_task()
             await self._stop_token_manager()
             await self._close_http_session()
             self._rate_limiters.clear()
             self._started = False
             self._tasks.clear()
-            logger.log_event("context", "shutdown")
+            logging.info("✅ Application context shutdown complete")
             # After clean shutdown remove global reference so atexit won't re-run
             global GLOBAL_CONTEXT  # noqa: PLW0603
             if GLOBAL_CONTEXT is self:
@@ -103,9 +103,7 @@ class ApplicationContext:
         try:
             await self._maintenance_task
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "context", "maintenance_cancel_wait_error", level=10, error=str(e)
-            )
+            logging.debug(f"⚠️ Error waiting maintenance task cancel: {str(e)}")
         finally:
             self._maintenance_task = None
 
@@ -116,16 +114,9 @@ class ApplicationContext:
             await self.token_manager.stop()
         except Exception as e:  # noqa: BLE001
             if isinstance(e, asyncio.CancelledError):
-                logger.log_event(
-                    "context",
-                    "token_manager_cancelled",
-                    level=30,
-                    human="Token manager cancellation during shutdown",
-                )
+                logging.warning("🛑 Token manager cancellation during shutdown")
             else:
-                logger.log_event(
-                    "context", "token_manager_stop_error", level=40, error=str(e)
-                )
+                logging.error(f"💥 Error stopping token manager: {str(e)}")
         finally:
             self.token_manager = None
 
@@ -135,7 +126,7 @@ class ApplicationContext:
         try:
             await self.session.close()
         except Exception as e:  # noqa: BLE001
-            logger.log_event("context", "session_close_error", level=40, error=str(e))
+            logging.error(f"💥 Error closing HTTP session: {str(e)}")
         finally:
             self.session = None
 
@@ -148,13 +139,7 @@ class ApplicationContext:
         if limiter is None:
             limiter = TwitchRateLimiter(client_id, username)
             self._rate_limiters[key] = limiter
-            logger.log_event(
-                "context",
-                "rate_limiter_created",
-                client_id=client_id,
-                user=username,
-                level=10,
-            )
+            logging.debug("🧱 Rate limiter created")
         return limiter
 
     # --------------------- Task & Metrics Registry ------------------ #
@@ -162,7 +147,7 @@ class ApplicationContext:
         if not task:
             return
         self._tasks[name] = task
-        logger.log_event("context", "task_registered", task=name, level=10)
+        logging.debug("📝 Context: task registered")
 
     def task_snapshot(self) -> list[dict[str, str]]:
         # Currently unused (kept for potential future diagnostics). If still unused,
@@ -179,16 +164,7 @@ class ApplicationContext:
         return dict(self._counters)
 
     def _emit_metrics(self) -> None:
-        snap = self.metrics_snapshot()
-        fields = {k: int(v) for k, v in snap.items()}
-        logger.log_event(
-            "metrics",
-            "snapshot",
-            level=10,
-            human="metrics snapshot",
-            exc_info=False,
-            **fields,
-        )
+        logging.debug("📊 Metrics snapshot")
 
     # ----------------------- Maintenance Loop ----------------------- #
     async def _maintenance_loop(self) -> None:  # pragma: no cover - timing oriented
@@ -205,12 +181,7 @@ class ApplicationContext:
                 except Exception as e:  # noqa: BLE001
                     # Log the health write failure but keep the maintenance loop alive
                     try:
-                        logger.log_event(
-                            "context",
-                            "maintenance_error",
-                            level=10,
-                            error=str(e),
-                        )
+                        logging.debug(f"⚠️ Error in maintenance loop: {str(e)}")
                     except Exception:
                         # Fallback: avoid raising from the maintenance loop
                         try:
@@ -219,11 +190,11 @@ class ApplicationContext:
                             _sys.stderr.write(f"health write error: {e}\n")
                         except Exception:
                             ...
-                logger.log_event("context", "maintenance_tick", level=10)
+                logging.debug("🕰️ Maintenance tick")
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001
-                logger.log_event("context", "maintenance_error", level=30, error=str(e))
+                logging.warning(f"💥 Maintenance loop error: {str(e)}")
                 await asyncio.sleep(300)
 
     async def _maybe_recycle_session(self) -> None:
@@ -232,13 +203,11 @@ class ApplicationContext:
             and self._session_birth
             and time.time() - self._session_birth > self._SESSION_MAX_AGE
         ):
-            logger.log_event("context", "session_recycle")
+            logging.info("♻️ HTTP session recycled")
             try:
                 await self.session.close()
             except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "context", "session_close_recycle_error", level=10, error=str(e)
-                )
+                logging.debug(f"⚠️ Error closing HTTP session during recycle: {str(e)}")
             self.session = aiohttp.ClientSession()
             self._session_birth = time.time()
 
@@ -265,13 +234,8 @@ class ApplicationContext:
             age = float(age_obj) if isinstance(age_obj, int | float) else 0.0
             if age > 3600:
                 stale_found += 1
-                logger.log_event(
-                    "rate_limit",
-                    "bucket_stale_probe",
-                    level=10,
-                    key=key,
-                    bucket=bucket_name,
-                    age=int(age),
+                logging.debug(
+                    f"🧪 Probed stale rate limit bucket key={key} bucket={bucket_name} age={int(age)}s"
                 )
         return stale_found
 
@@ -290,12 +254,12 @@ def _atexit_close() -> None:  # pragma: no cover - process teardown path
                 loop.run_until_complete(session.close())
             finally:
                 loop.close()
-            logger.log_event("context", "session_closed_atexit")
+            logging.info("🧹 HTTP session closed at exit")
         except Exception as e:  # noqa: BLE001
             # Best effort logging; avoid nested silent pass
             msg = str(e)
             try:
-                logger.log_event("context", "session_atexit_error", level=30, error=msg)
+                logging.warning(f"⚠️ HTTP session close error at exit: {msg}")
             except Exception:
                 # Fallback minimal stderr write (no pass-only block)
                 try:

@@ -6,7 +6,6 @@ import pytest
 
 from src.application_context import ApplicationContext
 from src.bot.core import TwitchColorBot
-from src.logs.logger import logger as global_logger
 
 
 class FakeAPI:
@@ -21,7 +20,7 @@ class FakeAPI:
 
 
 @pytest.mark.asyncio
-async def test_ccc_hex_blocked_when_nonprime(monkeypatch):
+async def test_ccc_hex_blocked_when_nonprime(monkeypatch, caplog):
     ctx = await ApplicationContext.create()
     session = aiohttp.ClientSession()
     bot = TwitchColorBot(
@@ -38,12 +37,7 @@ async def test_ccc_hex_blocked_when_nonprime(monkeypatch):
     fake_api = FakeAPI()
     bot.api = fake_api  # type: ignore
 
-    records: list[tuple[str, str, dict]] = []
-
-    def _capture(domain: str, action: str, *args, **kwargs):  # noqa: ANN001
-        records.append((domain, action, kwargs))
-
-    monkeypatch.setattr(global_logger, "log_event", _capture)
+    caplog.set_level(20)
 
     # Even if auto is disabled or enabled, hex via ccc should be blocked for non-prime
     bot.enabled = False
@@ -54,7 +48,8 @@ async def test_ccc_hex_blocked_when_nonprime(monkeypatch):
     # No PUT chat/color should be issued
     assert not any(c[0] == "PUT" and c[1].endswith("chat/color") for c in fake_api.calls)
     # Log event should indicate ignore
-    assert any(d == "bot" and a == "ccc_hex_ignored_nonprime" for d, a, _ in records)
+    msgs = [r.message for r in caplog.records]
+    assert any("ℹ️ Ignoring hex via ccc for non-Prime" in m for m in msgs)
 
     await session.close()
     if ctx._maintenance_task:  # type: ignore[attr-defined]

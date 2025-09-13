@@ -6,7 +6,6 @@ import pytest
 
 from src.application_context import ApplicationContext
 from src.bot.core import TwitchColorBot
-from src.logs.logger import logger as global_logger
 
 
 class FakeAPI:
@@ -20,7 +19,7 @@ class FakeAPI:
 
 
 @pytest.mark.asyncio
-async def test_ccc_invalid_argument_logs_info(monkeypatch):
+async def test_ccc_invalid_argument_logs_info(monkeypatch, caplog):
     ctx = await ApplicationContext.create()
     session = aiohttp.ClientSession()
     bot = TwitchColorBot(
@@ -36,19 +35,15 @@ async def test_ccc_invalid_argument_logs_info(monkeypatch):
     fake_api = FakeAPI()
     bot.api = fake_api  # type: ignore
 
-    recorded: list[tuple[str, str, dict]] = []
-
-    def _capture(domain: str, action: str, *args, **kwargs):  # noqa: ANN001
-        recorded.append((domain, action, kwargs))
-
-    monkeypatch.setattr(global_logger, "log_event", _capture)
+    caplog.set_level(20)
 
     await bot.handle_message("nick", "main", "ccc nonsense")
 
     # No PUT should be made
     assert not any(c[0] == "PUT" and c[1].endswith("chat/color") for c in fake_api.calls)
     # Info event should be emitted
-    assert any(d == "bot" and a == "ccc_invalid_argument" for d, a, _ in recorded)
+    msgs = [r.message for r in caplog.records]
+    assert any("ℹ️ Ignoring invalid ccc argument" in m for m in msgs)
 
     await session.close()
     if ctx._maintenance_task:  # type: ignore[attr-defined]

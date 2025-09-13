@@ -53,7 +53,7 @@ async def test_run_with_retry_give_up_logs(caplog):
         await run_with_retry(op, policy, user="u2")
     msgs = [r.message for r in caplog.records]
     assert any("attempt" in m for m in msgs)
-    assert any("give up" in m for m in msgs)
+    assert any("giving up after" in m for m in msgs)
 
 
 def test_jitter_bounds():

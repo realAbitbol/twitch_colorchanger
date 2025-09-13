@@ -6,7 +6,6 @@ import pytest
 
 from src.application_context import ApplicationContext
 from src.bot.core import TwitchColorBot
-from src.logs.logger import logger as global_logger
 
 
 class FakeAPI:
@@ -25,7 +24,7 @@ class FakeAPI:
 
 
 @pytest.mark.asyncio
-async def test_keepalive_no_color_forces_token_refresh(monkeypatch):
+async def test_keepalive_no_color_forces_token_refresh(monkeypatch, caplog):
     ctx = await ApplicationContext.create()
     session = aiohttp.ClientSession()
     bot = TwitchColorBot(
@@ -57,18 +56,13 @@ async def test_keepalive_no_color_forces_token_refresh(monkeypatch):
 
     monkeypatch.setattr(ctx.token_manager, "ensure_fresh", _ensure_fresh)
 
-    # Capture logs for the 'none' event
-    records: list[tuple[str, str, dict]] = []
-
-    def _capture(domain: str, action: str, *args, **kwargs):  # noqa: ANN001
-        records.append((domain, action, kwargs))
-
-    monkeypatch.setattr(global_logger, "log_event", _capture)
+    caplog.set_level(20)
 
     await bot._maybe_get_color_keepalive()
 
     # Assert we logged the none event and requested a forced refresh
-    assert any(d == "bot" and a == "keepalive_color_get_none" for d, a, _ in records)
+    msgs = [r.message for r in caplog.records]
+    assert any("🫧 Keepalive color GET returned no color" in m for m in msgs)
     assert called["force"] is True
 
     await session.close()

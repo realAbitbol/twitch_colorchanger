@@ -5,19 +5,17 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from src.token.manager import TokenInfo, TokenManager, TokenOutcome
+from src.auth_token.manager import TokenInfo, TokenManager, TokenOutcome
 
 
 def _fresh_manager(monkeypatch):
-    from src.token.manager import TokenManager as _TM
+    from src.auth_token.manager import TokenManager as _TM
     _TM._instance = None  # type: ignore[attr-defined]
     tm = object.__new__(TokenManager)  # type: ignore[call-arg]
     tm.http_session = None
     tm.tokens = {}
     tm.background_task = None
     tm.running = False
-    from src.logs.logger import logger
-    tm.logger = logger
     tm._client_cache = {}
     tm._update_hooks = {}
     tm._hook_tasks = []
@@ -141,22 +139,17 @@ async def test_periodic_validation_error_logged(monkeypatch, caplog):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(tm, "validate", fake_validate)  # type: ignore[arg-type]
-    # Capture event names via logger._log wrapper (avoid reliance on human text)
-    events: list[str] = []
-    orig_log = tm.logger._log  # type: ignore[attr-defined]
-    def _wrap(level, event_name, **kw):  # noqa: D401
-        events.append(event_name)
-        return orig_log(level, event_name, **kw)
-    monkeypatch.setattr(tm.logger, "_log", _wrap)  # type: ignore[arg-type]
+    caplog.set_level(logging.WARNING)
     await tm._maybe_periodic_or_unknown_resolution("u", info, 40)  # noqa: SLF001
-    assert "token_manager_periodic_validation_error" in events
+    msgs = [r.message for r in caplog.records]
+    assert any("⚠️ Periodic remote token validation error for user u" in m for m in msgs)
 
 
 # 3. Force proactive (drift) refresh branch
 @pytest.mark.asyncio
 async def test_force_proactive_refresh(monkeypatch):
     tm = _fresh_manager(monkeypatch)
-    import src.token.manager as mgr_mod
+    import src.auth_token.manager as mgr_mod
     # Patch threshold to small value for test
     monkeypatch.setattr(mgr_mod, "TOKEN_REFRESH_THRESHOLD_SECONDS", 10, raising=False)
     info = TokenInfo(
@@ -204,33 +197,22 @@ async def test_update_hook_error_logged(monkeypatch, caplog):
         raise RuntimeError("hook boom")
 
     tm.register_update_hook("u", bad_hook)
-    events: list[str] = []
-    orig_log = tm.logger._log  # type: ignore[attr-defined]
-    def _wrap(level, event_name, **kw):
-        events.append(event_name)
-        return orig_log(level, event_name, **kw)
-    monkeypatch.setattr(tm.logger, "_log", _wrap)  # type: ignore[arg-type]
+    caplog.set_level(logging.DEBUG)
     # Patch _create_retained_task to run hook and invoke callback immediately
     def _immediate(coro, category: str):  # type: ignore[override]
         async def runner():
             try:
                 await coro
             except Exception as e:  # log similar to callback path
-                tm.logger.log_event(
-                    "token_manager",
-                    "retained_task_error",
-                    category=category,
-                    error=str(e),
-                    error_type=type(e).__name__,
-                    level=logging.DEBUG,
-                )
+                logging.debug(f"⚠️ Retained background task error category={category} error={str(e)} type={type(e).__name__}")
         return asyncio.create_task(runner())
     monkeypatch.setattr(tm, "_create_retained_task", _immediate)  # type: ignore[arg-type]
     await tm.ensure_fresh("u", force_refresh=True)
     # Allow task scheduling and callback execution over a couple of loop turns
     await asyncio.sleep(0)
     await asyncio.sleep(0)
-    assert "token_manager_retained_task_error" in events, f"Events captured: {events}"
+    msgs = [r.message for r in caplog.records]
+    assert any("⚠️ Retained background task error" in m for m in msgs)
 
 
 # 5. EventSub propagation hook

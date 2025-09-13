@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import secrets
 import time
@@ -13,7 +14,6 @@ import aiohttp
 
 from ..api.twitch import TwitchAPI
 from ..health import read_status, write_status
-from ..logs.logger import logger
 from .abstract import ChatBackend, MessageHandler
 
 """EventSub WebSocket chat backend.
@@ -124,12 +124,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         if previously_invalid:
             self._token_invalid_flag = False
             self._consecutive_subscribe_401 = 0
-            logger.log_event(
-                "chat",
-                "eventsub_token_recovered",
-                level=20,
-                user=self._username,
-            )
+            logging.info("🔄 EventSub token recovered")
 
     def _jitter(self, a: float, b: float) -> float:
         """Return scheduling jitter using a non-crypto but system-derived source.
@@ -192,9 +187,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
 
     def _validate_client_id(self) -> bool:
         if not self._client_id or not isinstance(self._client_id, str):
-            logger.log_event(
-                "chat", "eventsub_missing_client_id", level=40, user=self._username
-            )
+            logging.error("🚫 EventSub missing client id")
             return False
         return True
 
@@ -211,35 +204,23 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                 headers=headers,
                 protocols=("twitch-eventsub-ws",),
             )
-            logger.log_event("chat", "eventsub_ws_connected", user=self._username)
+            logging.info("🔌 EventSub WebSocket connected")
             welcome = await asyncio.wait_for(self._ws.receive(), timeout=10)
             if welcome.type != aiohttp.WSMsgType.TEXT:
-                logger.log_event(
-                    "chat", "eventsub_bad_welcome", level=40, user=self._username
-                )
+                logging.error("⚠️ EventSub bad welcome frame")
                 return False
             try:
                 data = json.loads(welcome.data)
                 self._session_id = data.get("payload", {}).get("session", {}).get("id")
             except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "chat", "eventsub_welcome_parse_error", level=40, error=str(e)
-                )
+                logging.error(f"⚠️ EventSub welcome parse error: {str(e)}")
                 return False
             if not self._session_id:
-                logger.log_event(
-                    "chat", "eventsub_no_session_id", level=40, user=self._username
-                )
+                logging.error("🚫 EventSub no session id")
                 return False
             return True
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "chat",
-                "eventsub_connect_error",
-                level=40,
-                user=self._username,
-                error=str(e),
-            )
+            logging.error(f"💥 EventSub connect error: {str(e)}")
             return False
 
     async def _resolve_initial_channel(self) -> bool:
@@ -273,12 +254,10 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                     else []
                 )
                 self._scopes = set(scopes_list)
-                logger.log_event(
-                    "chat",
-                    "eventsub_token_scopes",
-                    user=self._username,
-                    scopes=";".join(scopes_list),
-                    level=10,
+                logging.debug(
+                    "🧪 EventSub token scopes scopes={scopes}".format(
+                        scopes=";".join(scopes_list)
+                    )
                 )
         except Exception:  # noqa: BLE001
             self._scopes = set()
@@ -318,9 +297,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
             try:
                 await self._ws.close(code=1000)
             except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "chat", "eventsub_ws_close_error", level=20, error=str(e)
-                )
+                logging.info(f"⚠️ EventSub WebSocket close error: {str(e)}")
         self._ws = None
 
     def update_token(self, new_token: str) -> None:
@@ -351,7 +328,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
             obj = json.loads(raw)
             return obj if isinstance(obj, dict) else None
         except json.JSONDecodeError:
-            logger.log_event("chat", "eventsub_invalid_json", level=20)
+            logging.info("⚠️ EventSub invalid JSON payload")
             return None
 
     @staticmethod
@@ -374,24 +351,16 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
             data
         )
 
-        logger.log_event(
-            "chat",
-            "eventsub_reconnect_instruction_received",
-            user=self._username,
-            old_url=getattr(self, "_ws_url", None),
-            new_url=new_url,
-            session_info=str(session_info),
+        logging.info(
+            "🔄 EventSub session reconnect instruction received: old_url={old_url} new_url={new_url} session_info={session_info}".format(
+                old_url=getattr(self, "_ws_url", None),
+                new_url=new_url,
+                session_info=str(session_info),
+            )
         )
 
         if not (isinstance(new_url, str) and new_url.startswith("wss://")):
-            logger.log_event(
-                "chat",
-                "eventsub_reconnect_url_invalid",
-                level=40,
-                user=self._username,
-                session_info=str(session_info),
-                new_url=new_url,
-            )
+            logging.error("⚠️ EventSub session reconnect URL invalid")
             return
 
         # Update state using helper
@@ -435,12 +404,8 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                 maybe_id = query_params.get("id", [None])[0]
             maybe_challenge = query_params.get("challenge", [None])[0]
         except Exception as e:
-            logger.log_event(
-                "chat",
-                "eventsub_url_parse_error",
-                level=20,
-                error=str(e),
-                url=new_url,
+            logging.info(
+                f"💥 EventSub URL parse error user={self._username} error={str(e)} url={new_url}"
             )
 
         return new_url, maybe_id, maybe_challenge, session_info
@@ -454,23 +419,13 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
     ) -> None:
         """Update internal state for reconnect (URL, session ID, challenge, logging)."""
         self._ws_url = new_url
-        logger.log_event(
-            "chat",
-            "eventsub_reconnect_instruction_switching_url",
-            user=self._username,
-            new_url=new_url,
-        )
+        logging.info(f"🔄 EventSub switching to new WebSocket URL: {new_url}")
 
         if isinstance(maybe_id, str):
             self._pending_reconnect_session_id = maybe_id
             source = "session_info" if session_info.get("id") else "url_parse"
-            logger.log_event(
-                "chat",
-                "eventsub_pending_session_id_set",
-                user=self._username,
-                session_id=maybe_id,
-                source=source,
-                derived="url_parse" in source,
+            logging.info(
+                f"🆔 EventSub pending session id set user={self._username} session_id={maybe_id} source={source}"
             )
         else:
             self._pending_reconnect_session_id = None
@@ -478,12 +433,12 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         if isinstance(maybe_challenge, str):
             self._pending_challenge = maybe_challenge
             source = "session_info" if session_info.get("id") else "url_parse"
-            logger.log_event(
-                "chat",
-                "eventsub_pending_challenge_set",
-                user=self._username,
-                challenge=maybe_challenge,
-                source=source if "session_info" in source else "url_parse",
+            logging.info(
+                "🔑 EventSub pending challenge set user={user} challenge={challenge} source={source}".format(
+                    user=self._username,
+                    challenge=maybe_challenge,
+                    source=source if "session_info" in source else "url_parse",
+                )
             )
         else:
             self._pending_challenge = None
@@ -529,45 +484,30 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
     ) -> None:
         # Emit unified log event (reuse irc_privmsg naming) with IRC-style human text
         try:
-            human = f"{username}: {message}"
-            logger.log_event(
-                "chat",
-                "privmsg",
-                user=username,
-                channel=channel,
-                human=human,
-                backend="eventsub",
-            )
+            logging.info(f"💬 #{channel} {username}: {message}")
         except Exception as e:  # noqa: BLE001
-            logger.log_event("chat", "eventsub_log_emit_error", level=10, error=str(e))
+            logging.debug(f"⚠️ EventSub log emit error: {str(e)}")
         if self._message_handler:
             try:
                 maybe = self._message_handler(username, channel, message)
                 if asyncio.iscoroutine(maybe):
                     await maybe  # pragma: no cover - runtime path
-            except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "chat", "message_handler_error", level=30, error=str(e)
-                )
+            except Exception:  # noqa: BLE001
+                logging.warning("💥 Chat message handler error")
         if self._color_handler and message.startswith("!"):
             try:
                 maybe2 = self._color_handler(username, channel, message)
                 if asyncio.iscoroutine(maybe2):
                     await maybe2
-            except Exception as e:  # noqa: BLE001
-                logger.log_event("chat", "color_handler_error", level=30, error=str(e))
+            except Exception:  # noqa: BLE001
+                logging.warning("💥 Color handler error")
 
     async def _ensure_channel_id(self, channel_login: str) -> bool:
         if channel_login in self._channel_ids:
             return True
         info = await self._fetch_user(channel_login)
         if not info:
-            logger.log_event(
-                "chat",
-                "eventsub_channel_lookup_failed",
-                level=30,
-                channel=channel_login,
-            )
+            logging.warning(f"⚠️ EventSub channel lookup failed channel={channel_login}")
             return False
         cid = info.get("id")
         if not isinstance(cid, str):
@@ -589,13 +529,9 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
             # Log any unresolved
             unresolved = [c for c in needed if c not in self._channel_ids]
             for miss in unresolved:
-                logger.log_event(
-                    "chat", "eventsub_channel_lookup_failed", level=30, channel=miss
-                )
+                logging.warning(f"⚠️ EventSub channel lookup failed channel={miss}")
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "chat", "eventsub_batch_resolve_error", level=30, error=str(e)
-            )
+            logging.warning(f"💥 EventSub batch resolve error: {str(e)}")
 
     # ---- cache helpers ----
     def _load_id_cache(self) -> None:
@@ -608,9 +544,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                         if isinstance(k, str) and isinstance(v, str):
                             self._channel_ids.setdefault(k.lower(), v)
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "chat", "eventsub_cache_load_error", level=20, error=str(e)
-            )
+            logging.info(f"⚠️ EventSub cache load error: {str(e)}")
 
     def _save_id_cache(self) -> None:
         try:
@@ -619,9 +553,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                 json.dump(self._channel_ids, fh, separators=(",", ":"))
             os.replace(tmp_path, self._cache_path)
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "chat", "eventsub_cache_save_error", level=20, error=str(e)
-            )
+            logging.info(f"⚠️ EventSub cache save error: {str(e)}")
 
     async def _fetch_user(self, login: str) -> dict[str, Any] | None:
         if not self._token or not self._client_id:
@@ -641,9 +573,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                     return first
             return None
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "chat", "eventsub_fetch_user_error", level=20, error=str(e)
-            )
+            logging.info(f"⚠️ EventSub fetch user error: {str(e)}")
             return None
 
     async def _subscribe_channel_chat(self, channel_login: str) -> None:
@@ -664,14 +594,8 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                 json_body=body,
             )
             self._handle_subscribe_response(channel_login, status, data)
-        except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "chat",
-                "eventsub_subscribe_error",
-                level=30,
-                error=str(e),
-                channel=channel_login,
-            )
+        except Exception:  # noqa: BLE001
+            logging.warning(f"💥 EventSub subscribe error channel={channel_login}")
 
     def _can_subscribe(self) -> bool:
         return (
@@ -703,12 +627,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         self._on_subscribe_other(channel_login, status)
 
     def _on_subscribed(self, channel_login: str) -> None:
-        logger.log_event(
-            "chat",
-            "eventsub_subscribed",
-            channel=channel_login,
-            user=self._username,
-        )
+        logging.info(f"✅ {self._username} joined #{channel_login}")
         self._consecutive_subscribe_401 = 0
 
     async def _maybe_reconnect(self) -> bool:
@@ -729,11 +648,10 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
             self._last_activity = time.monotonic()
             await self._handle_text(msg.data)
         elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-            logger.log_event(
-                "chat",
-                "eventsub_ws_abnormal_end",
-                user=self._username,
-                code=getattr(msg, "data", None),
+            logging.info(
+                "⚠️ EventSub WebSocket abnormal end code={code}".format(
+                    code=getattr(msg, "data", None)
+                )
             )
             ok = await self._reconnect_with_backoff()
             if not ok:
@@ -743,44 +661,28 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
     def _log_subscribe_non_202(
         self, status: int, channel_login: str, data: Any
     ) -> None:
-        logger.log_event(
-            "chat",
-            "eventsub_subscribe_non_202",
-            level=30,
-            status=status,
-            channel=channel_login,
-            detail=(data.get("message") if isinstance(data, dict) else None),
+        logging.warning(
+            f"⚠️ EventSub subscribe non-202 status={status} channel={channel_login}"
         )
 
     def _handle_subscribe_unauthorized(self, channel_login: str, data: Any) -> None:
         self._consecutive_subscribe_401 += 1
-        logger.log_event(
-            "chat",
-            "eventsub_subscribe_unauthorized",
-            level=30,
-            channel=channel_login,
-            count=self._consecutive_subscribe_401,
+        logging.warning(
+            f"🚫 EventSub subscribe unauthorized channel={channel_login} count={self._consecutive_subscribe_401}"
         )
         if self._consecutive_subscribe_401 >= 2 and not self._token_invalid_flag:
             self._token_invalid_flag = True
-            logger.log_event(
-                "chat",
-                "eventsub_token_invalid",
-                level=40,
-                user=self._username,
-                channel=channel_login,
-                source="subscribe",
-                detail=(data.get("message") if isinstance(data, dict) else None),
+            logging.error(
+                "🚫 EventSub token invalid source={source} channel={channel}".format(
+                    source="subscribe", channel=channel_login
+                )
             )
             if self._token_invalid_callback:
                 try:
                     _ = asyncio.create_task(self._token_invalid_callback())
                 except Exception as e:
-                    logger.log_event(
-                        "chat",
-                        "eventsub_token_invalid_callback_error",
-                        level=30,
-                        error=str(e),
+                    logging.warning(
+                        f"⚠️ Error in EventSub token invalid callback: {str(e)}"
                     )
 
     def _on_subscribe_other(self, channel_login: str, status: int) -> None:
@@ -793,12 +695,10 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         required = {"user:read:chat", "chat:read"}
         missing = sorted(s for s in required if s not in self._scopes)
         if missing:
-            logger.log_event(
-                "chat",
-                "eventsub_missing_scopes",
-                level=30,
-                channel=channel_login,
-                missing=";".join(missing),
+            logging.warning(
+                "🚫 EventSub missing scopes missing={missing} channel={channel}".format(
+                    missing=";".join(missing), channel=channel_login
+                )
             )
 
     async def _open_and_handshake(self) -> bool:
@@ -843,12 +743,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         return self._token is not None and self._client_id is not None
 
     def _handle_list_unauthorized(self, data: Any) -> None:
-        logger.log_event(
-            "chat",
-            "eventsub_list_unauthorized",
-            level=30,
-            detail=(data.get("message") if isinstance(data, dict) else None),
-        )
+        logging.warning("🚫 EventSub subscription list unauthorized.")
 
     async def _try_fetch_broadcaster_ids(self) -> tuple[Any, int]:
         try:
@@ -863,7 +758,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
             )
             return data, status
         except Exception as e:  # noqa: BLE001
-            logger.log_event("chat", "eventsub_sub_list_error", level=20, error=str(e))
+            logging.info(f"⚠️ EventSub subscription list error: {str(e)}")
             return None, -1
 
     def _extract_broadcaster_ids_from_data(self, data: Any) -> set[str]:
@@ -918,11 +813,8 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                     # collect immediately in some event loop implementations
                     self._last_token_refresh_task = task
                 except Exception as e:
-                    logger.log_event(
-                        "chat",
-                        "eventsub_token_invalid_callback_error",
-                        level=20,
-                        error=str(e),
+                    logging.info(
+                        f"⚠️ Error in EventSub token invalid callback: {str(e)}"
                     )
         elif action == "session_stale":
             # mark that we should perform a full resubscribe cycle after
@@ -930,23 +822,15 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
             try:
                 self._force_full_resubscribe = True
             except Exception as e:
-                logger.log_event(
-                    "chat",
-                    "eventsub_force_full_resubscribe_error",
-                    level=20,
-                    error=str(e),
-                )
+                logging.info(f"⚠️ EventSub force_full_resubscribe error: {str(e)}")
         return action
 
     async def _resubscribe_missing(self, missing: set[str]) -> None:
         for ch, bid in self._channel_ids.items():
             if bid in missing:
                 await self._subscribe_channel_chat(ch)
-        logger.log_event(
-            "chat",
-            "eventsub_resubscribe_missing",
-            missing=len(missing),
-            total=len(self._channels),
+        logging.info(
+            f"🔄 EventSub resubscribed missing count={len(missing)} total={len(self._channels)}"
         )
 
     async def _maybe_verify_subs(self, now: float) -> None:
@@ -955,9 +839,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         try:
             await self._verify_subscriptions()
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "chat", "eventsub_subscription_check_error", level=20, error=str(e)
-            )
+            logging.info(f"⚠️ EventSub subscription check error: {str(e)}")
         # If fast audit pending (post-reconnect) schedule normal interval next, else schedule normal with jitter
         if self._fast_audit_pending:
             self._fast_audit_pending = False
@@ -968,7 +850,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
     async def _ensure_socket(self) -> bool:
         if self._ws and not self._ws.closed:
             return True
-        logger.log_event("chat", "eventsub_ws_closed_detected", user=self._username)
+        logging.info("⚠️ EventSub WebSocket closed detected")
         return await self._reconnect_with_backoff()
 
     async def _receive_one(self) -> aiohttp.WSMessage | None:
@@ -979,11 +861,8 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
             return msg
         except TimeoutError:
             if time.monotonic() - self._last_activity > self._stale_threshold:
-                logger.log_event(
-                    "chat",
-                    "eventsub_stale_detected",
-                    user=self._username,
-                    idle=int(time.monotonic() - self._last_activity),
+                logging.info(
+                    f"⚠️ EventSub stale socket idle={int(time.monotonic() - self._last_activity)}s"
                 )
                 ok = await self._reconnect_with_backoff()
                 if not ok:
@@ -992,13 +871,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         except asyncio.CancelledError:  # pragma: no cover
             raise
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "chat",
-                "eventsub_listen_error",
-                level=30,
-                user=self._username,
-                error=str(e),
-            )
+            logging.warning(f"💥 EventSub listen loop error: {str(e)}")
             ok = await self._reconnect_with_backoff()
             if not ok:
                 return None
@@ -1030,11 +903,8 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         # If we detected a session_stale earlier, ensure we attempt a
         # full resubscribe cycle and then clear the flag.
         if self._force_full_resubscribe:
-            logger.log_event(
-                "chat",
-                "eventsub_force_full_resubscribe",
-                user=self._username,
-                channel_count=len(self._channels),
+            logging.info(
+                f"🔄 EventSub forcing full resubscribe channels={len(self._channels)}"
             )
             # Re-run the subscribe flow to be explicit.
             for ch in self._channels:
@@ -1049,8 +919,6 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         # Use class-scoped helpers (_reconnect_cleanup, _perform_handshake,
         # _do_subscribe_cycle) to keep this function small and testable.
 
-        import traceback
-
         attempt = 0
         while not self._stop_event.is_set():
             attempt += 1
@@ -1061,27 +929,24 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                 # --- RECONNECT DELAY ---
                 await asyncio.sleep(1.0)  # 1 second delay before reconnect
 
-                logger.log_event(
-                    "chat",
-                    "eventsub_reconnect_attempt",
-                    user=self._username,
-                    attempt=attempt,
-                    ws_url=getattr(self, "_ws_url", None),
-                    session_id=getattr(self, "_session_id", None),
-                    channels=str(self._channels),
+                logging.info(
+                    "🔄 EventSub reconnect attempt={attempt} ws_url={ws_url} session_id={session_id} channels={channels}".format(
+                        attempt=attempt,
+                        ws_url=getattr(self, "_ws_url", None),
+                        session_id=getattr(self, "_session_id", None),
+                        channels=str(self._channels),
+                    )
                 )
 
                 # --- HANDSHAKE WITH FULL LOGGING ---
                 handshake_ok, handshake_details = await self._perform_handshake()
-                logger.log_event(
-                    "chat",
-                    "eventsub_handshake_result",
-                    user=self._username,
-                    attempt=attempt,
-                    ws_url=getattr(self, "_ws_url", None),
-                    session_id=getattr(self, "_session_id", None),
-                    handshake_ok=handshake_ok,
-                    handshake_details=handshake_details,
+                logging.info(
+                    "🤝 EventSub handshake result: attempt={attempt} ws_url={ws_url} session_id={session_id} handshake_ok={handshake_ok}".format(
+                        attempt=attempt,
+                        ws_url=getattr(self, "_ws_url", None),
+                        session_id=getattr(self, "_session_id", None),
+                        handshake_ok=handshake_ok,
+                    )
                 )
                 if not handshake_ok:
                     raise RuntimeError(f"handshake failed: {handshake_details}")
@@ -1089,15 +954,8 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                 # subscribe / resubscribe work
                 await self._do_subscribe_cycle()
 
-                logger.log_event(
-                    "chat",
-                    "eventsub_reconnect_success",
-                    user=self._username,
-                    attempt=attempt,
-                    ws_url=getattr(self, "_ws_url", None),
-                    session_id=getattr(self, "_session_id", None),
-                    channel_count=len(self._channels),
-                    channels=str(self._channels),
+                logging.info(
+                    f"✅ EventSub reconnect success attempt={attempt} channels={len(self._channels)}"
                 )
                 # update health status on successful reconnect
                 try:
@@ -1108,12 +966,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                         }
                     )
                 except Exception as e:
-                    logger.log_event(
-                        "chat",
-                        "eventsub_health_write_error",
-                        level=20,
-                        error=str(e),
-                    )
+                    logging.info(f"⚠️ EventSub health write error: {str(e)}")
 
                 self._backoff = 1.0
                 now = time.monotonic()
@@ -1124,23 +977,9 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                     self._fast_audit_min, self._fast_audit_max
                 )
                 return True
-            except Exception as e:  # noqa: BLE001
-                twitch_error = None
-                if hasattr(e, "args") and e.args:
-                    twitch_error = e.args[0]
-                logger.log_event(
-                    "chat",
-                    "eventsub_reconnect_failed",
-                    level=40,
-                    user=self._username,
-                    attempt=attempt,
-                    ws_url=getattr(self, "_ws_url", None),
-                    session_id=getattr(self, "_session_id", None),
-                    channels=str(self._channels),
-                    error=str(e),
-                    twitch_error=twitch_error,
-                    traceback=traceback.format_exc(),
-                    backoff=round(self._backoff, 2),
+            except Exception:  # noqa: BLE001
+                logging.error(
+                    f"❌ EventSub reconnect failed attempt={attempt} backoff={round(self._backoff, 2)}"
                 )
                 await asyncio.sleep(
                     self._backoff + self._jitter(0, 0.25 * self._backoff)
@@ -1157,12 +996,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                         }
                     )
                 except Exception as e:
-                    logger.log_event(
-                        "chat",
-                        "eventsub_health_write_error",
-                        level=20,
-                        error=str(e),
-                    )
+                    logging.info(f"⚠️ EventSub health write error: {str(e)}")
         return False
 
     async def _open_and_handshake_detailed(self):
@@ -1209,12 +1043,8 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         if not getattr(self, "_pending_challenge", None):
             return True
 
-        logger.log_event(
-            "chat",
-            "eventsub_challenge_handshake_start",
-            user=self._username,
-            challenge=self._pending_challenge,
-            ws_url=self._ws_url,
+        logging.info(
+            f"🔐 EventSub challenge handshake start user={self._username} challenge={self._pending_challenge} ws_url={self._ws_url}"
         )
         handshake_details["challenge_handshake"] = True
 
@@ -1242,13 +1072,8 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
 
             # Verify challenge
             if received_challenge != self._pending_challenge:
-                logger.log_event(
-                    "chat",
-                    "eventsub_challenge_mismatch",
-                    level=30,
-                    user=self._username,
-                    expected=self._pending_challenge,
-                    received=received_challenge,
+                logging.warning(
+                    f"⚠️ EventSub challenge mismatch expected={self._pending_challenge} received={received_challenge} user={self._username}"
                 )
                 self._pending_challenge = None
                 return False
@@ -1256,19 +1081,14 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
             # Send response
             response = {"type": "challenge_response", "challenge": received_challenge}
             await ws.send_json(response)
-            logger.log_event(
-                "chat",
-                "eventsub_challenge_response_sent",
-                user=self._username,
-                challenge=received_challenge,
+            logging.info(
+                f"✅ EventSub challenge response sent user={self._username} challenge={received_challenge}"
             )
             handshake_details["challenge_response_sent"] = True
 
             self._pending_challenge = None
-            logger.log_event(
-                "chat",
-                "eventsub_challenge_waiting_welcome",
-                user=self._username,
+            logging.info(
+                f"⌛ EventSub waiting for welcome after challenge user={self._username}"
             )
             return True
 
@@ -1331,6 +1151,4 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
             if self._ws and not self._ws.closed:
                 await self._ws.close()
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "chat", "eventsub_safe_close_error", level=10, error=str(e)
-            )
+            logging.debug(f"⚠️ EventSub safe close error: {str(e)}")

@@ -7,9 +7,9 @@ packaged under `color`.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING, cast
 
-from ..logs.logger import logger
 from ..rate.retry_policies import COLOR_CHANGE_RETRY, run_with_retry
 from .models import ColorRequestResult, ColorRequestStatus
 from .utils import TWITCH_PRESET_COLORS, get_random_hex, get_random_preset
@@ -44,13 +44,7 @@ class ColorChangeService:
                 op, COLOR_CHANGE_RETRY, user=self.bot.username, log_domain="retry"
             )
         except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "bot",
-                "error_changing_color_internal",
-                level=40,
-                user=self.bot.username,
-                error=str(e),
-            )
+            logging.error(f"💥 Error changing color user={self.bot.username}: {str(e)}")
             return False
 
     async def _perform_color_change(
@@ -112,27 +106,19 @@ class ColorChangeService:
         return True
 
     def _on_internal_error(self, is_preset: bool) -> bool:
-        logger.log_event(
-            "bot",
-            "color_change_internal_error"
-            if not is_preset
-            else "preset_color_internal_error",
-            level=40,
-            user=self.bot.username,
+        logging.error(
+            f"💥 Internal error changing {'preset ' if is_preset else ''}color user={self.bot.username}"
         )
         return False
 
     def _on_rate_limited(self, is_preset: bool, status_code: int) -> bool:
         self.bot.rate_limiter.handle_429_error({}, is_user_request=True)
-        logger.log_event(
-            "bot",
-            "rate_limited_color_change"
-            if not is_preset
-            else "preset_color_failed_status",
-            level=30,
-            user=self.bot.username,
-            status_code=status_code if is_preset else None,
-        )
+        if not is_preset:
+            logging.warning(f"⏳ Rate limited retry soon user={self.bot.username}")
+        else:
+            logging.warning(
+                f"❌ Preset color change failed status={status_code} user={self.bot.username}"
+            )
         return False
 
     async def _on_unauthorized(
@@ -145,27 +131,20 @@ class ColorChangeService:
     ) -> bool:
         if not allow_refresh:
             return False
-        logger.log_event(
-            "bot",
-            "color_change_attempt_refresh" if not is_preset else "preset_color_401",
-            user=self.bot.username,
+        logging.info(
+            f"🔐 Attempting token refresh after 401 {'preset ' if is_preset else ''}color change user={self.bot.username}"
         )
         if await self.bot._check_and_refresh_token(force=True):
-            logger.log_event(
-                "bot",
-                "color_retry_after_refresh" if not is_preset else "preset_color_retry",
-                user=self.bot.username,
+            logging.info(
+                f"🔄 Retrying {'preset ' if is_preset else ''}color change after token refresh user={self.bot.username}"
             )
             return await self._perform_color_change(
                 color,
                 allow_refresh=False,
                 fallback_to_preset=fallback_to_preset,
             )
-        logger.log_event(
-            "bot",
-            "color_refresh_failed" if not is_preset else "preset_color_refresh_failed",
-            level=40,
-            user=self.bot.username,
+        logging.error(
+            f"💥 Token refresh failed cannot retry {'preset ' if is_preset else ''}color change user={self.bot.username}"
         )
         return False
 
@@ -183,25 +162,13 @@ class ColorChangeService:
         # any upstream classification inconsistency, treat it as success
         # instead of emitting a false failure event (observed 204 case).
         if 200 <= status_code < 300:
-            logger.log_event(
-                "bot",
-                "color_success_late_classification"
-                if not is_preset
-                else "preset_color_success_late_classification",
-                level=30,
-                user=self.bot.username,
-                status_code=status_code,
+            logging.warning(
+                f"⚠️ Late {'preset ' if is_preset else ''}color success classification status={status_code} user={self.bot.username}"
             )
             # self.bot.last_color may be None; using `or ""` guarantees a str.
             return self._on_success(self.bot.last_color or "", is_preset)
-        logger.log_event(
-            "bot",
-            "color_change_status_failed"
-            if not is_preset
-            else "preset_color_retry_failed_status",
-            level=40,
-            user=self.bot.username,
-            status_code=status_code,
+        logging.error(
+            f"{'❌ Failed to change color status' if not is_preset else '💥 Preset color change failed after retries status'}={status_code} user={self.bot.username}"
         )
         if fallback_to_preset and not is_preset:
             preset = get_random_preset(exclude=self.bot.last_color)
@@ -233,13 +200,8 @@ class ColorChangeService:
         except Exception:
             snippet = None
 
-        logger.log_event(
-            "bot",
-            "hex_color_rejection",
-            user=self.bot.username,
-            status_code=status_code,
-            strikes=strikes,
-            snippet=snippet,
+        logging.info(
+            f"🚫 Hex color rejected status={status_code} strikes={strikes} user={self.bot.username} snippet={snippet}"
         )
 
         if strikes >= 2 and getattr(self.bot, "use_random_colors", False):
@@ -247,15 +209,13 @@ class ColorChangeService:
                 self.bot.use_random_colors = False
             except Exception as e:  # noqa: BLE001
                 # Log instead of silently swallowing to satisfy linting and observability
-                logger.log_event(
-                    "bot",
-                    "hex_color_persist_disable_error",
-                    level=30,
-                    user=self.bot.username,
-                    error=str(e),
+                logging.warning(
+                    f"⚠️ Error during persistent hex disable user={self.bot.username}: {str(e)}",
                     exc_info=True,
                 )
-            logger.log_event("bot", "hex_color_persist_disable", user=self.bot.username)
+            logging.info(
+                f"🧩 Persistent detection: disabling random hex for user={self.bot.username}"
+            )
             try:
                 hook = getattr(self.bot, "on_persistent_prime_detection", None)
                 if hook and callable(hook):
@@ -263,12 +223,8 @@ class ColorChangeService:
                     if asyncio.iscoroutine(res):
                         await res
             except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "bot",
-                    "hex_color_persist_disable_error",
-                    level=30,
-                    user=self.bot.username,
-                    error=str(e),
+                logging.warning(
+                    f"⚠️ Error during persistent hex disable user={self.bot.username}: {str(e)}"
                 )
 
     def _select_color(self) -> str:
@@ -283,22 +239,13 @@ class ColorChangeService:
         if not is_preset:
             try:
                 self.bot._hex_rejection_strikes = 0
-                logger.log_event(
-                    "bot", "hex_color_strikes_reset", level=10, user=self.bot.username
+                logging.debug(
+                    f"♻️ Hex color rejection strikes reset user={self.bot.username}"
                 )
-            except Exception as e:  # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 # Use existing template at WARN level and include exception context
-                logger.log_event(
-                    "bot",
-                    "hex_color_strikes_reset",
-                    level=30,
-                    user=self.bot.username,
-                    error=str(e),
+                logging.warning(
+                    f"♻️ Hex color rejection strikes reset user={self.bot.username}",
                     exc_info=True,
                 )
-        logger.log_event(
-            "bot",
-            "color_changed" if not is_preset else "preset_color_changed",
-            user=self.bot.username,
-            color=color,
-        )
+        logging.info(f"🎨 Color changed to {color} for the user {self.bot.username}")

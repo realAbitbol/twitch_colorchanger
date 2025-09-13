@@ -7,13 +7,13 @@ Provides a mixin with config/token persistence related methods to reduce
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from ..config.async_persistence import (
     async_update_user_in_config,
     queue_user_update,
 )
-from ..logs.logger import logger
 
 if TYPE_CHECKING:  # pragma: no cover
     pass
@@ -61,41 +61,24 @@ class BotPersistenceMixin:
                     user_config,
                     self.config_file,  # type: ignore[attr-defined]
                 )
-                logger.log_event("bot", "normalized_channels_saved", user=self.username)  # type: ignore[attr-defined]
+                logging.info(f"💾 Normalized channels saved user={self.username}")  # type: ignore[attr-defined]
             except Exception as e:  # noqa: BLE001
-                logger.log_event(
-                    "bot",
-                    "normalized_channels_save_failed",
-                    level=30,
-                    user=self.username,  # type: ignore[attr-defined]
-                    error=str(e),
-                )
+                logging.warning(
+                    f"💥 Failed to save normalized channels user={self.username}: {str(e)}"
+                )  # type: ignore[attr-defined]
 
     # --- Internal helpers ---
     def _validate_config_prerequisites(self) -> bool:
         if not getattr(self, "config_file", None):
-            logger.log_event(
-                "bot",
-                "no_config_file_for_persist",
-                level=30,
-                user=self.username,  # type: ignore[attr-defined]
-            )
+            logging.warning(
+                f"📁 No config file specified cannot persist tokens user={self.username}"
+            )  # type: ignore[attr-defined]
             return False
         if not getattr(self, "access_token", None):
-            logger.log_event(
-                "bot",
-                "empty_access_token",
-                level=30,
-                user=self.username,  # type: ignore[attr-defined]
-            )
+            logging.warning(f"⚠️ Cannot save empty access token user={self.username}")  # type: ignore[attr-defined]
             return False
         if not getattr(self, "refresh_token", None):
-            logger.log_event(
-                "bot",
-                "empty_refresh_token",
-                level=30,
-                user=self.username,  # type: ignore[attr-defined]
-            )
+            logging.warning(f"⚠️ Cannot save empty refresh token user={self.username}")  # type: ignore[attr-defined]
             return False
         return True
 
@@ -121,26 +104,17 @@ class BotPersistenceMixin:
         try:
             success = await async_update_user_in_config(user_config, self.config_file)  # type: ignore[attr-defined]
             if success:
-                logger.log_event("bot", "token_saved", user=self.username)  # type: ignore[attr-defined]
+                logging.info(f"💾 Token changes saved user={self.username}")  # type: ignore[attr-defined]
                 return True
             # Fall through to generic handling below to trigger retries
             raise RuntimeError("update_user_in_config returned False")
         except FileNotFoundError:
-            logger.log_event(
-                "bot",
-                "config_file_not_found",
-                level=40,
-                user=self.username,  # type: ignore[attr-defined]
-                path=self.config_file,  # type: ignore[attr-defined]
-            )
+            logging.error(
+                f"📁 Config file not found path={self.config_file} user={self.username}"
+            )  # type: ignore[attr-defined]
             return True
         except PermissionError:
-            logger.log_event(
-                "bot",
-                "config_permission_denied",
-                level=40,
-                user=self.username,  # type: ignore[attr-defined]
-            )
+            logging.error(f"🔒 Permission denied writing config user={self.username}")  # type: ignore[attr-defined]
             return True
         except Exception as e:  # noqa: BLE001
             return await self._handle_config_save_error(e, attempt, max_retries)
@@ -149,23 +123,13 @@ class BotPersistenceMixin:
         self, error: Exception, attempt: int, max_retries: int
     ) -> bool:
         if attempt < max_retries - 1:
-            logger.log_event(
-                "bot",
-                "save_retry",
-                level=30,
-                user=self.username,  # type: ignore[attr-defined]
-                attempt=attempt + 1,
-                error=str(error),
-            )
+            logging.warning(
+                f"🔁 Failed to save tokens attempt={attempt + 1} error={str(error)} user={self.username}"
+            )  # type: ignore[attr-defined]
             await asyncio.sleep(0.1 * (attempt + 1))
             return False
         else:
-            logger.log_event(
-                "bot",
-                "save_failed_final",
-                level=40,
-                user=self.username,  # type: ignore[attr-defined]
-                attempts=max_retries,
-                error=str(error),
-            )
+            logging.error(
+                f"💥 Failed to save token changes after attempts={max_retries} error={str(error)} user={self.username}"
+            )  # type: ignore[attr-defined]
             return True

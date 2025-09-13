@@ -16,6 +16,8 @@ async def test_user_lock_pruning_logs(monkeypatch, tmp_path: Path, caplog) -> No
     monkeypatch.setattr(ap, "_LOCK_TTL_SECONDS", 0.0)
     cfg = tmp_path / "locks.json"
 
+    caplog.set_level(20)
+
     await queue_user_update({"username": "Alpha", "channels": ["#a"]}, str(cfg))
     await queue_user_update({"username": "Beta", "channels": ["#b"]}, str(cfg))
     # Force flush; this will write and then prune (TTL zero)
