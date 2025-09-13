@@ -77,7 +77,7 @@ class ConfigRepository:
             return []
         except FileNotFoundError:
             return []
-        except Exception as e:  # noqa: BLE001
+        except (OSError, ValueError, RuntimeError) as e:
             logging.error(f"Configuration load error: {e}")
             return []
 
@@ -162,7 +162,7 @@ class ConfigRepository:
                 os.chmod(temp_path, 0o600)
                 os.rename(temp_path, self.path)
                 logging.info("💾 Config saved atomically")
-        except Exception as e:  # noqa: BLE001
+        except (OSError, ValueError, RuntimeError) as e:
             if temp_path and os.path.exists(temp_path):
                 try:
                     os.unlink(temp_path)
@@ -199,7 +199,7 @@ class ConfigRepository:
                     os.unlink(old)
                 except OSError:
                     pass
-        except Exception as e:  # noqa: BLE001
+        except (OSError, ValueError) as e:
             logging.debug(f"💥 Config backup failed: {str(e)}")
 
     def verify_readback(self) -> None:
@@ -209,5 +209,5 @@ class ConfigRepository:
                 data = json.load(f)
             users_list = data.get("users", []) if isinstance(data, dict) else []
             logging.debug(f"🔍 Verification read user_count={len(users_list)}")
-        except Exception as e:  # noqa: BLE001
-            logging.error(f"💥 Atomic config save failed: {type(e).__name__}")
+        except (OSError, ValueError) as e:
+            logging.error(f"💥 Config verification failed: {type(e).__name__}")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
@@ -110,6 +111,7 @@ class TokenManager:
         # Core state
         self.http_session = http_session
         self.tokens: dict[str, TokenInfo] = {}
+        self._tokens_lock = threading.Lock()
         self.background_task: asyncio.Task[Any] | None = None
         self.running = False
         self.logger = None
@@ -142,7 +144,7 @@ class TokenManager:
                 await self.background_task
             except asyncio.CancelledError:
                 raise
-            except Exception as e:  # noqa: BLE001
+            except (ValueError, TypeError) as e:
                 logging.debug(f"⚠️ Error cancelling stale background task: {str(e)}")
             finally:
                 self.background_task = None
@@ -198,7 +200,7 @@ class TokenManager:
                 logging.info(
                     f"🔄 Startup validation failed forcing refresh outcome={ref.value} user={username}"
                 )
-        except Exception as e:  # noqa: BLE001
+        except (aiohttp.ClientError, ValueError, RuntimeError) as e:
             logging.debug(
                 f"⚠️ Startup validation error user={username} type={type(e).__name__} error={str(e)}"
             )
@@ -215,11 +217,9 @@ class TokenManager:
             self.background_task.cancel()
             try:
                 await self.background_task
-            except Exception as e:  # noqa: BLE001
-                if isinstance(e, asyncio.CancelledError):
-                    logging.debug("Background loop cancelled")
-                else:  # Re-raise unexpected exceptions
-                    raise
+            except (RuntimeError, OSError, ValueError) as e:
+                logging.error(f"Error awaiting cancelled background task: {e}")
+                raise
             finally:
                 self.background_task = None
 
@@ -258,7 +258,7 @@ class TokenManager:
                 return
             try:
                 getattr(backend, propagate_attr)(info.access_token)
-            except Exception as e:  # noqa: BLE001
+            except (ValueError, RuntimeError, TypeError) as e:
                 logging.warning(
                     f"⚠️ EventSub token propagation error user={username}: {str(e)}"
                 )
@@ -277,55 +277,59 @@ class TokenManager:
         expiry: datetime | None,
     ) -> TokenInfo:
         """Internal helper to insert/update token state (called by TwitchColorBot)."""
-        info = self.tokens.get(username)
-        if info is None:
-            info = TokenInfo(
-                username=username,
-                access_token=access_token,
-                refresh_token=refresh_token,
-                client_id=client_id,
-                client_secret=client_secret,
-                expiry=expiry,
-            )
-            self.tokens[username] = info
-            if expiry:
-                remaining = int((expiry - datetime.now(UTC)).total_seconds())
-                if remaining > 0:
-                    info.original_lifetime = remaining
-        else:
-            info.access_token = access_token
-            info.refresh_token = refresh_token
-            info.client_id = client_id
-            info.client_secret = client_secret
-            info.expiry = expiry
-            info.state = TokenState.FRESH
-            if expiry and info.original_lifetime is None:
-                remaining = int((expiry - datetime.now(UTC)).total_seconds())
-                if remaining > 0:
-                    info.original_lifetime = remaining
-        return info
+        with self._tokens_lock:
+            info = self.tokens.get(username)
+            if info is None:
+                info = TokenInfo(
+                    username=username,
+                    access_token=access_token,
+                    refresh_token=refresh_token,
+                    client_id=client_id,
+                    client_secret=client_secret,
+                    expiry=expiry,
+                )
+                self.tokens[username] = info
+                if expiry:
+                    remaining = int((expiry - datetime.now(UTC)).total_seconds())
+                    if remaining > 0:
+                        info.original_lifetime = remaining
+            else:
+                info.access_token = access_token
+                info.refresh_token = refresh_token
+                info.client_id = client_id
+                info.client_secret = client_secret
+                info.expiry = expiry
+                info.state = TokenState.FRESH
+                if expiry and info.original_lifetime is None:
+                    remaining = int((expiry - datetime.now(UTC)).total_seconds())
+                    if remaining > 0:
+                        info.original_lifetime = remaining
+            return info
 
     def remove(self, username: str) -> bool:
         """Remove a user from token tracking (e.g., config removal)."""
-        if username in self.tokens:
-            del self.tokens[username]
-            logging.debug(f"🗑️ Removed token entry user={username}")
-            return True
+        with self._tokens_lock:
+            if username in self.tokens:
+                del self.tokens[username]
+                logging.debug(f"🗑️ Removed token entry user={username}")
+                return True
         return False
 
     def prune(self, active_usernames: set[str]) -> int:
         """Prune tokens not in active set; return count removed."""
-        to_remove = [u for u in self.tokens if u not in active_usernames]
-        for u in to_remove:
-            del self.tokens[u]
-        if to_remove:
-            logging.info(
-                f"🧹 Pruned tokens removed={len(to_remove)} remaining={len(self.tokens)}"
-            )
-        return len(to_remove)
+        with self._tokens_lock:
+            to_remove = [u for u in self.tokens if u not in active_usernames]
+            for u in to_remove:
+                del self.tokens[u]
+            if to_remove:
+                logging.info(
+                    f"🧹 Pruned tokens removed={len(to_remove)} remaining={len(self.tokens)}"
+                )
+            return len(to_remove)
 
     def get_info(self, username: str) -> TokenInfo | None:
-        return self.tokens.get(username)
+        with self._tokens_lock:
+            return self.tokens.get(username)
 
     def _get_client(self, client_id: str, client_secret: str) -> TokenClient:
         key = (client_id, client_secret)
@@ -428,7 +432,7 @@ class TokenManager:
                 # Delegate creation to helper so both Ruff and VS Code recognize
                 # the task is retained and exceptions logged.
                 self._create_retained_task(hook(), category="update_hook")
-            except Exception as e:  # noqa: BLE001
+            except (ValueError, RuntimeError) as e:
                 logging.debug(
                     f"⚠️ Update hook scheduling error user={username} type={type(e).__name__}"
                 )
@@ -516,9 +520,7 @@ class TokenManager:
                     )
                 last_loop = now
                 await asyncio.sleep(base * _jitter_rng.uniform(0.5, 1.5))
-            except Exception as e:  # noqa: BLE001
-                if isinstance(e, asyncio.CancelledError):
-                    raise
+            except (RuntimeError, OSError, ValueError, aiohttp.ClientError) as e:
                 logging.error(f"💥 Background token manager loop error: {str(e)}")
                 await asyncio.sleep(base * 2)
 
@@ -603,7 +605,7 @@ class TokenManager:
                 f"🔄 Forced refresh after failed periodic remote validation for user {username} outcome={ref_outcome.value} ({post_human} remaining, {post_seconds}s)"
             )
             return post_remaining
-        except Exception as e:  # noqa: BLE001
+        except (aiohttp.ClientError, ValueError, RuntimeError) as e:
             logging.warning(
                 f"⚠️ Periodic remote token validation error for user {username} type={type(e).__name__} error={str(e)}"
             )

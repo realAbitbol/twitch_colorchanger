@@ -113,6 +113,7 @@ async def test_check_and_refresh_token_success():
 async def test_check_and_refresh_token_no_manager():
     """Test _check_and_refresh_token with no token manager."""
     ctx = MagicMock()
+    ctx.token_manager = None
     bot = TwitchColorBot(
         context=ctx,
         token="test_token",
@@ -145,7 +146,9 @@ async def test_check_and_refresh_token_failure():
     )
 
     mock_tm = MagicMock()
-    mock_tm.ensure_fresh = AsyncMock(return_value="FAILED")
+    mock_outcome = MagicMock()
+    mock_outcome.name = "FAILED"
+    mock_tm.ensure_fresh = AsyncMock(return_value=mock_outcome)
     bot.token_manager = mock_tm
 
     result = await bot._check_and_refresh_token()
@@ -169,7 +172,9 @@ async def test_check_and_refresh_token_no_info():
     )
 
     mock_tm = MagicMock()
-    mock_tm.ensure_fresh = AsyncMock(return_value="SUCCESS")
+    mock_outcome = MagicMock()
+    mock_outcome.name = "SUCCESS"
+    mock_tm.ensure_fresh = AsyncMock(return_value=mock_outcome)
     mock_tm.get_info = MagicMock(return_value=None)
     bot.token_manager = mock_tm
 

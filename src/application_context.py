@@ -95,11 +95,8 @@ class ApplicationContext:
             return
         try:
             await self.token_manager.stop()
-        except Exception as e:  # noqa: BLE001
-            if isinstance(e, asyncio.CancelledError):
-                logging.warning("🛑 Token manager cancellation during shutdown")
-            else:
-                logging.error(f"💥 Error stopping token manager: {str(e)}")
+        except (RuntimeError, OSError, ValueError) as e:
+            logging.error(f"💥 Error stopping token manager: {str(e)}")
         finally:
             self.token_manager = None
 
@@ -113,7 +110,7 @@ class ApplicationContext:
             return
         try:
             await self.session.close()
-        except Exception as e:  # noqa: BLE001
+        except (aiohttp.ClientError, OSError, ValueError) as e:
             logging.error(f"💥 Error closing HTTP session: {str(e)}")
         finally:
             self.session = None
@@ -140,7 +137,7 @@ def _atexit_close() -> None:  # pragma: no cover - process teardown path
             finally:
                 loop.close()
             logging.info("HTTP session closed at exit")
-        except Exception as e:  # noqa: BLE001
+        except (OSError, ValueError) as e:
             try:
                 logging.warning(f"HTTP session close error at exit: {e}")
             except Exception:

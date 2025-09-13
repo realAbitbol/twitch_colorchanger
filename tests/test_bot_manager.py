@@ -74,7 +74,7 @@ async def test_start_all_bots_create_fails():
     ]
     manager = BotManager(users_config, "test.conf", context=ctx)
 
-    with patch.object(manager, "_create_bot", side_effect=Exception("Create failed")):
+    with patch.object(manager, "_create_bot", side_effect=ValueError("Create failed")):
         result = await manager._start_all_bots()
 
         assert result is False
@@ -132,6 +132,7 @@ async def test_run_bots_success():
         mock_ctx_class.create = AsyncMock(return_value=mock_ctx)
 
         mock_manager = MagicMock(spec=BotManager)
+        mock_manager._manager_lock = AsyncMock()
         mock_manager._start_all_bots = AsyncMock(return_value=True)
         mock_manager._stop_all_bots = AsyncMock()
         mock_manager.print_statistics = MagicMock()
@@ -171,6 +172,7 @@ async def test_run_bots_start_fails():
         mock_ctx_class.create = AsyncMock(return_value=mock_ctx)
 
         mock_manager = MagicMock(spec=BotManager)
+        mock_manager._manager_lock = AsyncMock()
         mock_manager._start_all_bots = AsyncMock(return_value=False)
         mock_manager._stop_all_bots = AsyncMock()
         mock_manager.print_statistics = MagicMock()

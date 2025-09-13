@@ -120,6 +120,7 @@ class TwitchColorBot(MessageHandler, ColorChanger, TokenRefresher):  # pylint: d
 
         # Runtime state
         self.running = False
+        self._state_lock = asyncio.Lock()
         self.listener_task: asyncio.Task[None] | None = None
         self.messages_sent = 0
         self.colors_changed = 0
@@ -140,7 +141,8 @@ class TwitchColorBot(MessageHandler, ColorChanger, TokenRefresher):  # pylint: d
         early if critical components cannot be initialized.
         """
         logging.info(f"▶️ Starting bot user={self.username}")
-        self.running = True
+        async with self._state_lock:
+            self.running = True
         if not self._setup_token_manager():
             return
         await self._handle_initial_token_refresh()
@@ -256,8 +258,9 @@ class TwitchColorBot(MessageHandler, ColorChanger, TokenRefresher):  # pylint: d
                         "chat backend not initialized for reconnect"
                     )
                     continue
-                self.listener_task = asyncio.create_task(backend2.listen())
-                self.listener_task.add_done_callback(cb)
+                async with self._state_lock:
+                    self.listener_task = asyncio.create_task(backend2.listen())
+                    self.listener_task.add_done_callback(cb)
                 await self.listener_task
                 return
             except Exception as e2:  # noqa: BLE001
@@ -271,7 +274,8 @@ class TwitchColorBot(MessageHandler, ColorChanger, TokenRefresher):  # pylint: d
         pending config updates, and sets running flag to False.
         """
         logging.warning(f"🛑 Stopping bot user={self.username}")
-        self.running = False
+        async with self._state_lock:
+            self.running = False
         await self._disconnect_chat_backend()
         await self._wait_for_listener_task()
         if self.config_file:
@@ -394,6 +398,8 @@ class TwitchColorBot(MessageHandler, ColorChanger, TokenRefresher):  # pylint: d
     def close(self) -> None:
         """Close the bot and mark as not running."""
         logging.info(f"🔻 Closing bot user={self.username}")
+        # Note: close is sync, but since _state_lock is asyncio, we can't use it here.
+        # Assuming close is called when no async operations are running.
         self.running = False
 
     def print_statistics(self) -> None:

@@ -5,6 +5,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
+import aiohttp
+
 from ..utils.retry import retry_async
 from .internal import (
     InternalError,
@@ -54,7 +56,7 @@ async def handle_api_error(operation: Callable[[], Awaitable[T]], context: str) 
     """
     try:
         return await operation()
-    except Exception as e:
+    except (aiohttp.ClientError, ValueError, RuntimeError, OSError, InternalError) as e:
         log_error(f"API error in {context}", e)
         if isinstance(e, asyncio.TimeoutError | ConnectionError):
             raise NetworkError(f"Network error in {context}: {str(e)}") from e
@@ -94,7 +96,7 @@ async def handle_retryable_error(
         try:
             result, should_retry = await operation(attempt)
             return result, should_retry
-        except Exception as e:
+        except (aiohttp.ClientError, ValueError, RuntimeError, OSError) as e:
             log_error(f"Retryable error in {context} (attempt {attempt + 1})", e)
             # Determine if retryable based on exception type
             if isinstance(e, NetworkError | asyncio.TimeoutError | ConnectionError):

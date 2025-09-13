@@ -7,12 +7,15 @@ import logging
 from datetime import datetime
 from typing import Any
 
+import aiohttp
+
 from ..api.twitch import TwitchAPI
 from ..application_context import ApplicationContext
 from ..chat import EventSubChatBackend
 from ..config.async_persistence import async_update_user_in_config, queue_user_update
 from ..config.model import normalize_channels_list
 from ..errors.handling import handle_api_error
+from ..errors.internal import InternalError
 
 
 class TokenRefresher:
@@ -54,7 +57,7 @@ class TokenRefresher:
             self.token_manager.register_update_hook(
                 self.username, self._persist_token_changes
             )
-        except Exception as e:
+        except (ValueError, RuntimeError) as e:
             logging.debug(f"Token hook registration failed: {str(e)}")
         return True
 
@@ -80,7 +83,7 @@ class TokenRefresher:
         if access_changed or refresh_changed:
             try:
                 await self._persist_token_changes()
-            except Exception as e:
+            except (OSError, ValueError, RuntimeError) as e:
                 logging.debug(f"Token persistence error: {str(e)}")
 
     async def _log_scopes_if_possible(self) -> None:
@@ -107,7 +110,14 @@ class TokenRefresher:
             logging.info(
                 f"🧪 Token scopes user={self.username} scopes={';'.join(scopes_list) if scopes_list else '<none>'}"
             )
-        except Exception:
+        except (
+            aiohttp.ClientError,
+            TimeoutError,
+            ConnectionError,
+            ValueError,
+            RuntimeError,
+            InternalError,
+        ):
             logging.debug(f"🚫 Token scope validation error user={self.username}")
 
     async def _normalize_channels_if_needed(self) -> list[str]:
@@ -156,11 +166,11 @@ class TokenRefresher:
                     if backend_local is not None:
                         try:
                             backend_local.update_token(info.access_token)
-                        except Exception as e:
+                        except (AttributeError, ValueError, RuntimeError) as e:
                             logging.debug(f"Backend token update error: {str(e)}")
                 return outcome.name != "FAILED"
             return False
-        except Exception as e:
+        except (aiohttp.ClientError, ValueError, RuntimeError) as e:
             logging.error(f"Token refresh error: {str(e)}")
             return False
 
@@ -184,7 +194,7 @@ class TokenRefresher:
         user_config["channels"] = self.channels
         try:
             await queue_user_update(user_config, config_file)
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError) as e:
             logging.warning(f"Persist channels error: {str(e)}")
 
     def _validate_config_prerequisites(self) -> bool:
@@ -257,7 +267,7 @@ class TokenRefresher:
         except PermissionError:
             logging.error(f"🔒 Permission denied writing config user={self.username}")
             return True
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError) as e:
             return await self._handle_config_save_error(e, attempt, max_retries)
 
     async def _handle_config_save_error(
