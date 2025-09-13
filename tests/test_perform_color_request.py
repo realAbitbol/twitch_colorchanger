@@ -26,6 +26,7 @@ class FakeAPI:
 async def test_perform_color_request_status_mapping(monkeypatch):
     # Speed up test by making sleeps instant
     async def no_sleep(delay):
+        # Intentionally empty to replace asyncio.sleep with no-op for faster testing
         pass
     monkeypatch.setattr("asyncio.sleep", no_sleep)
 

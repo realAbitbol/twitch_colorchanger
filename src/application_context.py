@@ -114,7 +114,8 @@ def _atexit_close() -> None:  # pragma: no cover - process teardown path
 
                     _sys.stderr.write(f"[atexit] session close error: {e}\n")
                 except Exception:  # noqa: S110
-                    pass  # pragma: no cover
+                    # Last resort error handling: if stderr write fails, silently ignore as nothing more can be done
+                    pass  # pragma: no cover  # nosec B110
 
 
 atexit.register(_atexit_close)

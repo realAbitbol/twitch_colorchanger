@@ -47,7 +47,7 @@ Automatically change your Twitch username color after each message you send in c
     - [General Environment Variables](#general-environment-variables)
     - [Internal Configuration Constants](#internal-configuration-constants)
     - [Environment Variable Usage Examples](#environment-variable-usage-examples)
-    - [Chat Backend Selection](#chat-backend-selection)
+    - [Chat Integration](#chat-integration)
 - [Troubleshooting](#troubleshooting)
   - [Startup Script Issues](#startup-script-issues)
   - [Configuration Issues](#configuration-issues)
@@ -55,7 +55,7 @@ Automatically change your Twitch username color after each message you send in c
   - [Authentication Issues](#authentication-issues)
   - [Docker Issues](#docker-issues)
   - [Turbo/Prime Limitations](#turboprime-limitations)
-  - [Rate / API Issues](#rate--api-issues)
+  - [API Issues](#api-issues)
   - [Logging & Debugging](#logging--debugging)
 - [Technical Documentation](#technical-documentation)
 - [Contributing](#contributing)
@@ -76,7 +76,6 @@ Automatically change your Twitch username color after each message you send in c
 - **🎨 Dynamic Color Changes**: Automatically changes your Twitch chat color after every message
 - **👥 Multi-User Support**: Run multiple bots for different Twitch accounts simultaneously
 - **🎲 Flexible Colors**: Supports both preset Twitch colors and random hex colors (Prime/Turbo users)
-- **🔄 Universal Compatibility**: Works with Chatterino, web chat, or any IRC client
 - **🔌 Modern Chat Backend**: Uses EventSub WebSocket for reliable, modern chat connectivity.
 - **🔑 Automatic Token Setup**: Smart token management with automatic authorization flow - just provide client credentials!
 - **🔄 Token Refresh**: Automatic token validation and refresh with fallback to authorization flow when needed
@@ -87,16 +86,12 @@ Automatically change your Twitch username color after each message you send in c
 
 ### Additional Features
 
-- **🏗️ Colored Logging**: Clean, colored console output for easy monitoring
 - **🛡️ Error Handling**: Automatic retries with exponential backoff
 - **🎯 Smart Turbo/Prime Detection**: Automatically detects non-Turbo/Prime users and falls back to preset colors
 - **💾 Persistent Fallback**: Saves Turbo/Prime limitations to config for permanent fallback behavior
 - **⚡ Unattended Operation**: No user interaction required after initial authorization
 - **✅ Configuration Validation**: Comprehensive validation with detailed error reporting
-- **📊 Rate Limiting**: Smart rate limiting with quota tracking and logging
-- **🔗 Connection Health Monitoring**: Robust connection health tracking with automatic reconnection
 - **🛑 Per-User Disable Switch**: Temporarily pause color cycling without editing files or restarting
-- **🫧 Idle Keepalive (Low Impact)**: After successful periodic token validation the bot may issue a lightweight GET of the current chat color if you've been idle (no messages) for a configurable period (default 600s) to keep internal state fresh and surface token/API issues early without sending redundant PUT color changes.
 
 ---
 
@@ -110,7 +105,7 @@ Automatically change your Twitch username color after each message you send in c
 
 The bot requires minimal dependencies for optimal performance:
 
-- **Core**: `aiohttp>=3.9.0,<4.0.0` - Async HTTP client for Twitch API communication
+- **Core**: `aiohttp>=3.12.0,<4.0.0` - Async HTTP client for Twitch API communication
 - **Live Config**: `watchdog>=3.0.0,<4.0.0` - File system monitoring for runtime config reload
 
 All dependencies are automatically installed via `requirements.txt`.
@@ -139,7 +134,7 @@ All dependencies are automatically installed via `requirements.txt`.
 
 The bot can automatically generate tokens for you! Just provide your `client_id` and `client_secret` in the config file, and the bot will handle the rest:
 
-1. Create your config file with just client credentials, the channel you want to monitor and if your user is prime/turbo or not:
+1. Create your config file with client credentials and channels:
 
 ```json
 {
@@ -148,7 +143,7 @@ The bot can automatically generate tokens for you! Just provide your `client_id`
       "username": "your_username",
       "client_id": "your_client_id",
       "client_secret": "your_client_secret",
-      "channels": ["channel1", "channel2"],
+      "channels": ["your_channel"],
       "is_prime_or_turbo": true
     }
   ]
@@ -270,7 +265,7 @@ Behavior:
 - Disabling pauses API color calls but keeps all connections and stats active
 - `ccc <color>` bypasses the enable/disable toggle and always attempts a change
 
-Tip: Use `DEBUG=true` to see `auto_color_enabled` / `auto_color_disabled` events.
+Tip: Use `DEBUG=true` to see log messages about auto color enable/disable status.
 
 ### Docker Deployment
 
@@ -326,15 +321,14 @@ You can override any configuration constant using environment variables:
 
 ```bash
 # Single environment override (Docker Hub)
-docker run -e NETWORK_PARTITION_THRESHOLD=1800 \
+docker run -e CONFIG_SAVE_TIMEOUT=5.0 \
   -v $(pwd)/config:/app/config \
   damastah/twitch-colorchanger:latest
 
 # Multiple environment overrides (GitHub Container Registry)
 docker run \
-  -e NETWORK_PARTITION_THRESHOLD=1800 \
   -e CONFIG_SAVE_TIMEOUT=5.0 \
-  -e DEFAULT_BUCKET_LIMIT=1000 \
+  -e RELOAD_WATCH_DELAY=1.0 \
   -v $(pwd)/config:/app/config \
   ghcr.io/realabitbol/twitch-colorchanger:latest
 ```
@@ -370,7 +364,7 @@ docker run -e TWITCH_CONF_FILE=/app/config/my-config.conf \
 
 Configuration file format:
 
-**Automatic Setup (Recommended):**
+**Minimal Configuration (Recommended):**
 
 ```json
 {
@@ -379,28 +373,31 @@ Configuration file format:
       "username": "your_username",
       "client_id": "your_client_id",
       "client_secret": "your_client_secret",
-      "channels": ["channel1", "channel2"],
+      "channels": ["your_channel"],
       "is_prime_or_turbo": true
-  ,"enabled": true
     }
   ]
 }
 ```
 
-**Manual Token Setup:**
+**Multi-User Configuration:**
 
 ```json
 {
   "users": [
     {
-      "username": "your_username",
-      "access_token": "your_access_token",
-      "refresh_token": "your_refresh_token",
-      "client_id": "your_client_id",
-      "client_secret": "your_client_secret",
+      "username": "user1",
+      "client_id": "client_id_1",
+      "client_secret": "client_secret_1",
       "channels": ["channel1", "channel2"],
       "is_prime_or_turbo": true
-  ,"enabled": true
+    },
+    {
+      "username": "user2",
+      "client_id": "client_id_2",
+      "client_secret": "client_secret_2",
+      "channels": ["channel3"],
+      "is_prime_or_turbo": false
     }
   ]
 }
@@ -466,29 +463,18 @@ The bot supports extensive configuration through environment variables, allowing
 |----------|-------------|---------|
 | `DEBUG` | Enable debug logging | `false` |
 | `TWITCH_CONF_FILE` | Path to configuration file | `twitch_colorchanger.conf` |
-| `TWITCH_CHAT_BACKEND` | Chat transport: `eventsub` (required) | `eventsub` |
 
 #### Internal Configuration Constants
 
 All internal timing and behavior constants can be overridden via environment variables:
 
-**Network Configuration:**
+**EventSub Configuration:**
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `PING_EXPECTED_INTERVAL` | IRC server ping expected every 10 minutes | 600 |
-| `SERVER_ACTIVITY_TIMEOUT` | 5 minutes without any server activity | 300 |
-| `CONNECTION_RETRY_TIMEOUT` | Give up on connection after 10 minutes | 600 |
-| `NETWORK_PARTITION_THRESHOLD` | 15 minutes of no connectivity before declaring partition | 900 |
-| `PARTIAL_CONNECTIVITY_THRESHOLD` | 3 minutes for partial connectivity detection | 180 |
-
-
-**Health Monitoring:**
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `HEALTH_MONITOR_INTERVAL` | Check bot health every 5 minutes | 300 |
-| `TASK_WATCHDOG_INTERVAL` | Check specific task health every 2 minutes | 120 |
+| `EVENTSUB_WS_URL` | WebSocket URL for EventSub connection | `wss://eventsub.wss.twitch.tv/ws` |
+| `EVENTSUB_SUBSCRIPTIONS` | API endpoint for subscription management | `eventsub/subscriptions` |
+| `EVENTSUB_CHAT_MESSAGE` | Event type for chat message subscriptions | `channel.chat.message` |
 
 **Configuration Management:**
 
@@ -498,19 +484,6 @@ All internal timing and behavior constants can be overridden via environment var
 | `CONFIG_WRITE_DEBOUNCE` | Delay after save for watcher resume | 0.5 |
 | `RELOAD_WATCH_DELAY` | Delay after config reload before resuming watch | 2.0 |
 
-**Rate Limiting:**
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `DEFAULT_BUCKET_LIMIT` | Default API request bucket size | 800 |
-| `RATE_LIMIT_SAFETY_BUFFER` | Safety buffer for rate limiting | 5 |
-| `STALE_BUCKET_AGE` | Age after which buckets are considered stale | 60 |
-
-**Keepalive / Idle Behavior:**
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `COLOR_KEEPALIVE_RECENT_ACTIVITY_SECONDS` | Minimum idle seconds before a background color GET keepalive is attempted (triggered only after a successful periodic token validation). Set higher to reduce background calls or lower (>=300 recommended) if you want faster detection of revoked color state. | 600 |
 
 **Exponential Backoff:**
 
@@ -523,74 +496,41 @@ All internal timing and behavior constants can be overridden via environment var
 
 #### Environment Variable Usage Examples
 
-Increase network resilience for unstable connections:
-
-```bash
-export NETWORK_PARTITION_THRESHOLD=1800  # 30 minutes instead of 15
-export PARTIAL_CONNECTIVITY_THRESHOLD=300  # 5 minutes instead of 3
-export CONNECTION_RETRY_TIMEOUT=1200     # 20 minutes instead of 10
-python -m src.main
-```
-
 Faster response times for stable networks:
 
 ```bash
 export CONFIG_SAVE_TIMEOUT=5.0           # 5 seconds instead of 10
 export RELOAD_WATCH_DELAY=1.0            # 1 second instead of 2
-export HEALTH_MONITOR_INTERVAL=120       # 2 minutes instead of 5
 python -m src.main
 ```
 
 Docker usage with environment overrides:
 
 ```bash
-docker run -e NETWORK_PARTITION_THRESHOLD=1800 \
-           -e CONFIG_SAVE_TIMEOUT=5.0 \
+docker run -e CONFIG_SAVE_TIMEOUT=5.0 \
            damastah/twitch-colorchanger:latest
 ```
 
 Error handling: Invalid values show warnings and fall back to defaults:
 
 ```bash
-export NETWORK_PARTITION_THRESHOLD=invalid
+export CONFIG_SAVE_TIMEOUT=invalid
 python -m src.main
-# Output: Warning: Invalid integer value for NETWORK_PARTITION_THRESHOLD='invalid', using default 900
+# Output: Warning: Invalid float value for CONFIG_SAVE_TIMEOUT='invalid', using default 10.0
 ```
 
-#### Chat Backend
+#### Chat Integration
 
-The bot uses EventSub WebSocket for modern, reliable chat connectivity. The backend automatically reuses the per-user `client_id` and `client_secret` from the configuration file. It subscribes to `channel.chat.message` events filtered to messages from the bot user only.
+The bot uses EventSub WebSocket for reliable chat connectivity. It automatically subscribes to `channel.chat.message` events filtered to messages from the bot user only, ensuring efficient and targeted message detection.
 
-Required scopes (automatic device flow requests all of these by default):
+Required scopes (automatically requested during device flow):
 
 | Purpose | Scope |
 |---------|-------|
 | Receive self chat messages over EventSub | `user:read:chat` |
 | Change chat color via Helix | `user:manage:chat_color` |
 
-If any of the required scopes (`user:read:chat`, `user:manage:chat_color`) are missing from an existing token set, the bot will automatically invalidate them at startup and re-run device authorization. You only need to manually trigger re-authorization if you intentionally removed scopes and want them restored faster (delete token fields from the config and restart).
-
-##### Broadcaster ID Cache
-
-The EventSub backend resolves channel names to broadcaster IDs and caches them in `broadcaster_ids.cache.json` inside the mounted config directory. Persist the directory (`./config:/app/config`) so repeated container runs do not re-hit Helix unnecessarily. Override path with `TWITCH_BROADCASTER_CACHE` if needed.
-
-##### Resilience Mechanics
-
-| Mechanism | Description |
-|-----------|-------------|
-| Stale Detection | ~70s with no heartbeat/message triggers reconnect |
-| Reconnect Backoff | Exponential (1s → 2s → 4s … capped at 60s) + secrets-based jitter |
-| Fast Audit | 60–120s after reconnect: verifies expected subscriptions |
-| Normal Audit | Every 600s + 0–120s jitter: reconciles subscriptions |
-| Missing Subscriptions | Automatically re-subscribed (`eventsub_resubscribe_missing`) |
-| Early Invalid Token | Repeated 401s mark token invalid early (`eventsub_token_invalid`) |
-| Missing Scopes | 403 + scope diff emits `eventsub_missing_scopes` and halts subs |
-
-All EventSub chat messages are normalized to the same log template with an added `backend=eventsub` tag. Only the bot's own messages are processed to keep color change triggers consistent and reduce noise.
-
-If EventSub fails to initialize, the bot will log the failure and stop for that user.
-
-Open issues with logs (`DEBUG=true`) if you encounter problems—feedback helps stabilize the EventSub path.
+The bot handles connection management automatically with built-in reconnection logic. Channel names are resolved to broadcaster IDs and cached for performance. If EventSub fails to initialize, the bot will log the failure and stop for that user.
 
 ---
 
@@ -621,8 +561,8 @@ cp twitch_colorchanger.conf.sample twitch_colorchanger.conf
 **"Bot exits immediately":**
 
 - Check your Client ID and Client Secret are correct
-- Verify your OAuth Redirect URL is set to `https://twitchtokengenerator.com`
-- Make sure you have the required scopes: `chat:read`, `user:read:chat`, `user:manage:chat_color`
+- Ensure you have the required scopes: `chat:read`, `user:read:chat`, `user:manage:chat_color`
+- Verify your config file is valid JSON
 
 **Virtual Environment:**
 If you prefer to manage your own virtual environment:
@@ -638,7 +578,7 @@ python -m src.main
 
 **"Bot doesn't change colors when I chat":**
 
-1. Confirm you didn't previously send `ccd` (look for an `auto_color_disabled` event in logs)
+1. Confirm you didn't previously send `ccd` (check logs for messages about auto color being disabled)
 2. Check the config shows `"enabled": true` for your user
 3. Verify you are chatting in one of the configured `channels`
 4. Inspect logs for rate limiting (429 events) or token refresh failures
@@ -693,15 +633,14 @@ python -m src.main
 - **Persistent Settings**: Saves the fallback preference to config file to avoid repeated API errors
 - **Seamless Operation**: Users continue receiving color changes without interruption
 
-### Rate / API Issues
+### API Issues
 
-- **Too many requests**: Twitch may temporarily limit rapid color changes; the bot already spaces them—avoid manual spamming
-- **Network errors**: transient failures are retried automatically; persistent 401 means token refresh failed (recreate tokens)
+- **Network errors**: transient failures are retried automatically; persistent 401 means token refresh failed
+- **Color change failures**: ensure your account has Prime/Turbo for hex colors or use preset colors
 
 ### Logging & Debugging
 
 - Set `DEBUG=true` for verbose logs
-- All logs are colored for easy reading
 
 If issues persist, open an issue with: platform, Python/Docker version, relevant log snippet (exclude tokens).
 
@@ -711,13 +650,11 @@ If issues persist, open an issue with: platform, Python/Docker version, relevant
 
 For developers and technical implementation details:
 
-- **[FUNCTIONAL_DOCUMENTATION.md](FUNCTIONAL_DOCUMENTATION.md)** - Detailed feature specifications and behavior
-
 ---
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+We welcome contributions!
 
 ### CI/CD Setup
 

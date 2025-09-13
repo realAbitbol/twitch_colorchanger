@@ -96,7 +96,9 @@ def _log_update_failed(e: Exception, user_config_dict: dict[str, Any]) -> None:
     username = (
         user_config_dict.get("username") if isinstance(user_config_dict, dict) else None
     )
-    logging.error(f"💥 Failed to update user in config: {username}")
+    logging.error(
+        f"💥 Failed to update user in config: {username} - {type(e).__name__}: {e}"
+    )
 
 
 def _user_auth_valid(u: UserConfig, placeholders: set[str]) -> bool:

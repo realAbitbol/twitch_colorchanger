@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.application_context import ApplicationContext
 from src.bot.core import TwitchColorBot
 
 

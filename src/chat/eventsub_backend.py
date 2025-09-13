@@ -6,6 +6,7 @@ import logging
 import os
 import secrets
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -13,7 +14,8 @@ from urllib.parse import parse_qs, urlparse
 import aiohttp
 
 from ..api.twitch import TwitchAPI
-from .abstract import ChatBackend, MessageHandler
+
+MessageHandler = Callable[[str, str, str], Any]
 
 """EventSub WebSocket chat backend.
 
@@ -30,7 +32,7 @@ EVENTSUB_SUBSCRIPTIONS = "eventsub/subscriptions"
 EVENTSUB_CHAT_MESSAGE = "channel.chat.message"
 
 
-class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-attributes
+class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
     def set_token_invalid_callback(self, callback):
         """Set a callback to be called when token is invalid and needs refresh."""
         self._token_invalid_callback = callback
@@ -475,7 +477,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
     async def _dispatch_message(
         self, username: str, channel: str, message: str
     ) -> None:
-        # Emit unified log event (reuse irc_privmsg naming) with IRC-style human text
+        # Emit unified log event with human-readable text
         try:
             logging.info(f"💬 #{channel} {username}: {message}")
         except Exception as e:  # noqa: BLE001
