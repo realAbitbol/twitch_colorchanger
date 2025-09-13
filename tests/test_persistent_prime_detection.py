@@ -7,21 +7,12 @@ from src.color.models import ColorRequestResult, ColorRequestStatus
 from src.color.service import ColorChangeService
 
 
-class FakeRateLimiter:
-    async def wait_if_needed(self, endpoint: str, is_user_request: bool = True, points_cost: int = 1) -> None:  # noqa: D401
-        await asyncio.sleep(0)
-
-    def handle_429_error(self, headers: dict[str, str], is_user_request: bool = True) -> None:  # noqa: D401
-        pass
-
-
 class FakeBot:
     def __init__(self, results: list[ColorRequestResult]) -> None:
         self.username = "tester"
         self.use_random_colors = True
         self.last_color: str | None = None
         self.colors_changed = 0
-        self.rate_limiter = FakeRateLimiter()
         self._results = results
         self._result_index = 0
         self.user_id = "123"

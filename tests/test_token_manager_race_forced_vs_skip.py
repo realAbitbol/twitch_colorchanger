@@ -12,7 +12,8 @@ class NoopClient:
     async def ensure_fresh(self, username, access, refresh, expiry, force):
         self.calls += 1
         await asyncio.sleep(0)
-        class R: pass
+        class R:  # noqa: E701
+            pass
         r = R()
         r.outcome = TokenOutcome.SKIPPED if not force else TokenOutcome.REFRESHED
         r.access_token = access if not force else access + "X"

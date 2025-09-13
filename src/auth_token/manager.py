@@ -31,7 +31,6 @@ _jitter_rng = SystemRandom()
 class TokenState(Enum):
     FRESH = "fresh"
     STALE = "stale"
-    REFRESHING = "refreshing"
     EXPIRED = "expired"
 
 
@@ -80,10 +79,6 @@ class TokenManager:
         ] = {}
         # Retained background tasks (e.g. persistence hooks) to prevent premature GC.
         self._hook_tasks: list[asyncio.Task[Any]] = []
-        # Per-user optional keepalive callbacks (async) invoked after successful periodic validation.
-        self._keepalive_callbacks: dict[
-            str, Callable[[], Coroutine[Any, Any, None]]
-        ] = {}
         # Mark as initialized to avoid repeating work on future constructions.
         self._inst_initialized = True
 
@@ -191,16 +186,6 @@ class TokenManager:
         else:
             lst.append(hook)
 
-    def register_keepalive_callback(
-        self, username: str, hook: Callable[[], Coroutine[Any, Any, None]]
-    ) -> None:
-        """Register a per-user keepalive callback.
-
-        Executed (fire-and-forget) right after a successful periodic remote validation.
-        Errors are logged but do not affect token lifecycle.
-        """
-        self._keepalive_callbacks[username] = hook
-
     def register_eventsub_backend(self, username: str, backend: Any) -> None:
         """Register chat backend for automatic token propagation.
 
@@ -240,7 +225,7 @@ class TokenManager:
         client_secret: str,
         expiry: datetime | None,
     ) -> TokenInfo:
-        """Internal helper to insert/update token state (called by BotRegistrar)."""
+        """Internal helper to insert/update token state (called by TwitchColorBot)."""
         info = self.tokens.get(username)
         if info is None:
             info = TokenInfo(
@@ -524,15 +509,6 @@ class TokenManager:
                     logging.info(
                         f"✅ Periodic remote token validation ok for user {username} ({human_new} remaining)"
                     )
-                # Fire keepalive callback (async) if registered.
-                cb = self._keepalive_callbacks.get(username)
-                if cb:
-                    try:
-                        self._create_retained_task(cb(), category="keepalive")
-                    except Exception as e:  # noqa: BLE001
-                        logging.debug(
-                            f"⚠️ Keepalive callback error user={username} error={str(e)}"
-                        )
                 return updated_remaining
             # Failure -> forced refresh.
             pre_seconds = (

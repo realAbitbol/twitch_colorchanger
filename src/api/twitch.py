@@ -13,10 +13,6 @@ from typing import Any
 import aiohttp
 
 
-class TwitchAPIError(RuntimeError):  # pragma: no cover (simple wrapper)
-    pass
-
-
 class TwitchAPI:
     BASE_URL = "https://api.twitch.tv/helix"
 
@@ -52,18 +48,6 @@ class TwitchAPI:
             return data, resp.status, dict(resp.headers)
 
     # ---- High level helpers ----
-    async def get_user(
-        self, *, access_token: str, client_id: str
-    ) -> dict[str, Any] | None:
-        data, status, _ = await self.request(
-            "GET", "users", access_token=access_token, client_id=client_id
-        )
-        if status == 200 and isinstance(data.get("data"), list) and data["data"]:
-            first = data["data"][0]
-            if isinstance(first, dict):
-                return first
-        return None
-
     async def validate_token(self, access_token: str) -> dict[str, Any] | None:
         """Validate OAuth token and return payload with scopes.
 
@@ -74,13 +58,8 @@ class TwitchAPI:
         headers = {"Authorization": f"OAuth {access_token}"}
         try:
             async with self._session.get(url, headers=headers) as resp:
-                data: dict[str, Any] | None
-                try:
-                    data = await resp.json()
-                except Exception:  # noqa: BLE001
-                    data = None
-                if resp.status == 200 and isinstance(data, dict):
-                    return data
+                if resp.status == 200:
+                    return await resp.json()
                 return None
         except Exception:  # noqa: BLE001
             return None
@@ -150,50 +129,3 @@ class TwitchAPI:
         if isinstance(rows, list):
             return [r for r in rows if isinstance(r, dict)]
         return []
-
-    async def get_chat_color(
-        self, *, access_token: str, client_id: str, user_id: str
-    ) -> str | None:
-        params = {"user_id": user_id}
-        data, status, _ = await self.request(
-            "GET",
-            "chat/color",
-            access_token=access_token,
-            client_id=client_id,
-            params=params,
-        )
-        if status == 200 and isinstance(data.get("data"), list) and data["data"]:
-            entry = data["data"][0]
-            if isinstance(entry, dict):
-                color = entry.get("color")
-                if isinstance(color, str):
-                    return color
-        return None
-
-    async def set_chat_color(
-        self,
-        *,
-        access_token: str,
-        client_id: str,
-        user_id: str,
-        color: str,
-    ) -> int:
-        params = {"user_id": user_id, "color": color}
-        _data, status, _headers = await self.request(
-            "PUT",
-            "chat/color",
-            access_token=access_token,
-            client_id=client_id,
-            params=params,
-        )
-        return status
-
-    @staticmethod
-    def scrub_headers(
-        headers: dict[str, str], keys: Iterable[str]
-    ) -> dict[str, str]:  # pragma: no cover
-        return {k: v for k, v in headers.items() if k in keys}
-
-
-def get_api(session: aiohttp.ClientSession) -> TwitchAPI:  # pragma: no cover
-    return TwitchAPI(session)

@@ -1,8 +1,10 @@
 import asyncio
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from src.chat.eventsub_backend import EventSubChatBackend
+
 
 @pytest.mark.asyncio
 async def test_eventsub_session_reconnect_triggers_reconnect(monkeypatch):
@@ -30,7 +32,7 @@ async def test_eventsub_session_reconnect_triggers_reconnect(monkeypatch):
     session_reconnect_msg = type("Msg", (), {})()
     session_reconnect_msg.type = 1  # aiohttp.WSMsgType.TEXT
     session_reconnect_msg.data = (
-        '{"type": "session_reconnect", "payload": {"session": {"reconnect_url": "%s"}}}' % new_url
+        f'{{"type": "session_reconnect", "payload": {{"session": {{"reconnect_url": "{new_url}"}}}}}}'
     )
     # After the reconnect, return None to exit the loop
     backend._receive_one = AsyncMock(side_effect=[session_reconnect_msg, None])

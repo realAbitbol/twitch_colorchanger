@@ -10,7 +10,6 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, cast
 
-from ..rate.retry_policies import COLOR_CHANGE_RETRY, run_with_retry
 from .models import ColorRequestResult, ColorRequestStatus
 from .utils import TWITCH_PRESET_COLORS, get_random_hex, get_random_preset
 
@@ -31,20 +30,11 @@ class ColorChangeService:
             allow_fallback = self.bot.use_random_colors
 
         try:
-
-            async def op() -> bool:
-                await self.bot.rate_limiter.wait_if_needed(
-                    "change_color", is_user_request=True
-                )
-                return await self._perform_color_change(
-                    color, allow_refresh=True, fallback_to_preset=allow_fallback
-                )
-
-            return await run_with_retry(
-                op, COLOR_CHANGE_RETRY, user=self.bot.username, log_domain="retry"
+            return await self._perform_color_change(
+                color, allow_refresh=True, fallback_to_preset=allow_fallback
             )
-        except Exception as e:  # noqa: BLE001
-            logging.error(f"💥 Error changing color user={self.bot.username}: {str(e)}")
+        except Exception as e:
+            logging.error(f"Error changing color: {str(e)}")
             return False
 
     async def _perform_color_change(
@@ -106,19 +96,11 @@ class ColorChangeService:
         return True
 
     def _on_internal_error(self, is_preset: bool) -> bool:
-        logging.error(
-            f"💥 Internal error changing {'preset ' if is_preset else ''}color user={self.bot.username}"
-        )
+        logging.error("Internal error changing color")
         return False
 
     def _on_rate_limited(self, is_preset: bool, status_code: int) -> bool:
-        self.bot.rate_limiter.handle_429_error({}, is_user_request=True)
-        if not is_preset:
-            logging.warning(f"⏳ Rate limited retry soon user={self.bot.username}")
-        else:
-            logging.warning(
-                f"❌ Preset color change failed status={status_code} user={self.bot.username}"
-            )
+        logging.warning(f"Rate limited: {status_code}")
         return False
 
     async def _on_unauthorized(
@@ -131,21 +113,12 @@ class ColorChangeService:
     ) -> bool:
         if not allow_refresh:
             return False
-        logging.info(
-            f"🔐 Attempting token refresh after 401 {'preset ' if is_preset else ''}color change user={self.bot.username}"
-        )
         if await self.bot._check_and_refresh_token(force=True):
-            logging.info(
-                f"🔄 Retrying {'preset ' if is_preset else ''}color change after token refresh user={self.bot.username}"
-            )
             return await self._perform_color_change(
                 color,
                 allow_refresh=False,
                 fallback_to_preset=fallback_to_preset,
             )
-        logging.error(
-            f"💥 Token refresh failed cannot retry {'preset ' if is_preset else ''}color change user={self.bot.username}"
-        )
         return False
 
     async def _on_generic_failure(
@@ -158,18 +131,9 @@ class ColorChangeService:
         # Persistent Turbo/Prime detection: track repeated hex rejections
         if not is_preset and status_code in (400, 403):
             await self._handle_hex_rejection(status_code)
-        # Defensive guard: if a success (2xx/204) status bubbles here due to
-        # any upstream classification inconsistency, treat it as success
-        # instead of emitting a false failure event (observed 204 case).
         if 200 <= status_code < 300:
-            logging.warning(
-                f"⚠️ Late {'preset ' if is_preset else ''}color success classification status={status_code} user={self.bot.username}"
-            )
-            # self.bot.last_color may be None; using `or ""` guarantees a str.
             return self._on_success(self.bot.last_color or "", is_preset)
-        logging.error(
-            f"{'❌ Failed to change color status' if not is_preset else '💥 Preset color change failed after retries status'}={status_code} user={self.bot.username}"
-        )
+        logging.error(f"Failed to change color: {status_code}")
         if fallback_to_preset and not is_preset:
             preset = get_random_preset(exclude=self.bot.last_color)
             return await self._perform_color_change(
@@ -185,47 +149,18 @@ class ColorChangeService:
         After two strikes, we assume lack of Turbo/Prime for hex colors and
         flip use_random_colors to False, then invoke a bot hook to persist.
         """
-        try:
-            strikes = int(getattr(self.bot, "_hex_rejection_strikes", 0)) + 1
-            self.bot._hex_rejection_strikes = strikes
-        except Exception:
-            strikes = 1
-            self.bot._hex_rejection_strikes = strikes
-
-        snippet: str | None = None
-        try:
-            extract = getattr(self.bot, "_extract_color_error_snippet", None)
-            if callable(extract):
-                snippet = extract()
-        except Exception:
-            snippet = None
-
-        logging.info(
-            f"🚫 Hex color rejected status={status_code} strikes={strikes} user={self.bot.username} snippet={snippet}"
-        )
+        strikes = getattr(self.bot, "_hex_rejection_strikes", 0) + 1
+        self.bot._hex_rejection_strikes = strikes
+        logging.info(f"Hex color rejected: {status_code}, strikes: {strikes}")
 
         if strikes >= 2 and getattr(self.bot, "use_random_colors", False):
-            try:
-                self.bot.use_random_colors = False
-            except Exception as e:  # noqa: BLE001
-                # Log instead of silently swallowing to satisfy linting and observability
-                logging.warning(
-                    f"⚠️ Error during persistent hex disable user={self.bot.username}: {str(e)}",
-                    exc_info=True,
-                )
-            logging.info(
-                f"🧩 Persistent detection: disabling random hex for user={self.bot.username}"
-            )
-            try:
-                hook = getattr(self.bot, "on_persistent_prime_detection", None)
-                if hook and callable(hook):
-                    res = hook()
-                    if asyncio.iscoroutine(res):
-                        await res
-            except Exception as e:  # noqa: BLE001
-                logging.warning(
-                    f"⚠️ Error during persistent hex disable user={self.bot.username}: {str(e)}"
-                )
+            self.bot.use_random_colors = False
+            logging.info("Disabling random hex due to persistent rejections")
+            hook = getattr(self.bot, "on_persistent_prime_detection", None)
+            if hook and callable(hook):
+                res = hook()
+                if asyncio.iscoroutine(res):
+                    await res
 
     def _select_color(self) -> str:
         if self.bot.use_random_colors:
@@ -235,17 +170,6 @@ class ColorChangeService:
     def _record_success(self, color: str, is_preset: bool) -> None:
         self.bot.increment_colors_changed()
         self.bot.last_color = color
-        # If a true-hex color succeeded, reset any accumulated rejection strikes
         if not is_preset:
-            try:
-                self.bot._hex_rejection_strikes = 0
-                logging.debug(
-                    f"♻️ Hex color rejection strikes reset user={self.bot.username}"
-                )
-            except Exception:  # noqa: BLE001
-                # Use existing template at WARN level and include exception context
-                logging.warning(
-                    f"♻️ Hex color rejection strikes reset user={self.bot.username}",
-                    exc_info=True,
-                )
-        logging.info(f"🎨 Color changed to {color} for the user {self.bot.username}")
+            self.bot._hex_rejection_strikes = 0
+        logging.info(f"Color changed to {color}")

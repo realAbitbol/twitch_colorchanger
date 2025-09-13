@@ -13,7 +13,6 @@ from urllib.parse import parse_qs, urlparse
 import aiohttp
 
 from ..api.twitch import TwitchAPI
-from ..health import read_status, write_status
 from .abstract import ChatBackend, MessageHandler
 
 """EventSub WebSocket chat backend.
@@ -61,14 +60,12 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         self._pending_reconnect_session_id: str | None = None
         self._pending_challenge: str | None = None
         # Track if we received a reconnect instruction that might have a stale session
-        self._reconnect_instruction_received: bool = False
 
         # Channel/subscription bookkeeping
         self._channels: list[str] = []
         self._channel_ids: dict[str, str] = {}  # login -> user_id
 
         # Async runtime primitives
-        self._listen_task: asyncio.Task[Any] | None = None
         self._stop_event = asyncio.Event()
         self._reconnect_requested = False
 
@@ -306,9 +303,6 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
     def set_message_handler(self, handler: MessageHandler) -> None:
         self._message_handler = handler
 
-    def set_color_change_handler(self, handler: MessageHandler) -> None:
-        self._color_handler = handler
-
     async def _handle_text(self, raw: str) -> None:
         data = self._decode_json(raw)
         if data is None:
@@ -367,7 +361,6 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         self._update_reconnect_state(new_url, maybe_id, maybe_challenge, session_info)
 
         # Trigger reconnect
-        self._reconnect_instruction_received = True
         await self._safe_close()
         self._reconnect_requested = True
 
@@ -501,19 +494,6 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                     await maybe2
             except Exception:  # noqa: BLE001
                 logging.warning("💥 Color handler error")
-
-    async def _ensure_channel_id(self, channel_login: str) -> bool:
-        if channel_login in self._channel_ids:
-            return True
-        info = await self._fetch_user(channel_login)
-        if not info:
-            logging.warning(f"⚠️ EventSub channel lookup failed channel={channel_login}")
-            return False
-        cid = info.get("id")
-        if not isinstance(cid, str):
-            return False
-        self._channel_ids[channel_login] = cid
-        return True
 
     async def _batch_resolve_channels(self, channels: list[str]) -> None:
         # Determine which are missing
@@ -700,19 +680,6 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                     missing=";".join(missing), channel=channel_login
                 )
             )
-
-    async def _open_and_handshake(self) -> bool:
-        """Open WebSocket and parse welcome, setting session id."""
-        try:
-            self._ws = await self._session.ws_connect(self._ws_url, heartbeat=30)
-            welcome = await asyncio.wait_for(self._ws.receive(), timeout=10)
-            if welcome.type != aiohttp.WSMsgType.TEXT:
-                return False
-            data = json.loads(welcome.data)
-            self._session_id = data.get("payload", {}).get("session", {}).get("id")
-            return bool(self._session_id)
-        except Exception:
-            return False
 
     async def _verify_subscriptions(self) -> None:
         if not (self._token and self._client_id and self._session_id):
@@ -957,16 +924,6 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                 logging.info(
                     f"✅ EventSub reconnect success attempt={attempt} channels={len(self._channels)}"
                 )
-                # update health status on successful reconnect
-                try:
-                    write_status(
-                        {
-                            "last_reconnect_ok": time.time(),
-                            "consecutive_reconnect_failures": 0,
-                        }
-                    )
-                except Exception as e:
-                    logging.info(f"⚠️ EventSub health write error: {str(e)}")
 
                 self._backoff = 1.0
                 now = time.monotonic()
@@ -985,18 +942,6 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
                     self._backoff + self._jitter(0, 0.25 * self._backoff)
                 )
                 self._backoff = min(self._backoff * 2, self._max_backoff)
-                # record a reconnect failure in health status
-                try:
-                    status = read_status()
-                    failures = int(status.get("consecutive_reconnect_failures", 0)) + 1
-                    write_status(
-                        {
-                            "last_reconnect_failure": time.time(),
-                            "consecutive_reconnect_failures": failures,
-                        }
-                    )
-                except Exception as e:
-                    logging.info(f"⚠️ EventSub health write error: {str(e)}")
         return False
 
     async def _open_and_handshake_detailed(self):

@@ -3,8 +3,8 @@ import asyncio
 import aiohttp
 import pytest
 
-from src.chat.eventsub_backend import EventSubChatBackend
 from src.auth_token.manager import TokenInfo, TokenManager, TokenOutcome, TokenResult
+from src.chat.eventsub_backend import EventSubChatBackend
 
 
 class DummyClient:
@@ -26,10 +26,10 @@ async def test_eventsub_token_propagation(monkeypatch):
     # Insert token info
     ti = TokenInfo(
         username="user",
-        access_token="tok1",
-        refresh_token="rtok",
+        access_token="tok1",  # noqa: S106
+        refresh_token="rtok",  # noqa: S106
         client_id="cid",
-        client_secret="csec",
+        client_secret="csec",  # noqa: S106
         expiry=None,
     )
     tm.tokens["user"] = ti
@@ -46,7 +46,7 @@ async def test_eventsub_token_propagation(monkeypatch):
     assert result.outcome == TokenOutcome.REFRESHED
     assert changed is True
     # Hook should have updated backend._token
-    assert backend._token == "new-tok1"
+    assert backend._token == "new-tok1"  # noqa: S105
 
     # Simulate token invalid flag then another propagation to test recovery log
     backend._token_invalid_flag = True

@@ -191,7 +191,3 @@ class DeviceCodeFlow:
         refresh_token = token_data.get("refresh_token", "")
         logging.info(f"Tokens obtained user={username}")
         return access_token, refresh_token
-
-
-# Backward compatibility alias (old code imported DeviceFlow)
-DeviceFlow = DeviceCodeFlow

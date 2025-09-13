@@ -185,8 +185,8 @@ async def test_update_hook_error_logged(monkeypatch, caplog):
                 pass
             r = R()
             r.outcome = TokenOutcome.REFRESHED
-            r.access_token = "A2"
-            r.refresh_token = "R2"
+            r.access_token = "A2"  # noqa: S105  # noqa: S105
+            r.refresh_token = "R2"  # noqa: S105  # noqa: S105
             r.expiry = datetime.now(UTC) + timedelta(seconds=30)
             return r
 
@@ -231,8 +231,8 @@ async def test_eventsub_propagation_hook(monkeypatch):
                 pass
             r = R()
             r.outcome = TokenOutcome.REFRESHED
-            r.access_token = "NEW"
-            r.refresh_token = "RR"
+            r.access_token = "NEW"  # noqa: S105  # noqa: S105
+            r.refresh_token = "RR"  # noqa: S105  # noqa: S105
             r.expiry = datetime.now(UTC) + timedelta(seconds=30)
             return r
 

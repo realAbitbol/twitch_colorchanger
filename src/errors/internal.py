@@ -37,9 +37,6 @@ class InternalError(Exception):
         # Copy into a plain dict to avoid unexpected mutations from caller.
         self.data = dict(data) if data else {}
 
-    def is_transient(self) -> bool:  # Small convenience helper
-        return bool(self.transient)
-
 
 class NetworkError(InternalError):
     """Network / transport layer error (timeouts, connection resets)."""
@@ -61,8 +58,6 @@ class ParsingError(InternalError):
 
 @dataclass
 class RateLimitContext:
-    reset_in: float | None = None
-    limit: int | None = None
     remaining: int | None = None
 
 

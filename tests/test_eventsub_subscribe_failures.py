@@ -17,7 +17,7 @@ class DummyAPI:
 @pytest.mark.asyncio
 async def test_two_401s_set_invalid_flag(monkeypatch):
     backend = EventSubChatBackend()
-    backend._token = "tok"  # noqa: SLF001
+    backend._token = "tok"  # noqa: S105  # noqa: SLF001,S105
     backend._client_id = "cid"  # noqa: SLF001
     backend._username = "user"  # noqa: SLF001
     backend._user_id = "uid"  # noqa: SLF001
@@ -38,7 +38,7 @@ async def test_two_401s_set_invalid_flag(monkeypatch):
 @pytest.mark.asyncio
 async def test_403_missing_scopes_logs(monkeypatch):
     backend = EventSubChatBackend()
-    backend._token = "tok"  # noqa: SLF001
+    backend._token = "tok"  # noqa: S105  # noqa: SLF001,S105
     backend._client_id = "cid"  # noqa: SLF001
     backend._username = "user"  # noqa: SLF001
     backend._user_id = "uid"  # noqa: SLF001

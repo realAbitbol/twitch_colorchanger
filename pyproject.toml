@@ -71,10 +71,6 @@ module = ["src.manager.*"]
 disallow_untyped_defs = false
 check_untyped_defs = false
 
-[[tool.mypy.overrides]]
-module = ["src.scheduler.adaptive_scheduler"]
-disallow_untyped_defs = false
-check_untyped_defs = false
 
 # Bandit security linting
 [tool.bandit]
@@ -133,7 +129,7 @@ line-ending = "auto"
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "main.py" = ["T201"]
-"tests/*" = ["S101"]
+"tests/*" = ["S101", "S105", "S106"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10

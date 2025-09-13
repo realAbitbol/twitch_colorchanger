@@ -1,8 +1,8 @@
-import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import aiohttp
+import pytest
 
 from src.chat.eventsub_backend import EventSubChatBackend
 
@@ -55,7 +55,7 @@ async def test_successful_welcome_consumes_pending_session(monkeypatch):
 
     welcome = Welcome()
     welcome.type = aiohttp.WSMsgType.TEXT
-    welcome.data = '{"payload": {"session": {"id": "%s"}}}' % session_id
+    welcome.data = f'{{"payload": {{"session": {{"id": "{session_id}"}}}}}}'
 
     ws_mock = MagicMock()
     ws_mock._request_headers = {}
@@ -119,7 +119,7 @@ async def test_full_reconnect_flow_rebuilds_subscriptions(monkeypatch):
     backend = EventSubChatBackend()
     backend._channels = ["chan1", "chan2"]
     backend._channel_ids = {"chan1": "1", "chan2": "2"}
-    backend._token = "t"
+    backend._token = "t"  # noqa: S105  # noqa: S105
     backend._client_id = "c"
 
     # Simulate receiving a session_reconnect message
@@ -169,7 +169,7 @@ async def test_session_stale_triggers_full_resubscribe(monkeypatch):
     backend = EventSubChatBackend()
     backend._channels = ["a"]
     backend._channel_ids = {"a": "1"}
-    backend._token = "t"
+    backend._token = "t"  # noqa: S105  # noqa: S105
     backend._client_id = "c"
 
     # Simulate close frame with code 4007

@@ -7,23 +7,6 @@ from src.color.models import ColorRequestResult, ColorRequestStatus
 from src.color.service import ColorChangeService
 
 
-class FakeRateLimiter:
-    def __init__(self) -> None:
-        self.wait_calls: list[tuple[str, bool]] = []
-        self.handle_429_called = False
-
-    async def wait_if_needed(
-        self, endpoint: str, is_user_request: bool = True, points_cost: int = 1
-    ) -> None:  # noqa: D401
-        self.wait_calls.append((endpoint, is_user_request))
-        await asyncio.sleep(0)
-
-    def handle_429_error(
-        self, headers: dict[str, str], is_user_request: bool = True
-    ) -> None:  # noqa: D401
-        self.handle_429_called = True
-
-
 class FakeBot:
     def __init__(
         self,
@@ -34,7 +17,6 @@ class FakeBot:
         self.use_random_colors = True
         self.last_color: str | None = None
         self.colors_changed = 0
-        self.rate_limiter = FakeRateLimiter()
         self._results = results
         self._refresh_outcomes = refresh_outcomes or []
         self._refresh_index = 0
@@ -115,7 +97,6 @@ async def test_color_change_rate_limited():
         "#00ff00", allow_refresh=True, fallback_to_preset=True
     )
     assert ok is False
-    assert bot.rate_limiter.handle_429_called is True
 
 
 @pytest.mark.asyncio

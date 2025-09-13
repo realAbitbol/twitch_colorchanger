@@ -8,7 +8,6 @@ import atexit
 import logging
 import os
 import sys
-import time
 
 # Import all modules first (required by E402)
 from .bot.manager import run_bots
@@ -19,7 +18,6 @@ from .config import (
     setup_missing_tokens,
 )
 from .errors.handling import log_error
-from .health import read_status
 from .utils import emit_startup_instructions
 
 # Configure logging after imports to prevent other modules from configuring it
@@ -121,13 +119,11 @@ async def main() -> None:
         print_config_summary(users_config)
         await run_bots(users_config, config_file)
     except asyncio.CancelledError:
-        logging.warning("Cancelled (Ctrl+C)")
         raise
     except KeyboardInterrupt:
-        logging.warning("👋 Application terminated by user")
-    except Exception as e:  # noqa: BLE001
+        pass
+    except Exception as e:
         log_error("Main application error", e)
-        logging.critical(f"💥 Critical error occurred: {str(e)}", exc_info=True)
         sys.exit(1)
     finally:
         logging.info("✅ Application shutdown complete")
@@ -136,70 +132,19 @@ async def main() -> None:
 # Best-effort safety net: ensure any lingering aiohttp session is closed
 @atexit.register
 def _cleanup_any_context() -> None:  # pragma: no cover - process exit path
-    try:  # best-effort; nothing to close explicitly yet
-        # Import lazily to avoid import side-effects if not needed
-        from .application_context import (  # noqa: F401
-            ApplicationContext,
-        )
-    except Exception as e:  # noqa: BLE001
-        # Log at debug to avoid noise
-        logging.debug(f"⚠️ Atexit context check error: {str(e)}")
+    # Import lazily to avoid import side-effects if not needed
+    from .application_context import (  # noqa: F401
+        ApplicationContext,
+    )
 
 
 if __name__ == "__main__":
-    # Simple health check mode
-    if len(sys.argv) > 1 and sys.argv[1] == "--health-check":
-        print("🩺 Health check mode")
-        try:
-            # Basic config sanity check
-            health_config = get_configuration()
-            # Consult runtime health status file (written by background tasks)
-            status = read_status()
-            # Thresholds configurable via env
-            max_failures = int(
-                os.environ.get("TWITCH_HEALTH_MAX_RECONNECT_FAILURES", "5")
-            )
-            stale_threshold = int(os.environ.get("TWITCH_HEALTH_STALE_SECONDS", "600"))
-
-            failures = int(status.get("consecutive_reconnect_failures", 0))
-            last_maintenance = status.get("last_maintenance")
-            last_ok = status.get("last_reconnect_ok")
-
-            if failures >= max_failures:
-                print(
-                    f"❌ Health check failed: consecutive_reconnect_failures={failures}"
-                )
-                sys.exit(1)
-
-            now = time.time()
-            if last_maintenance and (now - float(last_maintenance) > stale_threshold):
-                print(
-                    f"❌ Health check failed: last_maintenance_stale={now - float(last_maintenance):.0f}s"
-                )
-                sys.exit(1)
-
-            # If we have an explicit last_ok timestamp too old, treat as failure
-            if last_ok and (now - float(last_ok) > stale_threshold):
-                print(
-                    f"❌ Health check failed: last_reconnect_ok_stale={now - float(last_ok):.0f}s"
-                )
-                sys.exit(1)
-
-            print(f"✅ Health check passed users={len(health_config)}")
-            sys.exit(0)
-        except Exception as e:  # noqa: BLE001
-            print(f"❌ Health check failed: {str(e)}")
-            sys.exit(1)
-
     try:
         asyncio.run(main())
-    except KeyboardInterrupt:  # pragma: no cover - signal handling
-        logging.info("👋 Application terminated by user")
+    except KeyboardInterrupt:
         sys.exit(0)
     except asyncio.CancelledError:
-        logging.info("🛑 Application terminated by cancellation signal")
         sys.exit(0)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log_error("Top-level error", e)
-        logging.critical(f"💥 Top-level critical error: {str(e)}", exc_info=True)
         sys.exit(1)

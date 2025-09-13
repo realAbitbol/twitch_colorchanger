@@ -1,5 +1,6 @@
 import asyncio
 import atexit
+import logging
 
 import aiohttp
 import pytest
@@ -24,8 +25,8 @@ def _close_all_sessions() -> None:
             if not sess.closed:
                 try:
                     await sess.close()
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as e:  # noqa: BLE001
+                    logging.warning(f"Error closing session: {str(e)}")
     try:
         asyncio.run(_close())
     except RuntimeError:

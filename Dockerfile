@@ -65,9 +65,6 @@ ENV PYTHONUNBUFFERED=1 \
 
 VOLUME ["/app/config"]
 
-# Lean healthcheck uses built-in mode; avoids long inline Python one-liner.
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD python -m src.main --health-check || exit 1
 
 # Use tini as PID 1 to handle signals & reap zombies (safer long-running operation)
 ENTRYPOINT ["/sbin/tini", "--"]

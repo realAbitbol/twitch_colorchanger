@@ -55,19 +55,14 @@ class DummyBackend:
 @pytest.mark.asyncio()
 async def test_bot_start_and_stop(monkeypatch: pytest.MonkeyPatch) -> None:
     ctx = await ApplicationContext.create()
-    # Patch maintenance loop BEFORE start so it doesn't schedule long sleep
-    async def _fast_maintenance():  # noqa: D401
-        # Single tick replacement for long sleep loop
-        await asyncio.sleep(0)
-    monkeypatch.setattr(ctx, "_maintenance_loop", _fast_maintenance)
     await ctx.start()
     session = aiohttp.ClientSession()
     bot = TwitchColorBot(
         context=ctx,
-        token="tok",
-        refresh_token="rtok",
+        token="tok",  # noqa: S106
+        refresh_token="rtok",  # noqa: S106
         client_id="cid",
-        client_secret="csec",
+        client_secret="csec",  # noqa: S106
         nick="nick",
         channels=["#main", "#extra"],
         http_session=session,
@@ -103,12 +98,6 @@ async def test_bot_start_and_stop(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(bot, "_run_chat_loop", _fake_run_loop)
     monkeypatch.setattr(bot, "_get_user_info", _fake_user_info)
     monkeypatch.setattr(bot, "_get_current_color", _fake_current_color)
-    # Scheduler no-ops
-    async def _sched_noop():  # noqa: D401
-        await asyncio.sleep(0)
-        return None
-    monkeypatch.setattr(bot.scheduler, "start", _sched_noop)
-    monkeypatch.setattr(bot.scheduler, "stop", _sched_noop)
     # Token manager ensure_fresh
     if ctx.token_manager:
         monkeypatch.setattr(
@@ -129,11 +118,8 @@ async def test_bot_start_and_stop(monkeypatch: pytest.MonkeyPatch) -> None:
         raise AssertionError("Bot.running not False after stop")
     if not dummy.disconnected:
         raise AssertionError("Backend not disconnected on stop")
-    # Cleanup (avoid calling full ctx.shutdown which cancels long sleep)
+    # Cleanup
     await session.close()
-    if ctx._maintenance_task:  # noqa: SLF001
-        ctx._maintenance_task.cancel()  # noqa: SLF001
-        # Do not await to avoid propagating CancelledError from sleep
     if ctx.session and not ctx.session.closed:
         await ctx.session.close()
 
