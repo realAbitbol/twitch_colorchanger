@@ -6,6 +6,7 @@ import aiohttp
 import pytest
 
 from src.bot.core import TwitchColorBot
+from src.errors.internal import InternalError
 
 
 @pytest.mark.asyncio
@@ -265,7 +266,7 @@ async def test_log_scopes_if_possible_success():
     # Updated patch path to src.bot.token_refresher.TwitchAPI to match import location
     with patch("src.bot.token_refresher.TwitchAPI") as mock_api_class:
         mock_api = MagicMock()
-        mock_api.validate_token.return_value = {"scopes": ["user:read:chat", "user:manage:chat_color"]}
+        mock_api.validate_token = AsyncMock(return_value={"scopes": ["user:read:chat", "user:manage:chat_color"]})
         mock_api_class.return_value = mock_api
 
         await bot._log_scopes_if_possible()
@@ -314,7 +315,7 @@ async def test_log_scopes_if_possible_validation_fails():
     # Updated patch path to src.bot.token_refresher.TwitchAPI to match import location
     with patch("src.bot.token_refresher.TwitchAPI") as mock_api_class:
         mock_api = MagicMock()
-        mock_api.validate_token.side_effect = Exception("Validation failed")
+        mock_api.validate_token = AsyncMock(side_effect=ValueError("Validation failed"))
         mock_api_class.return_value = mock_api
 
         await bot._log_scopes_if_possible()
@@ -483,9 +484,8 @@ async def test_get_user_info_impl_401():
 
     with patch.object(bot.api, "request") as mock_request:
         mock_request.return_value = (None, 401, {})
-        result = await bot._get_user_info_impl()
-
-        assert result is None
+        with pytest.raises(InternalError):
+            await bot._get_user_info_impl()
 
 
 @pytest.mark.asyncio
@@ -561,9 +561,8 @@ async def test_get_current_color_impl_401():
 
     with patch.object(bot.api, "request") as mock_request:
         mock_request.return_value = (None, 401, {})
-        result = await bot._get_current_color_impl()
-
-        assert result is None
+        with pytest.raises(InternalError):
+            await bot._get_current_color_impl()
 
 
 @pytest.mark.asyncio

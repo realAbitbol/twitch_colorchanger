@@ -68,6 +68,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         self.new_config: list[dict[str, Any]] | None = None
         self.context = context
         self.http_session: aiohttp.ClientSession | None = None
+        self._manager_lock = asyncio.Lock()
         self._stats_service = ManagerStatistics()
 
     async def _start_all_bots(self) -> bool:
@@ -86,7 +87,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             try:
                 bot = self._create_bot(user_config)
                 self.bots.append(bot)
-            except Exception as e:  # noqa: BLE001
+            except (ValueError, RuntimeError, TypeError) as e:
                 logging.error(
                     f"💥 Failed to create bot: {str(e)} user={user_config.username}"
                 )
@@ -149,7 +150,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                 if task and not task.done():
                     task.cancel()
                     logging.info(f"🛑 Cancelled task index={i}")
-            except Exception as e:  # noqa: BLE001
+            except (ValueError, TypeError) as e:
                 logging.warning(f"💥 Error cancelling task index={i}: {str(e)}")
 
     def _close_all_bots(self) -> None:
@@ -158,7 +159,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             try:
                 bot.close()
                 logging.info(f"🔻 Closed bot index={i} user={bot.username}")
-            except Exception as e:  # noqa: BLE001
+            except (OSError, ValueError, RuntimeError) as e:
                 logging.warning(
                     f"💥 Error closing bot index={i}: {str(e)} user={getattr(bot, 'username', None)}"
                 )
@@ -174,7 +175,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
                     logging.warning(
                         f"💥 Task index={i} finished with exception: {str(result)}"
                     )
-        except Exception as e:  # noqa: BLE001
+        except (RuntimeError, ValueError, TypeError) as e:
             logging.warning(f"💥 Error waiting for task completion: {str(e)}")
         finally:
             self.tasks.clear()
@@ -196,34 +197,35 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         Returns:
             True if restart successful, False otherwise.
         """
-        if not self.new_config:
-            return False
-        logging.info("🔄 Restarting with new configuration")
-        saved = self._save_statistics()
-        await self._stop_all_bots()
-        self.bots.clear()
-        self.tasks.clear()
-        old_count = len(self.users_config)
-        self.users_config = (
-            [UserConfig.from_dict(u) for u in self.new_config]
-            if self.new_config
-            else []
-        )
-        new_count = len(self.users_config)
-        logging.info(f"🛠️ Configuration updated old={old_count} new={new_count}")
-        success = await self._start_all_bots()
-        if success:
-            self._restore_statistics(saved)
-            try:
-                # Prune tokens for users no longer present
-                if self.context and self.context.token_manager:
-                    active = {u.username.lower() for u in self.users_config}
-                    self.context.token_manager.prune(active)
-            except Exception as e:  # noqa: BLE001
-                logging.debug(f"⚠️ Error pruning tokens: {str(e)}")
-        self.restart_requested = False
-        self.new_config = None
-        return success
+        async with self._manager_lock:
+            if not self.new_config:
+                return False
+            logging.info("🔄 Restarting with new configuration")
+            saved = self._save_statistics()
+            await self._stop_all_bots()
+            self.bots.clear()
+            self.tasks.clear()
+            old_count = len(self.users_config)
+            self.users_config = (
+                [UserConfig.from_dict(u) for u in self.new_config]
+                if self.new_config
+                else []
+            )
+            new_count = len(self.users_config)
+            logging.info(f"🛠️ Configuration updated old={old_count} new={new_count}")
+            success = await self._start_all_bots()
+            if success:
+                self._restore_statistics(saved)
+                try:
+                    # Prune tokens for users no longer present
+                    if self.context and self.context.token_manager:
+                        active = {u.username.lower() for u in self.users_config}
+                        self.context.token_manager.prune(active)
+                except (ValueError, RuntimeError) as e:
+                    logging.debug(f"⚠️ Error pruning tokens: {str(e)}")
+            self.restart_requested = False
+            self.new_config = None
+            return success
 
     def _save_statistics(self) -> dict[str, dict[str, int]]:
         """Save current bot statistics for restoration after restart.
@@ -277,7 +279,8 @@ async def _run_main_loop(manager: BotManager) -> None:
         await asyncio.sleep(1)
         if manager.shutdown_initiated:
             logging.warning("🔻 Shutdown initiated - stopping bots")
-            await manager._stop_all_bots()
+            async with manager._manager_lock:
+                await manager._stop_all_bots()
             break
         if manager.restart_requested:
             ok = await manager._restart_with_new_config()
@@ -309,7 +312,8 @@ async def run_bots(
     manager = BotManager(users_config, config_file, context=context)
     manager.setup_signal_handlers()
     try:
-        success = await manager._start_all_bots()
+        async with manager._manager_lock:
+            success = await manager._start_all_bots()
         if not success:
             return
         logging.info("🏃 Bots running - press Ctrl+C to stop")
@@ -319,7 +323,7 @@ async def run_bots(
         raise
     except KeyboardInterrupt:  # noqa: PERF203
         logging.warning("⌨️ Keyboard interrupt")
-    except Exception as e:  # noqa: BLE001
+    except (RuntimeError, OSError, ValueError) as e:
         logging.error(f"💥 Fatal error: {str(e)}")
     finally:
         await manager._stop_all_bots()
@@ -328,11 +332,8 @@ async def run_bots(
 
         try:
             await _asyncio.shield(context.shutdown())
-        except Exception as e:  # noqa: BLE001
-            if isinstance(e, asyncio.CancelledError):
-                logging.debug("Shutdown cancelled (Ctrl+C)")
-            else:
-                logging.warning("💥 Error during application context shutdown")
+        except (RuntimeError, OSError, ValueError):
+            logging.warning("💥 Error during application context shutdown")
         logging.info("✅ App completed context shutdown")
         manager.print_statistics()
         logging.info("👋 Goodbye")

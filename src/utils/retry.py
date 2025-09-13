@@ -4,6 +4,8 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
+import aiohttp
+
 T = TypeVar("T")
 
 
@@ -27,7 +29,7 @@ async def retry_async(
             result, should_retry = await operation(attempt)
             if not should_retry:
                 return result
-        except Exception:
+        except (RuntimeError, ValueError, OSError, aiohttp.ClientError):
             should_retry = attempt < max_attempts - 1
             if not should_retry:
                 raise

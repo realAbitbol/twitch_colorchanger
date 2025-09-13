@@ -1,3 +1,4 @@
+import threading
 from datetime import datetime, timedelta
 
 import pytest
@@ -17,6 +18,7 @@ async def test_remove_and_prune(monkeypatch):
     tm._client_cache = {}
     tm._update_hooks = {}
     tm._hook_tasks = []
+    tm._tokens_lock = threading.Lock()
 
     info1 = TokenInfo("u1", "a1", "r1", "cid", "csec", datetime.now()+timedelta(hours=1))
     info2 = TokenInfo("u2", "a2", "r2", "cid", "csec", datetime.now()+timedelta(hours=1))

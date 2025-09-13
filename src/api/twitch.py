@@ -7,12 +7,14 @@ sprinkling raw request logic across modules.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from typing import Any
 
 import aiohttp
 
 from ..errors.handling import handle_api_error
+from ..errors.internal import InternalError
 
 
 class TwitchAPI:
@@ -71,15 +73,30 @@ class TwitchAPI:
         async with self._session.request(
             method, url, headers=headers, params=params, json=json_body
         ) as resp:
+            logging.debug(
+                f"Twitch API response: status={resp.status}, content-type={resp.headers.get('content-type', 'none')}, "
+                f"content-length={resp.headers.get('content-length', 'unknown')}, url={url}"
+            )
 
             async def operation():
                 return await resp.json()
 
             try:
-                data = await handle_api_error(
-                    operation, f"Twitch API {method} {endpoint}"
-                )
-            except Exception:
+                if resp.status == 204:
+                    # 204 No Content has no body, so don't try to parse JSON
+                    data = {}
+                else:
+                    data = await handle_api_error(
+                        operation, f"Twitch API {method} {endpoint}"
+                    )
+            except (
+                aiohttp.ClientError,
+                TimeoutError,
+                ConnectionError,
+                ValueError,
+                RuntimeError,
+                InternalError,
+            ):
                 data = {}
             return data, resp.status, dict(resp.headers)
 
@@ -104,7 +121,14 @@ class TwitchAPI:
 
         try:
             return await handle_api_error(operation, "Twitch token validation")
-        except Exception:
+        except (
+            aiohttp.ClientError,
+            TimeoutError,
+            ConnectionError,
+            ValueError,
+            RuntimeError,
+            InternalError,
+        ):
             return None
 
     async def get_users_by_login(
@@ -213,7 +237,14 @@ class TwitchAPI:
 
         try:
             data = await handle_api_error(operation, "Twitch API response parsing")
-        except Exception:
+        except (
+            aiohttp.ClientError,
+            TimeoutError,
+            ConnectionError,
+            ValueError,
+            RuntimeError,
+            InternalError,
+        ):
             return []
         if resp.status != 200 or not isinstance(data, dict):
             return []

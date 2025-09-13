@@ -7,6 +7,8 @@ import logging
 import time
 from typing import Any
 
+import aiohttp
+
 from ..api.twitch import TwitchAPI
 from ..color import ColorChangeService
 from ..color.models import ColorRequestResult, ColorRequestStatus
@@ -52,7 +54,7 @@ class ColorChanger:
         user_config["is_prime_or_turbo"] = False
         try:
             await queue_user_update(user_config, self.config_file)
-        except Exception as e:
+        except (ValueError, RuntimeError, OSError) as e:
             logging.warning(f"Persist detection error: {str(e)}")
 
     async def _prime_color_state(self) -> None:
@@ -139,7 +141,13 @@ class ColorChanger:
             return await handle_retryable_error(
                 operation, "User info fetch", max_attempts=6
             )
-        except Exception:
+        except (
+            aiohttp.ClientError,
+            TimeoutError,
+            ConnectionError,
+            ValueError,
+            RuntimeError,
+        ):
             return None
 
     def _process_user_info_response(
@@ -223,7 +231,13 @@ class ColorChanger:
                         "timestamp": time.time(),
                     }
             return color
-        except Exception:
+        except (
+            aiohttp.ClientError,
+            TimeoutError,
+            ConnectionError,
+            ValueError,
+            RuntimeError,
+        ):
             return None
 
     async def _make_color_request(self) -> tuple[dict[str, Any] | None, int]:
@@ -330,7 +344,13 @@ class ColorChanger:
                         "timestamp": time.time(),
                     }
             return result
-        except Exception:
+        except (
+            aiohttp.ClientError,
+            TimeoutError,
+            ConnectionError,
+            ValueError,
+            RuntimeError,
+        ):
             return ColorRequestResult(
                 ColorRequestStatus.INTERNAL_ERROR, error="Max retries exceeded"
             )
@@ -427,5 +447,5 @@ class ColorChanger:
                 message = payload.get("message") or payload.get("error")
                 base = message if message else payload
                 return str(base)[:200]
-        except Exception:  # noqa: BLE001
+        except (ValueError, TypeError, KeyError):
             return None

@@ -8,6 +8,8 @@ import sys
 from collections.abc import Iterable, Sequence
 from typing import Any
 
+import aiohttp
+
 from .model import UserConfig  # normalize_user_list provided below
 from .repository import ConfigRepository
 
@@ -91,7 +93,7 @@ def update_user_in_config(user_config_dict: dict[str, Any], config_file: str) ->
         if changed:
             _log_update_normalized(uc)
         return True
-    except Exception as e:  # noqa: BLE001
+    except (ValueError, RuntimeError, OSError) as e:
         _log_update_failed(e, user_config_dict)
         return False
 
@@ -282,7 +284,7 @@ def normalize_user_channels(
             user_dicts = [uc.to_dict() for uc in normalized_users]
             save_users_to_config(user_dicts, config_file)
             logging.info("💾 Channel normalization saved")
-        except Exception as e:  # noqa: BLE001
+        except (OSError, ValueError, RuntimeError) as e:
             logging.error(f"💥 Failed saving normalization: {type(e).__name__}")
     return normalized_users, any_changes
 
@@ -386,7 +388,7 @@ async def _validate_or_invalidate_scopes(
             confirmed_set if confirmed_set is not None else scope_set,
         )
         return False
-    except Exception:  # noqa: BLE001
+    except (aiohttp.ClientError, ValueError, RuntimeError):
         # Leave tokens untouched if validation fails; treat as retained
         return True
 
@@ -438,7 +440,7 @@ async def _validate_or_invalidate_scopes_dataclass(
             confirmed_set if confirmed_set is not None else scope_set,
         )
         return False
-    except Exception:  # noqa: BLE001
+    except (aiohttp.ClientError, ValueError, RuntimeError):
         # Leave tokens untouched if validation fails; treat as retained
         return True
 
@@ -473,7 +475,7 @@ async def _confirm_missing_scopes(
     """
     try:
         second = await api.validate_token(access)
-    except Exception:  # noqa: BLE001
+    except (aiohttp.ClientError, ValueError, RuntimeError):
         return [], None  # Treat failure as retain (no confirmed missing)
     if not isinstance(second, dict) or not isinstance(second.get("scopes"), list):
         return [], None
@@ -617,7 +619,7 @@ def _save_updated_config(
     try:
         save_users_to_config(updated_users, config_file)
         logging.info("💾 Tokens update saved")
-    except Exception as e:  # noqa: BLE001
+    except (OSError, ValueError, RuntimeError) as e:
         logging.error(f"💥 Tokens update save failed: {type(e).__name__}")
 
 
@@ -634,5 +636,5 @@ def _save_updated_config_dataclass(
         user_dicts = [uc.to_dict() for uc in updated_users]
         save_users_to_config(user_dicts, config_file)
         logging.info("💾 Tokens update saved")
-    except Exception as e:  # noqa: BLE001
+    except (OSError, ValueError, RuntimeError) as e:
         logging.error(f"💥 Tokens update save failed: {type(e).__name__}")
