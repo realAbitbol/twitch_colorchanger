@@ -1,10 +1,12 @@
 import asyncio
-import types
+
+import aiohttp
 import pytest
+
+from src.application_context import ApplicationContext
 from src.bot.core import TwitchColorBot
 from src.color.models import ColorRequestStatus
-from src.application_context import ApplicationContext
-import aiohttp
+
 
 class FakeAPI:
     def __init__(self, responses):
@@ -22,23 +24,23 @@ class FakeAPI:
 
 @pytest.mark.asyncio
 async def test_perform_color_request_status_mapping(monkeypatch):
+    # Speed up test by making sleeps instant
+    async def no_sleep(delay):
+        pass
+    monkeypatch.setattr("asyncio.sleep", no_sleep)
+
     ctx = await ApplicationContext.create()
     session = aiohttp.ClientSession()
     bot = TwitchColorBot(
         context=ctx,
-        token="tok",
-        refresh_token="rtok",
+        token="tok",  # noqa: S106
+        refresh_token="rtok",  # noqa: S106
         client_id="cid",
-        client_secret="csec",
+        client_secret="csec",  # noqa: S106
         nick="nick",
         channels=["#main"],
         http_session=session,
     )
-    # Bypass rate limiter wait
-    async def _no_wait(*a, **k):
-        await asyncio.sleep(0)
-    monkeypatch.setattr(bot.rate_limiter, "wait_if_needed", _no_wait)
-    monkeypatch.setattr(bot.rate_limiter, "update_from_headers", lambda *a, **k: None)
 
     # Inject fake api with sequence of responses
     responses = [
@@ -58,7 +60,7 @@ async def test_perform_color_request_status_mapping(monkeypatch):
 
     assert r1.status == ColorRequestStatus.SUCCESS
     assert r2.status == ColorRequestStatus.UNAUTHORIZED
-    assert r3.status == ColorRequestStatus.RATE_LIMIT
+    assert r3.status == ColorRequestStatus.HTTP_ERROR  # 429 retries, then 500
     assert r4.status == ColorRequestStatus.HTTP_ERROR
 
     await session.close()

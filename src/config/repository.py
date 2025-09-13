@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import fcntl
 import glob
 import hashlib
@@ -13,9 +12,6 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any
-
-from ..constants import CONFIG_WRITE_DEBOUNCE
-from . import globals as watcher_globals
 
 
 class ConfigRepository:
@@ -66,7 +62,7 @@ class ConfigRepository:
         except FileNotFoundError:
             return []
         except Exception as e:  # noqa: BLE001
-            logging.error(f"💥 Configuration load error: {type(e).__name__}")
+            logging.error(f"Configuration load error: {e}")
             return []
 
     def _compute_checksum(self, users: list[dict[str, Any]]) -> str:
@@ -79,47 +75,15 @@ class ConfigRepository:
         return h.hexdigest()
 
     def save_users(self, users: list[dict[str, Any]]) -> bool:
-        try:
-            try:
-                watcher_globals.pause_config_watcher()
-            except Exception as e:  # noqa: BLE001
-                logging.debug(
-                    f"💥 Failed to pause config watcher: {type(e).__name__} {str(e)}"
-                )
+        checksum = self._compute_checksum(users)
+        if self._last_checksum == checksum:
+            logging.info(f"Skipped save (checksum match) users={len(users)}")
+            return False  # No write performed
 
-            checksum = self._compute_checksum(users)
-            if self._last_checksum == checksum:
-                logging.info(
-                    f"⏭️ Skipped save (checksum match) checksum={checksum} users={len(users)}"
-                )
-                return False  # No write performed
-
-            self._prepare_dir()
-            self._atomic_write({"users": users})
-            self._last_checksum = checksum
-            # Non-blocking debounce if inside event loop; fallback to minimal sleep else
-            try:
-                loop = asyncio.get_running_loop()
-
-                # Schedule a tiny asynchronous debounce without blocking caller
-                async def _debounce() -> None:  # pragma: no cover (timing minor)
-                    await asyncio.sleep(CONFIG_WRITE_DEBOUNCE)
-
-                loop.create_task(_debounce())
-            except RuntimeError:  # no running loop
-                # Keep previous behavior but shorter to avoid blocking excessively
-                time.sleep(min(CONFIG_WRITE_DEBOUNCE, 0.05))
-            return True
-        except Exception as e:  # noqa: BLE001
-            logging.error(f"💥 Config save failed: {type(e).__name__}")
-            raise
-        finally:
-            try:
-                watcher_globals.resume_config_watcher()
-            except Exception as e:  # noqa: BLE001
-                logging.debug(
-                    f"💥 Failed to resume config watcher: {type(e).__name__} {str(e)}"
-                )
+        self._prepare_dir()
+        self._atomic_write({"users": users})
+        self._last_checksum = checksum
+        return True
 
     def _prepare_dir(self) -> None:
         config_dir = os.path.dirname(self.path)

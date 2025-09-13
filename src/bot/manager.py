@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import signal
 from collections.abc import Iterable
 from secrets import SystemRandom
@@ -13,16 +12,10 @@ from typing import TYPE_CHECKING, Any, cast
 import aiohttp
 
 from ..application_context import ApplicationContext
-from ..config.globals import set_global_watcher
-from ..config.watcher import create_config_watcher
-from ..constants import (
-    TASK_WATCHDOG_INTERVAL,  # noqa: F401 - may be used by watchdog service
-)
-from ..manager import HealthMonitor, ManagerStatistics
+from ..manager import ManagerStatistics
 
 if TYPE_CHECKING:  # pragma: no cover
     from ..manager.statistics import _BotProto
-from ..manager.task_watchdog import TaskWatchdog
 from .core import TwitchColorBot
 
 _jitter_rng = SystemRandom()
@@ -45,11 +38,8 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         self.shutdown_initiated = False
         self.restart_requested = False
         self.new_config: list[dict[str, Any]] | None = None
-        # Removed unused _health_check_in_progress (dead code)
         self.context = context
         self.http_session: aiohttp.ClientSession | None = None
-        self._health_monitor: HealthMonitor | None = None
-        self._task_watchdog: TaskWatchdog | None = None
         self._stats_service = ManagerStatistics()
 
     async def _start_all_bots(self) -> bool:
@@ -74,8 +64,6 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         await asyncio.sleep(1)
         self.running = True
         self.shutdown_initiated = False
-        self._start_health_monitoring()
-        self._start_task_watchdog()
         logging.debug("✅ All bots started successfully")
         return True
 
@@ -183,31 +171,6 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         self.new_config = None
         return success
 
-    # Removed unused private monitoring coroutines (_monitor_bot_health,
-    # _perform_health_check, _monitor_task_health) – monitoring handled by
-    # HealthMonitor/TaskWatchdog services.
-
-    def _check_task_health(self) -> None:
-        if not self._task_watchdog:
-            self._task_watchdog = TaskWatchdog(self)
-        self._task_watchdog._check_task_health()  # noqa: SLF001
-
-    def _start_health_monitoring(self) -> None:
-        if self.running:
-            if not self._health_monitor:
-                self._health_monitor = HealthMonitor(self)
-            task = self._health_monitor.start()
-            self.tasks.append(task)
-            logging.debug("▶️ Started health monitor")
-
-    def _start_task_watchdog(self) -> None:
-        if self.running:
-            if not self._task_watchdog:
-                self._task_watchdog = TaskWatchdog(self)
-            task = self._task_watchdog.start()
-            self.tasks.append(task)
-            logging.debug("▶️ Started task watchdog")
-
     def _save_statistics(self) -> dict[str, dict[str, int]]:
         bots_iter: Iterable[_BotProto] = cast(Iterable["_BotProto"], self.bots)
         return self._stats_service.save(bots_iter)
@@ -235,26 +198,6 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         signal.signal(signal.SIGTERM, handler)
 
 
-async def _setup_config_watcher(manager: BotManager, config_file: str | None) -> Any:
-    if not config_file or not os.path.exists(config_file):
-        return None
-    try:
-
-        def restart_cb(new_config: list[dict[str, Any]]) -> None:
-            manager.request_restart(new_config)
-
-        watcher = await create_config_watcher(config_file, restart_cb)
-        set_global_watcher(watcher)
-        logging.debug(f"👀 Config watcher enabled file={config_file}")
-        return watcher
-    except ImportError:
-        logging.warning("⚠️ Config watching unavailable - install watchdog")
-        return None
-    except Exception as e:  # noqa: BLE001
-        logging.warning(f"💥 Failed to start config watcher: {str(e)}")
-        return None
-
-
 async def _run_main_loop(manager: BotManager) -> None:
     while manager.running:
         await asyncio.sleep(1)
@@ -273,15 +216,6 @@ async def _run_main_loop(manager: BotManager) -> None:
             break
 
 
-def _cleanup_watcher(watcher: Any) -> None:  # pragma: no cover
-    if watcher:
-        watcher.stop()
-    try:
-        set_global_watcher(None)
-    except (ImportError, AttributeError):
-        pass
-
-
 async def run_bots(
     users_config: list[dict[str, Any]], config_file: str | None = None
 ) -> None:
@@ -291,7 +225,6 @@ async def run_bots(
     await context.start()
     manager = BotManager(users_config, config_file, context=context)
     manager.setup_signal_handlers()
-    watcher = await _setup_config_watcher(manager, config_file)
     try:
         success = await manager._start_all_bots()
         if not success:
@@ -303,7 +236,6 @@ async def run_bots(
     except Exception as e:  # noqa: BLE001
         logging.error(f"💥 Fatal error: {str(e)}")
     finally:
-        _cleanup_watcher(watcher)
         await manager._stop_all_bots()
         logging.info("🔻 App initiating context shutdown")
         import asyncio as _asyncio

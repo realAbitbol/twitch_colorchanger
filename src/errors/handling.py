@@ -11,7 +11,5 @@ import logging
 ## Removed legacy simple_retry wrapper (superseded by run_with_retry)  # noqa: ERA001
 
 
-def log_error(
-    message: str, error: Exception, user: str | None = None
-) -> None:  # pragma: no cover
-    logging.error(f"💥 Error: {message} user={user} details={str(error)}")
+def log_error(message: str, error: Exception) -> None:
+    logging.error(f"Error: {message} - {str(error)}")

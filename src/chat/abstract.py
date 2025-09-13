@@ -11,7 +11,6 @@ Minimal contract (kept small to ease wrapping the existing IRC client):
     disconnect() -> Awaitable[None]
     update_token(new_token: str) -> None
     set_message_handler(callable(username, channel, message))
-    set_color_change_handler(callable(username, channel, message))  (optional feature parity)
 
 Message handler semantics mirror previous AsyncTwitchIRC expectations.
 """
@@ -62,10 +61,6 @@ class ChatBackend(ABC):
         self, handler: MessageHandler
     ) -> None:  # pragma: no cover - interface
         raise NotImplementedError
-
-    def set_color_change_handler(self, handler: MessageHandler) -> None:  # optional
-        # Default no-op; IRC backend overrides.
-        _ = handler
 
 
 class BackendType(str, Enum):

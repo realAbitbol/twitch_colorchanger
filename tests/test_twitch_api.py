@@ -66,7 +66,7 @@ def test_get_users_by_login_dedup_and_chunk(monkeypatch: pytest.MonkeyPatch) -> 
     # Prepare multiple chunk responses (simulate 3 chunked requests)
     # Build payload with 'data' list of dicts
     def make_payload(logins):
-        return {"data": [{"login": l, "id": f"id_{l}"} for l in logins]}
+        return {"data": [{"login": login, "id": f"id_{login}"} for login in logins]}
 
     # Queue: expect 3 chunks (250 total -> 100 + 100 + 50)
     session.queue(_Resp(200, make_payload([f"user{i}" for i in range(100)])))

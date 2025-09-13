@@ -39,7 +39,7 @@ async def test_multi_user_interleaved_updates(tmp_path: Path) -> None:  # type: 
     async def rapid_queue(u: str):
         for c in range(5):
             await queue_user_update({"username": u, "channels": [f"#{u}{c}"]}, str(cfg))
-            await asyncio.sleep(random.uniform(0, 0.02))
+            await asyncio.sleep(random.uniform(0, 0.02))  # noqa: S311
 
     async def occasional_direct(u: str):
         # Issue a direct write that should serialize with queued batch

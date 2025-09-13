@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+
 import aiohttp
 import pytest
 
@@ -27,25 +28,19 @@ async def test_ccc_hex_and_preset_work_even_when_disabled(monkeypatch):
     session = aiohttp.ClientSession()
     bot = TwitchColorBot(
         context=ctx,
-        token="tok",
-        refresh_token="rtok",
+        token="tok",  # noqa: S106
+        refresh_token="rtok",  # noqa: S106
         client_id="cid",
-        client_secret="csec",
+        client_secret="csec",  # noqa: S106
         nick="nick",
         channels=["#main"],
         http_session=session,
     )
     # Disable auto color
     bot.enabled = False
-    # Inject fake API and bypass rate limiter
+    # Inject fake API
     fake_api = FakeAPI()
     bot.api = fake_api  # type: ignore
-
-    async def _no_wait(*a, **k):
-        await asyncio.sleep(0)
-
-    monkeypatch.setattr(bot.rate_limiter, "wait_if_needed", _no_wait)
-    monkeypatch.setattr(bot.rate_limiter, "update_from_headers", lambda *a, **k: None)
 
     # Simulate receiving a command message from self
     await bot.handle_message("nick", "main", "ccc #a1b2c3")
@@ -62,9 +57,7 @@ async def test_ccc_hex_and_preset_work_even_when_disabled(monkeypatch):
     # Third expanded #aabbcc
     assert put_calls[2][2]["color"] == "#aabbcc"
 
-    # Cleanup similar to other tests to avoid long-sleep cancellation
+    # Cleanup
     await session.close()
-    if ctx._maintenance_task:  # type: ignore[attr-defined]
-        ctx._maintenance_task.cancel()  # type: ignore[attr-defined]
     if ctx.session and not ctx.session.closed:
         await ctx.session.close()

@@ -214,7 +214,7 @@ async def test_poll_slow_down(monkeypatch, caplog):
     monkeypatch.setattr("asyncio.sleep", lambda _s: original_sleep(0))
 
     result = await df.poll_for_tokens("dev-code", expires_in=10)
-    assert result["access_token"] == "at2"
+    assert result["access_token"] == "at2"  # noqa: S105
     # Interval should have been incremented once (1 -> 2) due to slow_down.
     assert df.poll_interval == 2
     assert any("Server requested slower polling" in r.message for r in caplog.records)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+
 import aiohttp
 import pytest
 
@@ -25,10 +26,10 @@ async def test_ccc_hex_blocked_when_nonprime(monkeypatch, caplog):
     session = aiohttp.ClientSession()
     bot = TwitchColorBot(
         context=ctx,
-        token="tok",
-        refresh_token="rtok",
+        token="tok",  # noqa: S106
+        refresh_token="rtok",  # noqa: S106
         client_id="cid",
-        client_secret="csec",
+        client_secret="csec",  # noqa: S106
         nick="nick",
         channels=["#main"],
         http_session=session,
@@ -52,7 +53,5 @@ async def test_ccc_hex_blocked_when_nonprime(monkeypatch, caplog):
     assert any("ℹ️ Ignoring hex via ccc for non-Prime" in m for m in msgs)
 
     await session.close()
-    if ctx._maintenance_task:  # type: ignore[attr-defined]
-        ctx._maintenance_task.cancel()  # type: ignore[attr-defined]
     if ctx.session and not ctx.session.closed:
         await ctx.session.close()

@@ -8,9 +8,9 @@ from pathlib import Path
 import aiohttp
 import pytest
 
-from src.config.async_persistence import flush_pending_updates, queue_user_update
 from src.auth_token.client import TokenClient, TokenResult
 from src.auth_token.manager import TokenManager, TokenOutcome
+from src.config.async_persistence import flush_pending_updates, queue_user_update
 
 
 class SmokeTokenClient(TokenClient):

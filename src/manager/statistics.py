@@ -7,14 +7,10 @@ from collections.abc import Iterable
 from typing import Protocol
 
 
-class _StatsProto(Protocol):  # minimal protocol for bot.stats
-    messages_sent: int
-    colors_changed: int
-
-
 class _BotProto(Protocol):  # structural typing for consumers
     username: str
-    stats: _StatsProto
+    messages_sent: int
+    colors_changed: int
 
     def print_statistics(self) -> None: ...  # noqa: D401,E701
 
@@ -24,8 +20,8 @@ class ManagerStatistics:
         stats: dict[str, dict[str, int]] = {}
         for bot in bots:
             stats[bot.username] = {
-                "messages_sent": bot.stats.messages_sent,
-                "colors_changed": bot.stats.colors_changed,
+                "messages_sent": bot.messages_sent,
+                "colors_changed": bot.colors_changed,
             }
         logging.debug(f"💾 Saved statistics (bots={len(stats)})")
         return stats
@@ -37,8 +33,8 @@ class ManagerStatistics:
         for bot in bots:
             if bot.username in saved:
                 data = saved[bot.username]
-                bot.stats.messages_sent = data["messages_sent"]
-                bot.stats.colors_changed = data["colors_changed"]
+                bot.messages_sent = data["messages_sent"]
+                bot.colors_changed = data["colors_changed"]
                 restored += 1
         if restored:
             logging.debug(f"♻️ Restored statistics (bots={restored})")
@@ -47,8 +43,8 @@ class ManagerStatistics:
         bots_list = list(bots)
         if not bots_list:
             return None
-        total_messages = sum(bot.stats.messages_sent for bot in bots_list)
-        total_colors = sum(bot.stats.colors_changed for bot in bots_list)
+        total_messages = sum(bot.messages_sent for bot in bots_list)
+        total_colors = sum(bot.colors_changed for bot in bots_list)
         logging.info(
             f"📊 Aggregate statistics bots={len(bots_list)} messages={total_messages} colors={total_colors}"
         )
