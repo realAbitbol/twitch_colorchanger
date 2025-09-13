@@ -78,7 +78,7 @@ skips = ["B101"]  # Skip assert_used test
 
 # Ruff - Modern Python linter and formatter
 [tool.ruff]
-target-version = "py311"
+target-version = "py313"
 line-length = 88
 
 # Enable specific rule sets
