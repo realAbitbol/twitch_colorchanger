@@ -135,7 +135,6 @@ async def test_run_bots_success():
         mock_manager._manager_lock = AsyncMock()
         mock_manager._start_all_bots = AsyncMock(return_value=True)
         mock_manager._stop_all_bots = AsyncMock()
-        mock_manager.print_statistics = MagicMock()
         mock_manager_class.return_value = mock_manager
 
         await run_bots(users_config, "test.conf")
@@ -143,7 +142,6 @@ async def test_run_bots_success():
         mock_manager._start_all_bots.assert_called_once()
         mock_loop.assert_called_once_with(mock_manager)
         mock_manager._stop_all_bots.assert_called_once()
-        mock_manager.print_statistics.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -175,7 +173,6 @@ async def test_run_bots_start_fails():
         mock_manager._manager_lock = AsyncMock()
         mock_manager._start_all_bots = AsyncMock(return_value=False)
         mock_manager._stop_all_bots = AsyncMock()
-        mock_manager.print_statistics = MagicMock()
         mock_manager_class.return_value = mock_manager
 
         await run_bots(users_config, "test.conf")
@@ -266,17 +263,13 @@ async def test_restart_with_new_config_success():
         }
     ]
 
-    with patch.object(manager, "_save_statistics") as mock_save, \
-         patch.object(manager, "_stop_all_bots", new_callable=AsyncMock) as mock_stop, \
-         patch.object(manager, "_start_all_bots", new_callable=AsyncMock, return_value=True) as mock_start, \
-         patch.object(manager, "_restore_statistics") as mock_restore:
+    with patch.object(manager, "_stop_all_bots", new_callable=AsyncMock) as mock_stop, \
+         patch.object(manager, "_start_all_bots", new_callable=AsyncMock, return_value=True) as mock_start:
         result = await manager._restart_with_new_config()
 
         assert result is True
-        mock_save.assert_called_once()
         mock_stop.assert_called_once()
         mock_start.assert_called_once()
-        mock_restore.assert_called_once()
         assert manager.new_config is None
         assert manager.restart_requested is False
 
@@ -324,13 +317,11 @@ async def test_restart_with_new_config_start_fails():
         }
     ]
 
-    with patch.object(manager, "_save_statistics") as mock_save, \
-         patch.object(manager, "_stop_all_bots", new_callable=AsyncMock) as mock_stop, \
+    with patch.object(manager, "_stop_all_bots", new_callable=AsyncMock) as mock_stop, \
          patch.object(manager, "_start_all_bots", new_callable=AsyncMock, return_value=False) as mock_start:
         result = await manager._restart_with_new_config()
 
         assert result is False
-        mock_save.assert_called_once()
         mock_stop.assert_called_once()
         mock_start.assert_called_once()
         assert manager.new_config is None

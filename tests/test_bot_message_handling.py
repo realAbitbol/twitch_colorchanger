@@ -24,8 +24,6 @@ async def test_handle_message_wrong_sender():
 
     await bot.handle_message("otheruser", "#test", "hello")
 
-    assert bot.messages_sent == 0
-
 
 @pytest.mark.asyncio
 async def test_handle_message_toggle_handled():
@@ -45,7 +43,6 @@ async def test_handle_message_toggle_handled():
     with patch.object(bot, "_maybe_handle_toggle", return_value=True) as mock_toggle:
         await bot.handle_message("testuser", "#test", "ccd")
 
-        assert bot.messages_sent == 1
         mock_toggle.assert_called_once_with("ccd")
 
 
@@ -68,7 +65,6 @@ async def test_handle_message_ccc_handled():
          patch.object(bot, "_maybe_handle_ccc", return_value=True) as mock_ccc:
         await bot.handle_message("testuser", "#test", "ccc red")
 
-        assert bot.messages_sent == 1
         mock_toggle.assert_called_once_with("ccc red")
         mock_ccc.assert_called_once()
 
@@ -94,7 +90,6 @@ async def test_handle_message_color_change():
          patch.object(bot, "_change_color", new_callable=AsyncMock) as mock_change:
         await bot.handle_message("testuser", "#test", "hello")
 
-        assert bot.messages_sent == 1
         mock_toggle.assert_called_once_with("hello")
         mock_ccc.assert_called_once()
         mock_change.assert_called_once()
@@ -121,7 +116,6 @@ async def test_handle_message_disabled():
          patch.object(bot, "_change_color", new_callable=AsyncMock) as mock_change:
         await bot.handle_message("testuser", "#test", "hello")
 
-        assert bot.messages_sent == 1
         mock_toggle.assert_called_once_with("hello")
         mock_ccc.assert_called_once()
         mock_change.assert_not_called()

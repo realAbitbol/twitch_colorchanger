@@ -28,7 +28,6 @@ class ColorChanger:
     api: TwitchAPI
     access_token: str
     client_id: str
-    colors_changed: int
     _color_service: ColorChangeService | None
     last_color: str | None
 
@@ -412,10 +411,6 @@ class ColorChanger:
         if isinstance(e, TimeoutError):
             return ColorRequestResult(ColorRequestStatus.TIMEOUT, error=str(e))
         return ColorRequestResult(ColorRequestStatus.INTERNAL_ERROR, error=str(e))
-
-    def increment_colors_changed(self) -> None:
-        """Increment the counter for successful color changes."""
-        self.colors_changed += 1
 
     async def _change_color(self, hex_color: str | None = None) -> bool:
         """Change the user's chat color.

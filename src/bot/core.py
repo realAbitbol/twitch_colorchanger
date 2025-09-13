@@ -44,8 +44,6 @@ class TwitchColorBot(MessageHandler, ColorChanger, TokenRefresher):  # pylint: d
         config_file: Path to configuration file for persistence.
         enabled: Whether automatic color changes are enabled.
         running: Runtime state flag.
-        messages_sent: Counter for sent messages.
-        colors_changed: Counter for color changes.
         last_color: Last set color.
     """
 
@@ -122,8 +120,6 @@ class TwitchColorBot(MessageHandler, ColorChanger, TokenRefresher):  # pylint: d
         self.running = False
         self._state_lock = asyncio.Lock()
         self.listener_task: asyncio.Task[None] | None = None
-        self.messages_sent = 0
-        self.colors_changed = 0
         self.last_color = None
 
         # Lazy/optional services
@@ -401,9 +397,3 @@ class TwitchColorBot(MessageHandler, ColorChanger, TokenRefresher):  # pylint: d
         # Note: close is sync, but since _state_lock is asyncio, we can't use it here.
         # Assuming close is called when no async operations are running.
         self.running = False
-
-    def print_statistics(self) -> None:
-        """Log current bot statistics."""
-        logging.info(
-            f"📊 Statistics user={self.username} messages={self.messages_sent} colors={self.colors_changed}"
-        )

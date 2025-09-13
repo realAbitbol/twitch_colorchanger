@@ -1,4 +1,4 @@
-"""Bot support package (persistence, registrar, statistics)."""
+"""Bot support package (persistence, registrar)."""
 
 from .core import TwitchColorBot  # noqa: F401
 

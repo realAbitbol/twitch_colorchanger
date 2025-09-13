@@ -1,10 +1,6 @@
 """Manager subsystem package.
 
-Aggregates bot management helper components (statistics).
+Aggregates bot management helper components.
 """
 
-from .statistics import ManagerStatistics
-
-__all__ = [
-    "ManagerStatistics",
-]
+__all__: list[str] = []

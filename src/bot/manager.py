@@ -5,18 +5,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
-from collections.abc import Iterable
 from secrets import SystemRandom
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
 import aiohttp
 
 from ..application_context import ApplicationContext
 from ..config.model import UserConfig
-from ..manager import ManagerStatistics
-
-if TYPE_CHECKING:  # pragma: no cover
-    from ..manager.statistics import _BotProto
 from .core import TwitchColorBot
 
 _jitter_rng = SystemRandom()
@@ -27,7 +22,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
 
     Handles creation, lifecycle management, and coordination of multiple bot instances.
     Provides restart functionality for configuration changes and graceful shutdown.
-    Manages shared HTTP sessions and statistics aggregation across all bots.
+    Manages shared HTTP sessions.
 
     Attributes:
         users_config: List of user configuration dictionaries.
@@ -69,7 +64,6 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         self.context = context
         self.http_session: aiohttp.ClientSession | None = None
         self._manager_lock = asyncio.Lock()
-        self._stats_service = ManagerStatistics()
 
     async def _start_all_bots(self) -> bool:
         """Start all bots from the user configuration.
@@ -201,7 +195,6 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             if not self.new_config:
                 return False
             logging.info("🔄 Restarting with new configuration")
-            saved = self._save_statistics()
             await self._stop_all_bots()
             self.bots.clear()
             self.tasks.clear()
@@ -215,7 +208,6 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             logging.info(f"🛠️ Configuration updated old={old_count} new={new_count}")
             success = await self._start_all_bots()
             if success:
-                self._restore_statistics(saved)
                 try:
                     # Prune tokens for users no longer present
                     if self.context and self.context.token_manager:
@@ -226,29 +218,6 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             self.restart_requested = False
             self.new_config = None
             return success
-
-    def _save_statistics(self) -> dict[str, dict[str, int]]:
-        """Save current bot statistics for restoration after restart.
-
-        Returns:
-            Dictionary of saved statistics.
-        """
-        bots_iter: Iterable[_BotProto] = cast(Iterable["_BotProto"], self.bots)
-        return self._stats_service.save(bots_iter)
-
-    def _restore_statistics(self, saved: dict[str, dict[str, int]]) -> None:
-        """Restore saved statistics to the new bot instances.
-
-        Args:
-            saved: Dictionary of saved statistics.
-        """
-        bots_iter: Iterable[_BotProto] = cast(Iterable["_BotProto"], self.bots)
-        self._stats_service.restore(bots_iter, saved)
-
-    def print_statistics(self) -> None:
-        """Print aggregated statistics for all bots."""
-        bots_iter: Iterable[_BotProto] = cast(Iterable["_BotProto"], self.bots)
-        self._stats_service.aggregate(bots_iter)
 
     def setup_signal_handlers(self) -> None:  # pragma: no cover
         """Set up signal handlers for graceful shutdown on SIGINT/SIGTERM."""
@@ -335,5 +304,4 @@ async def run_bots(
         except (RuntimeError, OSError, ValueError):
             logging.warning("💥 Error during application context shutdown")
         logging.info("✅ App completed context shutdown")
-        manager.print_statistics()
         logging.info("👋 Goodbye")
