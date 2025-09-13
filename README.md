@@ -9,7 +9,6 @@
 [![Docker](https://img.shields.io/badge/Docker-Multi--Platform-blue.svg)](https://hub.docker.com/r/damastah/twitch-colorchanger)
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)
 [![Twitch](https://img.shields.io/badge/Twitch-Bot-purple.svg)](https://dev.twitch.tv/)
-![IRC](https://img.shields.io/badge/Protocol-IRC-green.svg)
 ![EventSub](https://img.shields.io/badge/Chat-EventSub-blue.svg)
 ![Multi-User](https://img.shields.io/badge/Multi--User-Supported-brightgreen.svg)
 ![Auto-Token](https://img.shields.io/badge/Token%20Setup-Automatic-orange.svg)
@@ -78,7 +77,7 @@ Automatically change your Twitch username color after each message you send in c
 - **👥 Multi-User Support**: Run multiple bots for different Twitch accounts simultaneously
 - **🎲 Flexible Colors**: Supports both preset Twitch colors and random hex colors (Prime/Turbo users)
 - **🔄 Universal Compatibility**: Works with Chatterino, web chat, or any IRC client
-- **🔌 Modern Chat Backend Support**: Supports both EventSub WebSocket (recommended, more modern) and legacy IRC as chat backends. EventSub is the default and preferred for new deployments.
+- **🔌 Modern Chat Backend**: Uses EventSub WebSocket for reliable, modern chat connectivity.
 - **🔑 Automatic Token Setup**: Smart token management with automatic authorization flow - just provide client credentials!
 - **🔄 Token Refresh**: Automatic token validation and refresh with fallback to authorization flow when needed
 - **🐳 Docker Ready**: Multi-platform support (amd64, arm64, arm/v7, arm/v6, riscv64)
@@ -95,7 +94,7 @@ Automatically change your Twitch username color after each message you send in c
 - **⚡ Unattended Operation**: No user interaction required after initial authorization
 - **✅ Configuration Validation**: Comprehensive validation with detailed error reporting
 - **📊 Rate Limiting**: Smart rate limiting with quota tracking and logging
-- **🔗 IRC Health Monitoring**: Robust connection health tracking with automatic reconnection (600s ping intervals)
+- **🔗 Connection Health Monitoring**: Robust connection health tracking with automatic reconnection
 - **🛑 Per-User Disable Switch**: Temporarily pause color cycling without editing files or restarting
 - **🫧 Idle Keepalive (Low Impact)**: After successful periodic token validation the bot may issue a lightweight GET of the current chat color if you've been idle (no messages) for a configurable period (default 600s) to keep internal state fresh and surface token/API issues early without sending redundant PUT color changes.
 
@@ -467,7 +466,7 @@ The bot supports extensive configuration through environment variables, allowing
 |----------|-------------|---------|
 | `DEBUG` | Enable debug logging | `false` |
 | `TWITCH_CONF_FILE` | Path to configuration file | `twitch_colorchanger.conf` |
-| `TWITCH_CHAT_BACKEND` | Chat transport: `eventsub` (default, recommended) or `irc` (legacy) | `eventsub` |
+| `TWITCH_CHAT_BACKEND` | Chat transport: `eventsub` (required) | `eventsub` |
 
 #### Internal Configuration Constants
 
@@ -483,17 +482,6 @@ All internal timing and behavior constants can be overridden via environment var
 | `NETWORK_PARTITION_THRESHOLD` | 15 minutes of no connectivity before declaring partition | 900 |
 | `PARTIAL_CONNECTIVITY_THRESHOLD` | 3 minutes for partial connectivity detection | 180 |
 
-**IRC Configuration:**
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `CHANNEL_JOIN_TIMEOUT` | Max wait for JOIN confirmation | 30 |
-| `MAX_JOIN_ATTEMPTS` | Maximum join attempts before giving up | 2 |
-| `RECONNECT_DELAY` | Base delay before reconnection | 2 |
-| `ASYNC_IRC_READ_TIMEOUT` | Read timeout for async IRC operations | 1.0 |
-| `ASYNC_IRC_CONNECT_TIMEOUT` | Connection timeout for async IRC | 15.0 |
-| `ASYNC_IRC_JOIN_TIMEOUT` | Channel join timeout for async IRC | 30.0 |
-| `ASYNC_IRC_RECONNECT_TIMEOUT` | Reconnection timeout for async IRC | 30.0 |
 
 **Health Monitoring:**
 
@@ -569,34 +557,24 @@ python -m src.main
 # Output: Warning: Invalid integer value for NETWORK_PARTITION_THRESHOLD='invalid', using default 900
 ```
 
-#### Chat Backend Selection
+#### Chat Backend
 
-> EventSub is Twitch's modern WebSocket-based event system and now the default for this bot. IRC remains available as a legacy option.
+The bot uses EventSub WebSocket for modern, reliable chat connectivity. The backend automatically reuses the per-user `client_id` and `client_secret` from the configuration file. It subscribes to `channel.chat.message` events filtered to messages from the bot user only.
 
-You can switch the underlying chat transport without changing your user config structure (the bot already loads `client_id` and `client_secret` from the config file):
-
-```bash
-TWITCH_CHAT_BACKEND=irc        # force legacy IRC backend (optional)
-TWITCH_CHAT_BACKEND=eventsub   # explicit EventSub (default if unset)
-```
-
-When using `eventsub` the backend automatically reuses the per-user `client_id` from the configuration file (no extra environment variable needed). The backend subscribes to `channel.chat.message` events filtered to messages from the bot user only (parity with IRC behavior). If anything fails during setup it will log errors; revert to `irc` if unstable.
-
-Required scopes for EventSub chat path (automatic device flow requests all of these by default):
+Required scopes (automatic device flow requests all of these by default):
 
 | Purpose | Scope |
 |---------|-------|
-| Read chat (IRC / EventSub) | `chat:read` |
 | Receive self chat messages over EventSub | `user:read:chat` |
 | Change chat color via Helix | `user:manage:chat_color` |
 
-If any of the required scopes (`chat:read`, `user:read:chat`, `user:manage:chat_color`) are missing from an existing token set, the bot will automatically invalidate them at startup and re-run device authorization. You only need to manually trigger re-authorization if you intentionally removed scopes and want them restored faster (delete token fields from the config and restart).
+If any of the required scopes (`user:read:chat`, `user:manage:chat_color`) are missing from an existing token set, the bot will automatically invalidate them at startup and re-run device authorization. You only need to manually trigger re-authorization if you intentionally removed scopes and want them restored faster (delete token fields from the config and restart).
 
 ##### Broadcaster ID Cache
 
 The EventSub backend resolves channel names to broadcaster IDs and caches them in `broadcaster_ids.cache.json` inside the mounted config directory. Persist the directory (`./config:/app/config`) so repeated container runs do not re-hit Helix unnecessarily. Override path with `TWITCH_BROADCASTER_CACHE` if needed.
 
-##### Resilience Mechanics (EventSub)
+##### Resilience Mechanics
 
 | Mechanism | Description |
 |-----------|-------------|
@@ -608,9 +586,9 @@ The EventSub backend resolves channel names to broadcaster IDs and caches them i
 | Early Invalid Token | Repeated 401s mark token invalid early (`eventsub_token_invalid`) |
 | Missing Scopes | 403 + scope diff emits `eventsub_missing_scopes` and halts subs |
 
-All EventSub chat messages are normalized to the same log template (`irc.privmsg`) with an added `backend=eventsub` tag. Only the bot's own messages are processed (mirrors IRC handling) to keep color change triggers consistent and reduce noise.
+All EventSub chat messages are normalized to the same log template with an added `backend=eventsub` tag. Only the bot's own messages are processed to keep color change triggers consistent and reduce noise.
 
-There is no automatic fallback from EventSub to IRC. If EventSub fails to initialize, the bot will log the failure and stop for that user. You can select IRC explicitly by setting `TWITCH_CHAT_BACKEND=irc`.
+If EventSub fails to initialize, the bot will log the failure and stop for that user.
 
 Open issues with logs (`DEBUG=true`) if you encounter problems—feedback helps stabilize the EventSub path.
 

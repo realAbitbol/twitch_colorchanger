@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 from .abstract import BackendType, ChatBackend, normalize_backend_type
 from .eventsub_backend import EventSubChatBackend
-from .irc_backend import IRCChatBackend
 
 __all__ = [
     "BackendType",
@@ -25,4 +24,4 @@ def create_chat_backend(
     btype = normalize_backend_type(kind)
     if btype == BackendType.EVENTSUB:
         return EventSubChatBackend(http_session=http_session)
-    return IRCChatBackend()
+    raise ValueError(f"Unsupported backend type: {btype}")

@@ -58,7 +58,7 @@ class HealthMonitor:
         unhealthy: list[TwitchColorBot] = []
         for bot in self.manager.bots:
             try:
-                if bot.irc and not bot.irc.is_healthy():
+                if bot.chat_backend and not bot.chat_backend.is_healthy():
                     unhealthy.append(bot)
                     self._log_bot_health_issues(bot)
             except Exception as e:  # noqa: BLE001
@@ -74,9 +74,9 @@ class HealthMonitor:
 
     def _log_bot_health_issues(self, bot: TwitchColorBot) -> None:
         logger.log_event("manager", "bot_unhealthy", level=30, user=bot.username)
-        if bot.irc:
+        if bot.chat_backend:
             try:
-                stats = bot.irc.get_connection_stats()
+                stats = bot.chat_backend.get_connection_stats()
                 logger.log_event(
                     "manager",
                     "bot_health_stats",
@@ -95,4 +95,4 @@ class HealthMonitor:
                     error=str(e),
                 )
         else:
-            logger.log_event("manager", "irc_none", level=30, user=bot.username)
+            logger.log_event("manager", "no_connection", level=30, user=bot.username)

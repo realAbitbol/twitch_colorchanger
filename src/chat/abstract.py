@@ -69,14 +69,13 @@ class ChatBackend(ABC):
 
 
 class BackendType(str, Enum):
-    IRC = "irc"
     EVENTSUB = "eventsub"
 
 
 def normalize_backend_type(raw: str | None) -> BackendType:
     if not raw:
-        return BackendType.IRC
+        return BackendType.EVENTSUB
     lowered = raw.strip().lower()
     if lowered in {"eventsub", "event_sub", "es"}:
         return BackendType.EVENTSUB
-    return BackendType.IRC
+    return BackendType.EVENTSUB

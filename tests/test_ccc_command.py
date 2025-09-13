@@ -48,9 +48,9 @@ async def test_ccc_hex_and_preset_work_even_when_disabled(monkeypatch):
     monkeypatch.setattr(bot.rate_limiter, "update_from_headers", lambda *a, **k: None)
 
     # Simulate receiving a command message from self
-    await bot.handle_irc_message("nick", "main", "ccc #a1b2c3")
-    await bot.handle_irc_message("nick", "main", "CCC red")
-    await bot.handle_irc_message("nick", "main", "ccc ABC")  # 3-digit hex
+    await bot.handle_message("nick", "main", "ccc #a1b2c3")
+    await bot.handle_message("nick", "main", "CCC red")
+    await bot.handle_message("nick", "main", "ccc ABC")  # 3-digit hex
 
     # We expect 3 PUT calls for color changes
     put_calls = [c for c in fake_api.calls if c[0] == "PUT" and c[1].endswith("chat/color")]

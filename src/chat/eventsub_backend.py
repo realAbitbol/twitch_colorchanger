@@ -531,7 +531,7 @@ class EventSubChatBackend(ChatBackend):  # pylint: disable=too-many-instance-att
         try:
             human = f"{username}: {message}"
             logger.log_event(
-                "irc",
+                "chat",
                 "privmsg",
                 user=username,
                 channel=channel,

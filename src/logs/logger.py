@@ -153,7 +153,7 @@ class BotLogger:
         kwargs: dict[str, object],
     ) -> str:
         # Chat message beautification in DEBUG: include channel inline for PRIVMSG.
-        if event_name == "irc_privmsg" and human_text:
+        if event_name == "chat_privmsg" and human_text:
             if channel:
                 if human_text.startswith("💬 "):
                     human_text = f"💬 #{channel} {human_text[2:].lstrip()}"
@@ -180,7 +180,7 @@ class BotLogger:
         event_name: str, prefix: str, human_text: str | None, channel: str | None
     ) -> str:
         # Chat message beautification: include channel before username for PRIVMSG.
-        if event_name == "irc_privmsg" and human_text:
+        if event_name == "chat_privmsg" and human_text:
             if channel:
                 # Desired format: "💬 #channel username: message"
                 if human_text.startswith("💬 "):
