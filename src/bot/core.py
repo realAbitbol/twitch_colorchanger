@@ -19,7 +19,7 @@ import aiohttp
 
 from ..api.twitch import TwitchAPI
 from ..application_context import ApplicationContext
-from ..chat import BackendType, create_chat_backend, normalize_backend_type
+from ..chat import BackendType, create_chat_backend
 from ..config.async_persistence import flush_pending_updates, queue_user_update
 from ..config.model import normalize_channels_list
 from ..logs.logger import logger
@@ -82,18 +82,16 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         self.config_file = config_file
         self.enabled = enabled
 
-        # Chat backend (IRC by default, EventSub optional)
+        # Chat backend (EventSub)
         from ..chat import ChatBackend as _ChatBackend  # local import for type only
 
         self.chat_backend: _ChatBackend | None = (
             None  # lazy init via _initialize_connection
         )
-        # Backwards compat attribute (legacy code may read it; kept for legacy paths)
-        self.irc = None
 
         # Runtime state
         self.running = False
-        self.irc_task: asyncio.Task[Any] | None = None
+        self.listener_task: asyncio.Task[Any] | None = None
         self.stats = BotStats()
         self.last_color: str | None = None
 
@@ -183,7 +181,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         await self.scheduler.start()
 
         try:
-            task = self.irc_task
+            task = self.listener_task
             if task is not None:
                 await task
         except KeyboardInterrupt:
@@ -197,8 +195,8 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
 
     def _create_and_monitor_listener(self, backend: Any) -> None:  # noqa: ANN401
         """Create listener task and attach error logging callback."""
-        self.irc_task = asyncio.create_task(backend.listen())
-        self.irc_task.add_done_callback(self._listener_task_done)
+        self.listener_task = asyncio.create_task(backend.listen())
+        self.listener_task.add_done_callback(self._listener_task_done)
 
     def _listener_task_done(self, task: asyncio.Task[Any]) -> None:
         if task.cancelled():
@@ -208,7 +206,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             try:
                 logger.log_event(
                     "bot",
-                    "irc_listener_task_error",
+                    "listener_task_error",
                     level=logging.ERROR,
                     user=self.username,
                     error=str(exc),
@@ -217,7 +215,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             except Exception as cb_e:  # noqa: BLE001
                 logger.log_event(
                     "bot",
-                    "irc_listener_task_log_fail",
+                    "listener_task_log_fail",
                     level=logging.DEBUG,
                     user=self.username,
                     error=str(cb_e),
@@ -250,7 +248,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             attempts += 1
             logger.log_event(
                 "bot",
-                "irc_listener_crash_reconnect_attempt",
+                "listener_crash_reconnect_attempt",
                 level=logging.WARNING,
                 user=self.username,
                 attempt=attempts,
@@ -268,9 +266,9 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                         "chat backend not initialized for reconnect"
                     )
                     continue
-                self.irc_task = asyncio.create_task(backend2.listen())
-                self.irc_task.add_done_callback(cb)
-                await self.irc_task
+                self.listener_task = asyncio.create_task(backend2.listen())
+                self.listener_task.add_done_callback(cb)
+                await self.listener_task
                 return
             except Exception as e2:  # noqa: BLE001
                 current_error = e2
@@ -282,7 +280,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         await self.scheduler.stop()
         await self._cancel_token_task()
         await self._disconnect_chat_backend()
-        await self._wait_for_irc_task()
+        await self._wait_for_listener_task()
         # Flush any pending debounced config writes before final shutdown.
         if self.config_file:
             try:
@@ -307,7 +305,10 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         if not await self._ensure_user_id():
             return False
         await self._prime_color_state()
-        btype = self._determine_backend_type()
+        btype = BackendType.EVENTSUB
+        logger.log_event(
+            "bot", "using_chat_backend", user=self.username, backend=btype.value
+        )
         await self._log_scopes_if_possible()
         normalized_channels = await self._normalize_channels_if_needed()
         if not await self._init_and_connect_backend(btype, normalized_channels):
@@ -341,15 +342,6 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             logger.log_event(
                 "bot", "initialized_color", user=self.username, color=current_color
             )
-
-    def _determine_backend_type(self) -> BackendType:
-        # Default switched to EventSub; set TWITCH_CHAT_BACKEND=irc to force legacy IRC.
-        backend_env = os.environ.get("TWITCH_CHAT_BACKEND", "eventsub")
-        btype = normalize_backend_type(backend_env)
-        logger.log_event(
-            "bot", "using_chat_backend", user=self.username, backend=btype.value
-        )
-        return btype
 
     async def _log_scopes_if_possible(self) -> None:
         try:
@@ -404,7 +396,7 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
         backend = self.chat_backend
         # Route all messages (including commands like !rip) through a single handler
         # to avoid double triggers; do not attach a separate color_change_handler.
-        backend.set_message_handler(self.handle_irc_message)
+        backend.set_message_handler(self.handle_message)
         # Register token invalid callback for EventSub escalation
         if hasattr(backend, "set_token_invalid_callback"):
             try:
@@ -462,31 +454,31 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
                     error=str(e),
                 )
 
-    async def _wait_for_irc_task(self) -> None:
-        if self.irc_task and not self.irc_task.done():
+    async def _wait_for_listener_task(self) -> None:
+        if self.listener_task and not self.listener_task.done():
             try:
-                await asyncio.wait_for(self.irc_task, timeout=2.0)
+                await asyncio.wait_for(self.listener_task, timeout=2.0)
             except TimeoutError:
                 logger.log_event(
                     "bot",
-                    "waiting_irc_task_error",
+                    "waiting_listener_task_error",
                     level=logging.WARNING,
                     user=self.username,
                     error="timeout",
                 )
-                self.irc_task.cancel()
+                self.listener_task.cancel()
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001
                 logger.log_event(
                     "bot",
-                    "waiting_irc_task_error",
+                    "waiting_listener_task_error",
                     level=logging.WARNING,
                     user=self.username,
                     error=str(e),
                 )
 
-    async def handle_irc_message(self, sender: str, channel: str, message: str) -> None:
+    async def handle_message(self, sender: str, channel: str, message: str) -> None:
         if sender.lower() != self.username.lower():
             return
         self._last_activity_ts = time.time()
@@ -501,9 +493,6 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             return
         if self._is_color_change_allowed():
             await self._change_color()
-
-    # Backwards compatibility alias
-    handle_chat_message = handle_irc_message
 
     def _is_color_change_allowed(self) -> bool:
         return bool(getattr(self, "enabled", True))
@@ -776,41 +765,6 @@ class TwitchColorBot(BotPersistenceMixin):  # pylint: disable=too-many-instance-
             return ColorRequestResult(ColorRequestStatus.TIMEOUT, error=str(e))
         except Exception as e:  # noqa: BLE001
             return ColorRequestResult(ColorRequestStatus.INTERNAL_ERROR, error=str(e))
-
-    async def _on_irc_auth_failure(self) -> None:
-        if not self.token_manager:
-            return None
-        try:
-            outcome = await self.token_manager.ensure_fresh(
-                self.username, force_refresh=True
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "bot",
-                "irc_auth_refresh_error",
-                level=logging.ERROR,
-                user=self.username,
-                error=str(e),
-            )
-            return None
-        info = self.token_manager.get_info(self.username)
-        if info and info.access_token:
-            self.access_token = info.access_token
-            backend_local = self.chat_backend
-            if backend_local is not None:
-                try:
-                    backend_local.update_token(info.access_token)
-                except Exception as e:  # noqa: BLE001
-                    logger.log_event(
-                        "bot",
-                        "irc_auth_token_update_error",
-                        level=logging.DEBUG,
-                        user=self.username,
-                        error=str(e),
-                    )
-            if outcome.name != "FAILED":
-                logger.log_event("bot", "irc_auth_refresh_success", user=self.username)
-        return None
 
     def increment_colors_changed(self) -> None:
         self.stats.colors_changed += 1

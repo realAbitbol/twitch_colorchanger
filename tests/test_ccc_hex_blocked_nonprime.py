@@ -47,9 +47,9 @@ async def test_ccc_hex_blocked_when_nonprime(monkeypatch):
 
     # Even if auto is disabled or enabled, hex via ccc should be blocked for non-prime
     bot.enabled = False
-    await bot.handle_irc_message("nick", "main", "ccc #abcdef")
+    await bot.handle_message("nick", "main", "ccc #abcdef")
     bot.enabled = True
-    await bot.handle_irc_message("nick", "main", "ccc ABCDEF")
+    await bot.handle_message("nick", "main", "ccc ABCDEF")
 
     # No PUT chat/color should be issued
     assert not any(c[0] == "PUT" and c[1].endswith("chat/color") for c in fake_api.calls)

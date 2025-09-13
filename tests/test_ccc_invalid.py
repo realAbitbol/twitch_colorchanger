@@ -43,7 +43,7 @@ async def test_ccc_invalid_argument_logs_info(monkeypatch):
 
     monkeypatch.setattr(global_logger, "log_event", _capture)
 
-    await bot.handle_irc_message("nick", "main", "ccc nonsense")
+    await bot.handle_message("nick", "main", "ccc nonsense")
 
     # No PUT should be made
     assert not any(c[0] == "PUT" and c[1].endswith("chat/color") for c in fake_api.calls)

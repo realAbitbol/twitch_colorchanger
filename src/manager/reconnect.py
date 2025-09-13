@@ -26,9 +26,9 @@ async def reconnect_unhealthy_bots(
 
 async def attempt_bot_reconnection(manager: BotManager, bot: TwitchColorBot) -> bool:
     try:
-        if not bot.irc:
+        if not bot.chat_backend:
             logger.log_event(
-                "manager", "no_irc_for_reconnect", level=40, user=bot.username
+                "manager", "no_connection_for_reconnect", level=40, user=bot.username
             )
             return False
         lock = get_bot_reconnect_lock(bot)
@@ -59,7 +59,7 @@ def get_bot_reconnect_lock(bot: TwitchColorBot) -> asyncio.Lock:
 
 def bot_became_healthy(bot: TwitchColorBot) -> bool:
     try:
-        if bot.irc and bot.irc.is_healthy():
+        if bot.chat_backend and bot.chat_backend.is_healthy():
             logger.log_event(
                 "manager", "bot_healthy_before_reconnect", user=bot.username
             )
@@ -76,13 +76,13 @@ def bot_became_healthy(bot: TwitchColorBot) -> bool:
 
 
 async def cancel_stale_listener(bot: TwitchColorBot) -> None:
-    if not hasattr(bot, "irc_task") or bot.irc_task is None:
+    if not hasattr(bot, "listener_task") or bot.listener_task is None:
         return
     try:
-        if not bot.irc_task.done():
-            bot.irc_task.cancel()
+        if not bot.listener_task.done():
+            bot.listener_task.cancel()
             try:
-                await asyncio.wait_for(bot.irc_task, timeout=1.5)
+                await asyncio.wait_for(bot.listener_task, timeout=1.5)
             except (TimeoutError, asyncio.CancelledError):
                 pass
     except Exception as e:  # noqa: BLE001
@@ -96,49 +96,39 @@ async def cancel_stale_listener(bot: TwitchColorBot) -> None:
 
 
 async def force_bot_reconnect(bot: TwitchColorBot) -> bool:
-    if not bot.irc:
+    if not bot.chat_backend:
         logger.log_event(
-            "manager", "no_irc_for_force_reconnect", level=40, user=bot.username
+            "manager", "no_connection_for_force_reconnect", level=40, user=bot.username
         )
         return False
-    success = await bot.irc.force_reconnect()
-    if not success:
-        logger.log_event("manager", "irc_reconnect_failed", level=40, user=bot.username)
-        return False
+    # For EventSub, reconnection is handled internally, so just check if healthy
+    if hasattr(bot.chat_backend, "force_reconnect"):
+        success = await bot.chat_backend.force_reconnect()
+        if not success:
+            logger.log_event("manager", "reconnect_failed", level=40, user=bot.username)
+            return False
     try:
-        task = getattr(bot, "irc_task", None)
+        task = getattr(bot, "listener_task", None)
         if task is not None and not task.done():
             task.cancel()
     except Exception:  # noqa: BLE001
         logger.log_event(
             "manager", "old_listener_cancel_noncritical", level=10, user=bot.username
         )
-    if bot.irc:
-        bot.irc_task = asyncio.create_task(bot.irc.listen())
-    for channel in bot.irc.channels[1:] if bot.irc else []:
-        try:
-            if bot.irc:
-                await bot.irc.join_channel(channel)
-        except Exception as e:  # noqa: BLE001
-            logger.log_event(
-                "manager",
-                "failed_rejoin_channel",
-                level=30,
-                user=bot.username,
-                channel=channel,
-                error=str(e),
-            )
+    if bot.chat_backend:
+        bot.listener_task = asyncio.create_task(bot.chat_backend.listen())
+    # For EventSub, channels are handled internally
     return True
 
 
 def start_fresh_listener(bot: TwitchColorBot) -> bool:
-    if not bot.irc:
+    if not bot.chat_backend:
         logger.log_event(
             "manager", "cannot_start_listener", level=40, user=bot.username
         )
         return False
     try:
-        bot.irc_task = asyncio.create_task(bot.irc.listen())
+        bot.listener_task = asyncio.create_task(bot.chat_backend.listen())
         return True
     except Exception as e:  # noqa: BLE001
         logger.log_event(
@@ -155,7 +145,7 @@ async def wait_for_health(bot: TwitchColorBot) -> bool:
     for _ in range(30):
         await asyncio.sleep(0.1)
         try:
-            if bot.irc and bot.irc.is_healthy():
+            if bot.chat_backend and bot.chat_backend.is_healthy():
                 return True
         except Exception:  # noqa: BLE001
             break

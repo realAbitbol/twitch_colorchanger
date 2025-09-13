@@ -22,8 +22,8 @@ def test_logger_long_event_truncation_debug(caplog, monkeypatch):  # type: ignor
 def test_logger_privmsg_emoji_added_once(caplog):  # type: ignore[no-untyped-def]
     log = BotLogger("edge_privmsg")
     caplog.set_level(logging.INFO)
-    log.log_event("irc", "privmsg", human="hello", user="bob", channel="room")
-    log.log_event("irc", "privmsg", human="💬 already", user="bob", channel="room")
+    log.log_event("chat", "privmsg", human="hello", user="bob", channel="room")
+    log.log_event("chat", "privmsg", human="💬 already", user="bob", channel="room")
     msgs = [m.message for m in caplog.records]
     # First should have emoji added, second should keep single emoji (not duplicate)
     if sum(1 for m in msgs if "💬 #room hello" in m) != 1:
