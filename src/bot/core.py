@@ -17,7 +17,7 @@ import aiohttp
 
 from ..api.twitch import TwitchAPI
 from ..application_context import ApplicationContext
-from ..chat import BackendType, create_chat_backend
+from ..chat import EventSubChatBackend
 from ..config.async_persistence import (
     async_update_user_in_config,
     flush_pending_updates,
@@ -77,9 +77,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         self.enabled = enabled
 
         # Chat backend (EventSub)
-        from ..chat import ChatBackend as _ChatBackend  # local import for type only
-
-        self.chat_backend: _ChatBackend | None = (
+        self.chat_backend: EventSubChatBackend | None = (
             None  # lazy init via _initialize_connection
         )
 
@@ -113,11 +111,20 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     async def start(self) -> None:
         logging.info(f"▶️ Starting bot user={self.username}")
         self.running = True
+        if not self._setup_token_manager():
+            return
+        await self._handle_initial_token_refresh()
+        if not await self._initialize_connection():
+            return
+        await self._run_chat_loop()
+
+    def _setup_token_manager(self) -> bool:
+        """Set up and register with token manager. Returns False on failure."""
         # ApplicationContext guarantees a token_manager; still guard defensively
         self.token_manager = self.context.token_manager
         if self.token_manager is None:  # pragma: no cover - defensive
             logging.error(f"❌ No token manager available user={self.username}")
-            return
+            return False
         # Register credentials with the token manager
         self.token_manager._upsert_token_info(  # noqa: SLF001
             username=self.username,
@@ -134,34 +141,35 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             )
         except Exception as e:
             logging.debug(f"Token hook registration failed: {str(e)}")
-        # Initial refresh and persist
+        return True
+
+    async def _handle_initial_token_refresh(self) -> None:
+        """Handle initial token refresh and persistence."""
+        if self.token_manager is None:
+            raise RuntimeError("Token manager not initialized")
         outcome = await self.token_manager.ensure_fresh(self.username)
-        if outcome:
-            info = self.token_manager.get_info(self.username)
-            if info:
-                old_access = self.access_token
-                old_refresh = getattr(self, "refresh_token", None)
-                self.access_token = info.access_token
-                if getattr(info, "refresh_token", None):
-                    self.refresh_token = info.refresh_token
-                access_changed = bool(
-                    info.access_token and info.access_token != old_access
-                )
-                refresh_changed = bool(
-                    getattr(info, "refresh_token", None)
-                    and info.refresh_token != old_refresh
-                )
-                if access_changed or refresh_changed:
-                    try:
-                        await self._persist_token_changes()
-                    except Exception as e:
-                        logging.debug(f"Token persistence error: {str(e)}")
-        if not await self._initialize_connection():
+        if not outcome:
             return
-        await self._run_chat_loop()
+        info = self.token_manager.get_info(self.username)
+        if not info:
+            return
+        old_access = self.access_token
+        old_refresh = getattr(self, "refresh_token", None)
+        self.access_token = info.access_token
+        if getattr(info, "refresh_token", None):
+            self.refresh_token = info.refresh_token
+        access_changed = bool(info.access_token and info.access_token != old_access)
+        refresh_changed = bool(
+            getattr(info, "refresh_token", None) and info.refresh_token != old_refresh
+        )
+        if access_changed or refresh_changed:
+            try:
+                await self._persist_token_changes()
+            except Exception as e:
+                logging.debug(f"Token persistence error: {str(e)}")
 
     async def _run_chat_loop(self) -> None:
-        """Run primary chat backend listen task (IRC or EventSub)."""
+        """Run primary EventSub chat backend listen task."""
         backend = self.chat_backend
         if backend is None:
             logging.error(f"⚠️ Chat backend not initialized user={self.username}")
@@ -245,7 +253,6 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     async def stop(self) -> None:
         logging.warning(f"🛑 Stopping bot user={self.username}")
         self.running = False
-        await self._cancel_token_task()
         await self._disconnect_chat_backend()
         await self._wait_for_listener_task()
         if self.config_file:
@@ -261,11 +268,10 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         if not await self._ensure_user_id():
             return False
         await self._prime_color_state()
-        btype = BackendType.EVENTSUB
-        logging.info(f"🔀 Using chat backend {btype.value} user={self.username}")
+        logging.info(f"🔀 Using EventSub chat backend user={self.username}")
         await self._log_scopes_if_possible()
         normalized_channels = await self._normalize_channels_if_needed()
-        if not await self._init_and_connect_backend(btype, normalized_channels):
+        if not await self._init_and_connect_backend(normalized_channels):
             return False
         self._normalized_channels_cache = normalized_channels
         return True
@@ -322,12 +328,8 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             self.channels = normalized_channels
         return normalized_channels
 
-    async def _init_and_connect_backend(
-        self, btype: BackendType, normalized_channels: list[str]
-    ) -> bool:
-        self.chat_backend = create_chat_backend(
-            btype.value, http_session=self.context.session
-        )
+    async def _init_and_connect_backend(self, normalized_channels: list[str]) -> bool:
+        self.chat_backend = EventSubChatBackend(http_session=self.context.session)
         backend = self.chat_backend
         # Route all messages (including commands like !rip) through a single handler
         # to avoid double triggers; do not attach a separate color_change_handler.
@@ -355,9 +357,6 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             logging.info(f"EventSub backend registration error: {str(e)}")
         logging.debug(f"👂 Starting async message listener user={self.username}")
         return True
-
-    async def _cancel_token_task(self) -> None:  # compatibility no-op
-        return None
 
     async def _disconnect_chat_backend(self) -> None:
         backend = self.chat_backend
@@ -509,39 +508,61 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     async def _get_user_info(self) -> dict[str, Any] | None:
         return await self._get_user_info_impl()
 
+    async def _make_user_info_request(self) -> tuple[dict[str, Any] | None, int]:
+        data, status_code, _ = await self.api.request(
+            "GET",
+            "users",
+            access_token=self.access_token,
+            client_id=self.client_id,
+        )
+        return data, status_code
+
+    def _calculate_retry_delay(self, attempt: int) -> float:
+        return min(1 * (2**attempt), 60)
+
     async def _get_user_info_impl(self) -> dict[str, Any] | None:
         for attempt in range(6):
             try:
-                data, status_code, headers = await self.api.request(
-                    "GET",
-                    "users",
-                    access_token=self.access_token,
-                    client_id=self.client_id,
-                )
-                if status_code == 200 and data and data.get("data"):
-                    first = data["data"][0]
-                    if isinstance(first, dict):  # narrow type
-                        return first
-                    return None
-                if status_code == 401:
-                    return None
-                if attempt < 5 and (status_code == 429 or status_code >= 500):
-                    delay = min(1 * (2**attempt), 60)
-                    await asyncio.sleep(delay)
+                data, status_code = await self._make_user_info_request()
+                result = self._process_user_info_response(data, status_code, attempt)
+                if (
+                    result is None
+                    and attempt < 5
+                    and (status_code == 429 or status_code >= 500)
+                ):
+                    await asyncio.sleep(self._calculate_retry_delay(attempt))
                     continue
-                logging.error(
-                    f"❌ Failed to get user info status={status_code} user={self.username}"
-                )
-                return None
+                return result
             except Exception as e:  # noqa: BLE001
                 if attempt < 5:
-                    delay = min(1 * (2**attempt), 60)
-                    await asyncio.sleep(delay)
+                    await asyncio.sleep(self._calculate_retry_delay(attempt))
                     continue
                 logging.error(
                     f"💥 Error getting user info user={self.username}: {str(e)}"
                 )
                 return None
+        return None
+
+    def _process_user_info_response(
+        self, data: dict[str, Any] | None, status_code: int, attempt: int
+    ) -> dict[str, Any] | None:
+        if (
+            status_code == 200
+            and data
+            and isinstance(data.get("data"), list)
+            and data["data"]
+        ):
+            first = data["data"][0]
+            if isinstance(first, dict):
+                return first
+            return None
+        if status_code == 401:
+            return None
+        if attempt < 5 and (status_code == 429 or status_code >= 500):
+            return None  # indicate retry
+        logging.error(
+            f"❌ Failed to get user info status={status_code} user={self.username}"
+        )
         return None
 
     async def _get_current_color(self) -> str | None:
@@ -550,40 +571,52 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     async def _get_current_color_impl(self) -> str | None:
         for attempt in range(6):
             try:
-                params = {"user_id": self.user_id}
-                data, status_code, headers = await self.api.request(
-                    "GET",
-                    CHAT_COLOR_ENDPOINT,
-                    access_token=self.access_token,
-                    client_id=self.client_id,
-                    params=params,
-                )
-                if status_code == 200 and data and data.get("data"):
-                    first = data["data"][0]
-                    if isinstance(first, dict):
-                        color = first.get("color")
-                        if isinstance(color, str):
-                            logging.info(
-                                f"🎨 Current color is {color} user={self.username}"
-                            )
-                            return color
-                if status_code == 401:
-                    return None
-                if attempt < 5 and (status_code == 429 or status_code >= 500):
-                    delay = min(1 * (2**attempt), 60)
-                    await asyncio.sleep(delay)
+                data, status_code = await self._make_color_request()
+                result = self._process_color_response(data, status_code, attempt)
+                if (
+                    result is None
+                    and attempt < 5
+                    and (status_code == 429 or status_code >= 500)
+                ):
+                    await asyncio.sleep(self._calculate_retry_delay(attempt))
                     continue
-                logging.info(f"⚠️ No current color set user={self.username}")
-                return None
+                return result
             except Exception as e:  # noqa: BLE001
                 if attempt < 5:
-                    delay = min(1 * (2**attempt), 60)
-                    await asyncio.sleep(delay)
+                    await asyncio.sleep(self._calculate_retry_delay(attempt))
                     continue
                 logging.warning(
                     f"💥 Error getting current color user={self.username}: {str(e)}"
                 )
                 return None
+        return None
+
+    async def _make_color_request(self) -> tuple[dict[str, Any] | None, int]:
+        params = {"user_id": self.user_id}
+        data, status_code, _ = await self.api.request(
+            "GET",
+            CHAT_COLOR_ENDPOINT,
+            access_token=self.access_token,
+            client_id=self.client_id,
+            params=params,
+        )
+        return data, status_code
+
+    def _process_color_response(
+        self, data: dict[str, Any] | None, status_code: int, attempt: int
+    ) -> str | None:
+        if status_code == 200 and data and data.get("data"):
+            first = data["data"][0]
+            if isinstance(first, dict):
+                color = first.get("color")
+                if isinstance(color, str):
+                    logging.info(f"🎨 Current color is {color} user={self.username}")
+                    return color
+        if status_code == 401:
+            return None
+        if attempt < 5 and (status_code == 429 or status_code >= 500):
+            return None  # indicate retry
+        logging.info(f"⚠️ No current color set user={self.username}")
         return None
 
     # --- Color change low-level request (expected by ColorChangeService) ---
@@ -601,9 +634,11 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             ColorRequestStatus,
         )
 
+        logging.debug(f"Performing color request action={action} user={self.username}")
+
         for attempt in range(6):
             try:
-                data, status_code, headers = await self.api.request(
+                data, status_code, _ = await self.api.request(
                     "PUT",
                     CHAT_COLOR_ENDPOINT,
                     access_token=self.access_token,
@@ -614,51 +649,73 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                     data if isinstance(data, dict) else None
                 )
 
-                # Success codes (Twitch may return 204 No Content or 200 OK)
-                if status_code in (200, 204):
-                    return ColorRequestResult(
-                        ColorRequestStatus.SUCCESS, http_status=status_code
-                    )
-                if status_code == 401:
-                    return ColorRequestResult(
-                        ColorRequestStatus.UNAUTHORIZED, http_status=status_code
-                    )
-                if status_code == 429:
-                    if attempt < 5:
-                        delay = min(1 * (2**attempt), 60)
-                        await asyncio.sleep(delay)
-                        continue
-                    return ColorRequestResult(
-                        ColorRequestStatus.RATE_LIMIT, http_status=status_code
-                    )
-                # Generic HTTP failure
-                if attempt < 5 and status_code >= 500:
-                    delay = min(1 * (2**attempt), 60)
-                    await asyncio.sleep(delay)
-                    continue
-                return ColorRequestResult(
-                    ColorRequestStatus.HTTP_ERROR,
-                    http_status=status_code,
-                    error=self._extract_color_error_snippet(),
-                )
-            except TimeoutError as e:  # network timeout
-                if attempt < 5:
-                    delay = min(1 * (2**attempt), 60)
-                    await asyncio.sleep(delay)
-                    continue
-                return ColorRequestResult(ColorRequestStatus.TIMEOUT, error=str(e))
-            except Exception as e:  # noqa: BLE001
-                if attempt < 5:
-                    delay = min(1 * (2**attempt), 60)
-                    await asyncio.sleep(delay)
-                    continue
-                return ColorRequestResult(
-                    ColorRequestStatus.INTERNAL_ERROR, error=str(e)
-                )
-        # If all retries exhausted, return internal error
+                result = self._handle_color_response(status_code, attempt)
+                if result is not None:
+                    return result
+                # retry
+                delay = self._calculate_retry_delay(attempt)
+                await asyncio.sleep(delay)
+            except Exception as e:
+                result = self._handle_color_exception(e, attempt)
+                if result is not None:
+                    return result
+                # retry
+                delay = self._calculate_retry_delay(attempt)
+                await asyncio.sleep(delay)
+        # exhausted
         return ColorRequestResult(
             ColorRequestStatus.INTERNAL_ERROR, error="Max retries exceeded"
         )
+
+    def _handle_color_response(
+        self, status_code: int, attempt: int
+    ) -> ColorRequestResult | None:
+        from ..color.models import (  # local import
+            ColorRequestResult,
+            ColorRequestStatus,
+        )
+
+        if status_code in (200, 204):
+            return ColorRequestResult(
+                ColorRequestStatus.SUCCESS, http_status=status_code
+            )
+        elif status_code == 401:
+            return ColorRequestResult(
+                ColorRequestStatus.UNAUTHORIZED, http_status=status_code
+            )
+        elif status_code == 429 and attempt < 5:
+            return None  # retry
+        elif status_code == 429:
+            return ColorRequestResult(
+                ColorRequestStatus.RATE_LIMIT, http_status=status_code
+            )
+        elif status_code >= 500 and attempt < 5:
+            return None  # retry
+        elif status_code >= 500:
+            return ColorRequestResult(
+                ColorRequestStatus.HTTP_ERROR,
+                http_status=status_code,
+                error=self._extract_color_error_snippet(),
+            )
+        return ColorRequestResult(
+            ColorRequestStatus.HTTP_ERROR,
+            http_status=status_code,
+            error=self._extract_color_error_snippet(),
+        )
+
+    def _handle_color_exception(
+        self, e: Exception, attempt: int
+    ) -> ColorRequestResult | None:
+        from ..color.models import (  # local import
+            ColorRequestResult,
+            ColorRequestStatus,
+        )
+
+        if attempt < 5:
+            return None  # retry
+        if isinstance(e, TimeoutError):
+            return ColorRequestResult(ColorRequestStatus.TIMEOUT, error=str(e))
+        return ColorRequestResult(ColorRequestStatus.INTERNAL_ERROR, error=str(e))
 
     def increment_colors_changed(self) -> None:
         self.colors_changed += 1

@@ -66,15 +66,14 @@ class ColorChangeService:
             ColorRequestStatus.TIMEOUT,
             ColorRequestStatus.INTERNAL_ERROR,
         ):
-            return self._on_internal_error(is_preset)
+            return self._on_internal_error()
         if result.status == ColorRequestStatus.RATE_LIMIT:
-            return self._on_rate_limited(is_preset, result.http_status or 429)
+            return self._on_rate_limited(result.http_status or 429)
         if result.status == ColorRequestStatus.UNAUTHORIZED:
             return await self._on_unauthorized(
                 color,
                 allow_refresh=allow_refresh,
                 fallback_to_preset=fallback_to_preset,
-                is_preset=is_preset,
             )
         return await self._on_generic_failure(
             is_preset=is_preset,
@@ -95,11 +94,11 @@ class ColorChangeService:
         self._record_success(color, is_preset)
         return True
 
-    def _on_internal_error(self, is_preset: bool) -> bool:
+    def _on_internal_error(self) -> bool:
         logging.error("Internal error changing color")
         return False
 
-    def _on_rate_limited(self, is_preset: bool, status_code: int) -> bool:
+    def _on_rate_limited(self, status_code: int) -> bool:
         logging.warning(f"Rate limited: {status_code}")
         return False
 
@@ -109,7 +108,6 @@ class ColorChangeService:
         *,
         allow_refresh: bool,
         fallback_to_preset: bool,
-        is_preset: bool,
     ) -> bool:
         if not allow_refresh:
             return False

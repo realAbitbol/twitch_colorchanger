@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 import pytest
 
-from src.application_context import ApplicationContext
 from src.bot.core import TwitchColorBot
-from src.chat import BackendType
 
 
 @pytest.mark.asyncio
@@ -67,14 +64,10 @@ async def test_initialize_connection_success():
     bot.user_id = "123"  # Pre-set to avoid _ensure_user_id
 
     with patch.object(bot, "_ensure_user_id", return_value=True) as mock_ensure, \
-         patch.object(bot, "_prime_color_state") as mock_prime, \
-         patch.object(bot, "_log_scopes_if_possible") as mock_log, \
-         patch.object(bot, "_normalize_channels_if_needed", return_value=["#test"]) as mock_norm, \
-         patch("src.bot.core.create_chat_backend") as mock_create, \
-         patch.object(bot, "_init_and_connect_backend", return_value=True) as mock_init:
-        mock_backend = MagicMock()
-        mock_create.return_value = mock_backend
-
+          patch.object(bot, "_prime_color_state") as mock_prime, \
+          patch.object(bot, "_log_scopes_if_possible") as mock_log, \
+          patch.object(bot, "_normalize_channels_if_needed", return_value=["#test"]) as mock_norm, \
+          patch.object(bot, "_init_and_connect_backend", return_value=True) as mock_init:
         result = await bot._initialize_connection()
 
         assert result is True
@@ -126,14 +119,10 @@ async def test_initialize_connection_backend_connect_fails():
     bot.user_id = "123"
 
     with patch.object(bot, "_ensure_user_id", return_value=True), \
-         patch.object(bot, "_prime_color_state"), \
-         patch.object(bot, "_log_scopes_if_possible"), \
-         patch.object(bot, "_normalize_channels_if_needed", return_value=["#test"]), \
-         patch("src.bot.core.create_chat_backend") as mock_create, \
-         patch.object(bot, "_init_and_connect_backend", return_value=False) as mock_init:
-        mock_backend = MagicMock()
-        mock_create.return_value = mock_create
-
+          patch.object(bot, "_prime_color_state"), \
+          patch.object(bot, "_log_scopes_if_possible"), \
+          patch.object(bot, "_normalize_channels_if_needed", return_value=["#test"]), \
+          patch.object(bot, "_init_and_connect_backend", return_value=False) as mock_init:
         result = await bot._initialize_connection()
 
         assert result is False
@@ -401,19 +390,17 @@ async def test_init_and_connect_backend_success():
     )
     bot.user_id = "123"
 
-    with patch("src.bot.core.create_chat_backend") as mock_create, \
-         patch("src.bot.core.BackendType") as mock_btype:
+    with patch("src.bot.core.EventSubChatBackend") as mock_backend_class:
         mock_backend = MagicMock()
         mock_backend.connect = AsyncMock(return_value=True)
         mock_backend.set_message_handler = MagicMock()
         mock_backend.set_token_invalid_callback = MagicMock()
-        mock_create.return_value = mock_backend
-        mock_btype.EVENTSUB.value = "eventsub"
+        mock_backend_class.return_value = mock_backend
 
-        result = await bot._init_and_connect_backend(BackendType.EVENTSUB, ["#test"])
+        result = await bot._init_and_connect_backend(["#test"])
 
         assert result is True
-        mock_create.assert_called_once_with("eventsub", http_session=session)
+        mock_backend_class.assert_called_once_with(http_session=session)
         mock_backend.connect.assert_called_once_with(
             "test_token", "testuser", "#test", "123", "test_client_id", "test_client_secret"
         )
@@ -437,14 +424,14 @@ async def test_init_and_connect_backend_connect_fails():
     )
     bot.user_id = "123"
 
-    with patch("src.bot.core.create_chat_backend") as mock_create:
+    with patch("src.bot.core.EventSubChatBackend") as mock_backend_class:
         mock_backend = MagicMock()
         mock_backend.connect = AsyncMock(return_value=False)
         mock_backend.set_message_handler = MagicMock()
         mock_backend.set_token_invalid_callback = MagicMock()
-        mock_create.return_value = mock_backend
+        mock_backend_class.return_value = mock_backend
 
-        result = await bot._init_and_connect_backend(BackendType.EVENTSUB, ["#test"])
+        result = await bot._init_and_connect_backend(["#test"])
 
         assert result is False
         mock_backend.connect.assert_called_once()

@@ -69,7 +69,7 @@ async def test_bot_start_and_stop(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     dummy = DummyBackend()
     monkeypatch.setattr(
-        "src.bot.core.create_chat_backend", lambda kind, http_session=None: dummy  # noqa: ARG005
+        "src.bot.core.EventSubChatBackend", lambda http_session=None: dummy  # noqa: ARG005
     )
 
     async def _fake_init_connection():  # noqa: D401

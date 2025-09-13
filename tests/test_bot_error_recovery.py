@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.application_context import ApplicationContext
 from src.bot.core import TwitchColorBot
 
 
@@ -32,8 +30,7 @@ async def test_attempt_reconnect_success():
 
     error = RuntimeError("Test error")
 
-    with patch.object(bot, "_initialize_connection", side_effect=[False, True]) as mock_init, \
-         patch.object(bot.listener_task, "add_done_callback") as mock_cb:
+    with patch.object(bot, "_initialize_connection", side_effect=[False, True]) as mock_init:
         # First call fails, second succeeds
         await bot._attempt_reconnect(error, lambda t: None)
 
@@ -59,8 +56,7 @@ async def test_attempt_reconnect_failure():
 
     error = RuntimeError("Test error")
 
-    with patch.object(bot, "_initialize_connection", return_value=False) as mock_init, \
-         patch('asyncio.sleep', new_callable=AsyncMock) as mock_sleep:
+    with patch.object(bot, "_initialize_connection", return_value=False) as mock_init:
         await bot._attempt_reconnect(error, lambda t: None)
 
         assert mock_init.call_count == 5  # max_attempts

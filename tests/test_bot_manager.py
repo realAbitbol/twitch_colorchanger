@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.application_context import ApplicationContext
 from src.bot.manager import BotManager, run_bots
 
 
@@ -125,8 +123,7 @@ async def test_run_bots_success():
 
     with patch("src.bot.manager.ApplicationContext") as mock_ctx_class, \
           patch("src.bot.manager._run_main_loop", new_callable=AsyncMock) as mock_loop, \
-          patch("src.bot.manager.BotManager") as mock_manager_class, \
-          patch("asyncio.shield", new_callable=AsyncMock) as mock_shield:
+          patch("src.bot.manager.BotManager") as mock_manager_class:
         mock_ctx = MagicMock()
         mock_ctx.create = AsyncMock(return_value=mock_ctx)
         mock_ctx.start = AsyncMock()
@@ -165,8 +162,7 @@ async def test_run_bots_start_fails():
     ]
 
     with patch("src.bot.manager.ApplicationContext") as mock_ctx_class, \
-          patch("src.bot.manager.BotManager") as mock_manager_class, \
-          patch("asyncio.shield", new_callable=AsyncMock) as mock_shield:
+          patch("src.bot.manager.BotManager") as mock_manager_class:
         mock_ctx = MagicMock()
         mock_ctx.create = AsyncMock(return_value=mock_ctx)
         mock_ctx.start = AsyncMock()
