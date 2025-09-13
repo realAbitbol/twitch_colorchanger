@@ -220,11 +220,16 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 logging.warning(f"Error joining channel {channel}: {str(e)}")
 
     async def _attempt_reconnect(
-        self, error: Exception, cb: Callable[[asyncio.Task[Any]], None]
+        self,
+        error: Exception,
+        cb: Callable[[asyncio.Task[Any]], None],
+        *,
+        initial_backoff: float = 1.0,
+        max_backoff: float = 60.0,
+        max_attempts: int = 5,
     ) -> None:
-        backoff = 1.0
+        backoff = initial_backoff
         attempts = 0
-        max_attempts = 5
         current_error = error
         while attempts < max_attempts and self.running:
             attempts += 1
@@ -232,7 +237,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
                 f"🔄 Listener crashed - reconnect attempt {attempts} backoff={round(backoff, 2)}s user={self.username} error={str(current_error)}"
             )
             await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 60)
+            backoff = min(backoff * 2, max_backoff)
             try:
                 if not await self._initialize_connection():
                     continue
@@ -766,8 +771,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     def _build_user_config(self) -> dict[str, Any]:
         # Direct attribute access; mixin consumer guarantees these attributes.
         username = self.username
-        # channels attribute guaranteed by consumer; fallback only if absent (legacy bots)
-        channels = getattr(self, "channels", [username.lower()])
+        channels = self.channels
         return {
             "username": username,
             "client_id": self.client_id,

@@ -231,6 +231,9 @@ async def run_bots(
             return
         logging.info("🏃 Bots running - press Ctrl+C to stop")
         await _run_main_loop(manager)
+    except asyncio.CancelledError:
+        logging.debug("Operation cancelled")
+        raise
     except KeyboardInterrupt:  # noqa: PERF203
         logging.warning("⌨️ Keyboard interrupt")
     except Exception as e:  # noqa: BLE001

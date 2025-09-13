@@ -32,7 +32,13 @@ async def test_attempt_reconnect_success():
 
     with patch.object(bot, "_initialize_connection", side_effect=[False, True]) as mock_init:
         # First call fails, second succeeds
-        await bot._attempt_reconnect(error, lambda t: None)
+        await bot._attempt_reconnect(
+            error,
+            lambda t: None,
+            initial_backoff=0.01,
+            max_backoff=0.1,
+            max_attempts=5
+        )
 
         assert mock_init.call_count == 2
         mock_backend.listen.assert_called_once()
@@ -57,7 +63,13 @@ async def test_attempt_reconnect_failure():
     error = RuntimeError("Test error")
 
     with patch.object(bot, "_initialize_connection", return_value=False) as mock_init:
-        await bot._attempt_reconnect(error, lambda t: None)
+        await bot._attempt_reconnect(
+            error,
+            lambda t: None,
+            initial_backoff=0.01,
+            max_backoff=0.1,
+            max_attempts=5
+        )
 
         assert mock_init.call_count == 5  # max_attempts
 

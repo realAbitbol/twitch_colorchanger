@@ -1,9 +1,3 @@
-"""General utility helper functions.
-
-Moved from the legacy top-level ``utils.py`` module into the ``utils`` package
-to avoid a name collision (module vs package) introduced during refactor.
-"""
-
 from __future__ import annotations
 
 __all__ = ["format_duration", "emit_startup_instructions"]

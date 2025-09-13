@@ -43,7 +43,6 @@ strict_equality = true
 show_error_codes = true
 pretty = true
 
-# Allow untyped defs during transition (we can re‑enable per-module later)
 disallow_untyped_defs = false
 check_untyped_defs = false
 disallow_incomplete_defs = false
@@ -60,7 +59,6 @@ exclude = [
 ]
 
 # Per-module relaxations (keep legacy modules compiling). Remove over time.
-# Module-specific relaxations (mypy 1.10+ style via overrides)
 [[tool.mypy.overrides]]
 module = ["src.config.watcher"]
 disallow_untyped_defs = false
