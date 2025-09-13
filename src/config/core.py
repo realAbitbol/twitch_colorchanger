@@ -162,76 +162,6 @@ def _log_update_failed(e: Exception, user_config_dict: dict[str, Any]) -> None:
     )
 
 
-def _user_auth_valid(u: UserConfig, placeholders: set[str]) -> bool:
-    """Return True if token or (client_id+client_secret) looks usable.
-
-    Args:
-        u: UserConfig instance to check.
-        placeholders: Set of placeholder strings to avoid.
-
-    Returns:
-        True if authentication credentials are valid.
-    """
-    access = u.access_token or ""
-    token_valid = bool(
-        access and len(access) >= 20 and access.lower() not in placeholders
-    )
-    cid = u.client_id or ""
-    csec = u.client_secret or ""
-    client_valid = bool(cid and csec and len(cid) >= 10 and len(csec) >= 10)
-    return token_valid or client_valid
-
-
-def _user_channels_valid(u: UserConfig) -> bool:
-    """Check if user channels are valid.
-
-    Args:
-        u: UserConfig instance to check.
-
-    Returns:
-        True if channels are valid.
-    """
-    chs = u.channels
-    if not chs or not isinstance(chs, list):
-        return False
-    return all(isinstance(c, str) and len(c.strip()) >= 3 for c in chs)
-
-
-def _user_username_valid(name: str) -> bool:
-    """Check if username is valid.
-
-    Args:
-        name: Username string to validate.
-
-    Returns:
-        True if username length is between 3 and 25.
-    """
-    return 3 <= len(name) <= 25
-
-
-def _is_valid_user(uc: UserConfig, seen: set[str], placeholders: set[str]) -> bool:
-    """Check if a user config is valid and not duplicate.
-
-    Args:
-        uc: UserConfig instance to validate.
-        seen: Set of already seen usernames.
-        placeholders: Set of placeholder strings.
-
-    Returns:
-        True if user is valid and not seen before.
-    """
-    uname = uc.username.lower()
-    if not _user_username_valid(uname):
-        return False
-    if uname in seen:
-        return False
-    if not _user_auth_valid(uc, placeholders):
-        return False
-    if not _user_channels_valid(uc):
-        return False
-    return True
-
-
 def _validate_and_filter_users(
     raw_users: Iterable[dict[str, Any] | object],
 ) -> list[dict[str, Any]]:
@@ -243,31 +173,62 @@ def _validate_and_filter_users(
     Returns:
         List of valid user config dictionaries.
     """
-    placeholders = {
-        "test",
-        "placeholder",
-        "your_token_here",
-        "fake_token",
-        "example_token_twenty_chars",
-    }
+    from pydantic import ValidationError
+
     valid: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in raw_users:
         if not isinstance(item, dict):
             continue
-        uc = UserConfig.from_dict(item)
-        if not _is_valid_user(uc, seen, placeholders):
+        try:
+            uc = UserConfig.from_dict(item)
+        except ValidationError:
             continue
-        seen.add(uc.username.lower())
+        if not uc.validate():  # Additional validation to filter users with empty channels or invalid usernames
+            continue
+        uname = uc.username.lower()
+        if uname in seen:
+            continue
+        seen.add(uname)
         valid.append(uc.to_dict())
     return valid
 
 
-def get_configuration() -> list[dict[str, Any]]:
+def _validate_and_filter_users_to_dataclasses(
+    raw_users: Iterable[dict[str, Any] | object],
+) -> list[UserConfig]:
+    """Validate and filter raw user configurations to dataclasses.
+
+    Args:
+        raw_users: Iterable of raw user data.
+
+    Returns:
+        List of valid UserConfig instances.
+    """
+    from pydantic import ValidationError
+
+    valid: list[UserConfig] = []
+    seen: set[str] = set()
+    for item in raw_users:
+        if not isinstance(item, dict):
+            continue
+        try:
+            uc = UserConfig.from_dict(item)
+        except ValidationError:
+            continue
+        uname = uc.username.lower()
+        if uname in seen:
+            continue
+        seen.add(uname)
+        valid.append(uc)
+    return valid
+
+
+def get_configuration() -> list[UserConfig]:
     """Load and validate user configurations from the config file.
 
     Returns:
-        List of valid user config dictionaries.
+        List of valid UserConfig instances.
 
     Raises:
         SystemExit: If no config file or no valid users found.
@@ -278,7 +239,7 @@ def get_configuration() -> list[dict[str, Any]]:
         logging.error("📁 No configuration file found")
         logging.error("📄 Instruction emitted for creating config file")
         sys.exit(1)
-    valid_users = _validate_and_filter_users(users)
+    valid_users = _validate_and_filter_users_to_dataclasses(users)
     if not valid_users:
         logging.error("⚠️ No valid user configurations found")
         sys.exit(1)
@@ -286,34 +247,40 @@ def get_configuration() -> list[dict[str, Any]]:
     return valid_users
 
 
-def print_config_summary(users: Sequence[dict[str, Any]]) -> None:
+def print_config_summary(users: Sequence[UserConfig]) -> None:
     """Print a summary of user configurations.
 
     Args:
-        users: Sequence of user config dictionaries.
+        users: Sequence of UserConfig instances.
     """
     logging.debug(f"📊 Configuration summary (users={len(users)})")
     for _i, user in enumerate(users, 1):
-        username = user.get("username")
+        username = user.username
         logging.debug(f"👤 User summary {username}")
 
 
 def normalize_user_channels(
-    users: Sequence[dict[str, Any]], config_file: str
-) -> tuple[list[dict[str, Any]], bool]:
+    users: Sequence[UserConfig], config_file: str
+) -> tuple[list[UserConfig], bool]:
     """Normalize user channels and save if changed.
 
     Args:
-        users: Sequence of user config dictionaries.
+        users: Sequence of UserConfig instances.
         config_file: Path to the configuration file.
 
     Returns:
         Tuple of (normalized_users, any_changes).
     """
-    normalized_users, any_changes = normalize_user_list(users)
+    normalized_users: list[UserConfig] = []
+    any_changes = False
+    for uc in users:
+        if uc.normalize():
+            any_changes = True
+        normalized_users.append(uc)
     if any_changes:
         try:
-            save_users_to_config(normalized_users, config_file)
+            user_dicts = [uc.to_dict() for uc in normalized_users]
+            save_users_to_config(user_dicts, config_file)
             logging.info("💾 Channel normalization saved")
         except Exception as e:  # noqa: BLE001
             logging.error(f"💥 Failed saving normalization: {type(e).__name__}")
@@ -321,16 +288,16 @@ def normalize_user_channels(
 
 
 async def setup_missing_tokens(
-    users: list[dict[str, Any]], config_file: str
-) -> list[dict[str, Any]]:
+    users: list[UserConfig], config_file: str
+) -> list[UserConfig]:
     """Set up missing tokens for users.
 
     Args:
-        users: List of user config dictionaries.
+        users: List of UserConfig instances.
         config_file: Path to the configuration file.
 
     Returns:
-        List of updated user config dictionaries.
+        List of updated UserConfig instances.
     """
     import aiohttp
 
@@ -338,21 +305,21 @@ async def setup_missing_tokens(
     from ..auth_token.provisioner import TokenProvisioner  # local import
 
     required_scopes = {"chat:read", "user:read:chat", "user:manage:chat_color"}
-    updated_users: list[dict[str, Any]] = []
+    updated_users: list[UserConfig] = []
     any_updates = False
 
     async with aiohttp.ClientSession() as session:
         provisioner = TokenProvisioner(session)
         api = TwitchAPI(session)
         for user in users:
-            changed, processed_user = await _process_single_user_tokens(
+            changed, processed_user = await _process_single_user_tokens_dataclass(
                 user, api, provisioner, required_scopes
             )
             if changed:
                 any_updates = True
             updated_users.append(processed_user)
     if any_updates:
-        _save_updated_config(updated_users, config_file)
+        _save_updated_config_dataclass(updated_users, config_file)
     return updated_users
 
 
@@ -424,6 +391,58 @@ async def _validate_or_invalidate_scopes(
         return True
 
 
+async def _validate_or_invalidate_scopes_dataclass(
+    user: UserConfig,
+    access: Any,
+    refresh: Any,
+    api: Any,
+    required_scopes: set[str],
+) -> bool:
+    """Return True if existing tokens are valid & retained else False (forcing provisioning) for dataclass.
+
+    Args:
+        user: UserConfig instance.
+        access: Access token.
+        refresh: Refresh token.
+        api: TwitchAPI instance.
+        required_scopes: Set of required scopes.
+
+    Returns:
+        True if tokens are valid and retained.
+    """
+    if not (access and refresh):
+        return False
+    try:
+        validation = await api.validate_token(access)
+        # If validation failed (None or non-dict) retain existing tokens; treat as transient.
+        if not isinstance(validation, dict):
+            return True
+        raw_scopes = validation.get("scopes")
+        # If scopes key missing or not a list, retain tokens (don't nuke on malformed payload)
+        if not isinstance(raw_scopes, list):
+            return True
+        scopes_list = [str(s).lower() for s in raw_scopes]
+        scope_set = set(scopes_list)
+        missing = _missing_scopes(required_scopes, scope_set)
+        if not missing:
+            return True
+        # Double-check via one revalidation to avoid false positives.
+        confirmed_missing, confirmed_set = await _confirm_missing_scopes(
+            api, access, required_scopes
+        )
+        if not confirmed_missing:
+            return True
+        _invalidate_for_missing_scopes_dataclass(
+            user,
+            required_scopes,
+            confirmed_set if confirmed_set is not None else scope_set,
+        )
+        return False
+    except Exception:  # noqa: BLE001
+        # Leave tokens untouched if validation fails; treat as retained
+        return True
+
+
 def _missing_scopes(required: set[str], current: set[str]) -> list[str]:
     """Get list of missing scopes.
 
@@ -483,6 +502,24 @@ def _invalidate_for_missing_scopes(
     )
 
 
+def _invalidate_for_missing_scopes_dataclass(
+    user: UserConfig, required_scopes: set[str], current_set: set[str]
+) -> None:
+    """Invalidate tokens for missing scopes for dataclass.
+
+    Args:
+        user: UserConfig instance.
+        required_scopes: Set of required scopes.
+        current_set: Set of current scopes.
+    """
+    user.access_token = None
+    user.refresh_token = None
+    # token_expiry not in UserConfig
+    logging.warning(
+        f"🚫 Token scopes missing required={';'.join(sorted(required_scopes))} got={';'.join(sorted(current_set)) if current_set else '<none>'} user={user.username} invalidated=true"
+    )
+
+
 async def _process_single_user_tokens(
     user: dict[str, Any],
     api: Any,
@@ -526,6 +563,48 @@ async def _process_single_user_tokens(
     return False, user
 
 
+async def _process_single_user_tokens_dataclass(
+    user: UserConfig,
+    api: Any,
+    provisioner: Any,
+    required_scopes: set[str],
+) -> tuple[bool, UserConfig]:
+    """Process a single user's tokens for dataclass.
+
+    Args:
+        user: UserConfig instance.
+        api: TwitchAPI instance.
+        provisioner: TokenProvisioner instance.
+        required_scopes: Set of required scopes.
+
+    Returns:
+        Tuple of (changed_flag, user_dataclass) where changed_flag is True
+        when token fields were updated.
+    """
+    access, refresh, _ = user.access_token, user.refresh_token, None
+    tokens_valid = await _validate_or_invalidate_scopes_dataclass(
+        user, access, refresh, api, required_scopes
+    )
+    if tokens_valid:
+        return False, user
+    client_id_v = user.client_id or ""
+    client_secret_v = user.client_secret or ""
+    new_access, new_refresh, _ = await provisioner.provision(
+        user.username,
+        client_id_v,
+        client_secret_v,
+        None,
+        None,
+        None,
+    )
+    if new_access and new_refresh:
+        user.access_token = new_access
+        user.refresh_token = new_refresh
+        # Note: token_expiry not in UserConfig, so ignore
+        return True, user
+    return False, user
+
+
 def _save_updated_config(
     updated_users: Sequence[dict[str, Any]], config_file: str
 ) -> None:
@@ -537,6 +616,23 @@ def _save_updated_config(
     """
     try:
         save_users_to_config(updated_users, config_file)
+        logging.info("💾 Tokens update saved")
+    except Exception as e:  # noqa: BLE001
+        logging.error(f"💥 Tokens update save failed: {type(e).__name__}")
+
+
+def _save_updated_config_dataclass(
+    updated_users: Sequence[UserConfig], config_file: str
+) -> None:
+    """Save updated user configurations for dataclasses.
+
+    Args:
+        updated_users: Sequence of updated UserConfig instances.
+        config_file: Path to the configuration file.
+    """
+    try:
+        user_dicts = [uc.to_dict() for uc in updated_users]
+        save_users_to_config(user_dicts, config_file)
         logging.info("💾 Tokens update saved")
     except Exception as e:  # noqa: BLE001
         logging.error(f"💥 Tokens update save failed: {type(e).__name__}")

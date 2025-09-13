@@ -32,7 +32,7 @@ async def test_batch_persistence_partial_failures(monkeypatch, tmp_path: Path):
 
     # Queue several users including two failing ones.
     for u in ["good", "bad1", "mid", "bad2", "tail"]:
-        await queue_user_update({"username": u, "channels": ["#chan"]}, str(cfg))
+        await queue_user_update({"username": u, "channels": ["#chan"], "access_token": "a" * 20, "client_id": "b" * 10, "client_secret": "c" * 10}, str(cfg))
 
     await flush_pending_updates(str(cfg))
     # Read back; expect failing ones absent (write aborted) while others present.
