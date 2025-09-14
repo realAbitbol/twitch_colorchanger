@@ -64,7 +64,7 @@ if exist "requirements.txt" (
                 )
             ) else (
                 echo Warning: Failed to create virtual environment
-                echo You may need to install dependencies manually: aiohttp, watchdog
+                echo You may need to install dependencies manually: aiohttp
                 pause
             )
         )

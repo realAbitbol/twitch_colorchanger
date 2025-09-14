@@ -522,49 +522,6 @@ def _invalidate_for_missing_scopes_dataclass(
     )
 
 
-async def _process_single_user_tokens(
-    user: dict[str, Any],
-    api: Any,
-    provisioner: Any,
-    required_scopes: set[str],
-) -> tuple[bool, dict[str, Any]]:
-    """Process a single user's tokens.
-
-    Args:
-        user: User config dictionary.
-        api: TwitchAPI instance.
-        provisioner: TokenProvisioner instance.
-        required_scopes: Set of required scopes.
-
-    Returns:
-        Tuple of (changed_flag, user_dict) where changed_flag is True
-        when token fields were updated.
-    """
-    access, refresh, _ = _extract_token_triplet(user)
-    tokens_valid = await _validate_or_invalidate_scopes(
-        user, access, refresh, api, required_scopes
-    )
-    if tokens_valid:
-        return False, user
-    client_id_v = user.get("client_id") or ""
-    client_secret_v = user.get("client_secret") or ""
-    new_access, new_refresh, new_expiry = await provisioner.provision(
-        user.get("username", "unknown"),
-        client_id_v,
-        client_secret_v,
-        None,
-        None,
-        None,
-    )
-    if new_access and new_refresh:
-        user["access_token"] = new_access
-        user["refresh_token"] = new_refresh
-        if new_expiry:
-            user["token_expiry"] = new_expiry
-        return True, user
-    return False, user
-
-
 async def _process_single_user_tokens_dataclass(
     user: UserConfig,
     api: Any,
@@ -605,22 +562,6 @@ async def _process_single_user_tokens_dataclass(
         # Note: token_expiry not in UserConfig, so ignore
         return True, user
     return False, user
-
-
-def _save_updated_config(
-    updated_users: Sequence[dict[str, Any]], config_file: str
-) -> None:
-    """Save updated user configurations.
-
-    Args:
-        updated_users: Sequence of updated user config dictionaries.
-        config_file: Path to the configuration file.
-    """
-    try:
-        save_users_to_config(updated_users, config_file)
-        logging.info("💾 Tokens update saved")
-    except (OSError, ValueError, RuntimeError) as e:
-        logging.error(f"💥 Tokens update save failed: {type(e).__name__}")
 
 
 def _save_updated_config_dataclass(
