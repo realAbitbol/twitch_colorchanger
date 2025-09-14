@@ -208,7 +208,7 @@ class ColorChanger:
             return result, should_retry
 
         try:
-            color = await handle_retryable_error(
+            color: str | None = await handle_retryable_error(
                 operation, "Current color fetch", max_attempts=6
             )
             # Cache the result if successful
@@ -317,7 +317,7 @@ class ColorChanger:
                 ), True
 
         try:
-            result = await handle_retryable_error(
+            result: ColorRequestResult = await handle_retryable_error(
                 operation, f"Color change {action}", max_attempts=6
             )
             # Cache successful color changes
