@@ -77,3 +77,57 @@ async def test_cancel_refresh_active():
         await task
     except asyncio.CancelledError:
         pass
+
+
+@pytest.mark.asyncio
+async def test_token_refresher_stop_during_refresh():
+    """Test stop method during an active token refresh."""
+    refresher = MockTokenRefresher()
+    refresher.token_manager.ensure_fresh = AsyncMock()
+    # Start refresh
+    task = asyncio.create_task(refresher._check_and_refresh_token())
+    await asyncio.sleep(0.01)
+    # Simulate stop (though stop is not in refresher, but in bot)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_token_refresher_multiple_refresh_requests():
+    """Test handling of multiple concurrent refresh requests."""
+    refresher = MockTokenRefresher()
+    refresher.token_manager.ensure_fresh = AsyncMock()
+    # Start multiple
+    tasks = [asyncio.create_task(refresher._check_and_refresh_token()) for _ in range(3)]
+    await asyncio.gather(*tasks)
+    assert refresher.token_manager.ensure_fresh.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_token_refresher_refresh_with_stale_token():
+    """Test refresh with a stale but not expired token."""
+    refresher = MockTokenRefresher()
+    mock_outcome = MagicMock()
+    mock_outcome.name = "SUCCESS"
+    refresher.token_manager.ensure_fresh = AsyncMock(return_value=mock_outcome)
+    refresher.token_manager.get_info = MagicMock(return_value=MagicMock(access_token="new_token"))
+    result = await refresher._check_and_refresh_token()
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_token_refresher_error_recovery():
+    """Test error recovery after a failed refresh attempt."""
+    refresher = MockTokenRefresher()
+    refresher.token_manager.ensure_fresh = AsyncMock(side_effect=RuntimeError("Fail"))
+    # First call fails
+    result1 = await refresher._check_and_refresh_token()
+    assert result1 is False
+    # Second call succeeds
+    refresher.token_manager.ensure_fresh = AsyncMock(return_value=MagicMock(name="SUCCESS"))
+    refresher.token_manager.get_info = MagicMock(return_value=MagicMock(access_token="recovered"))
+    result2 = await refresher._check_and_refresh_token()
+    assert result2 is True

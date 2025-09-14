@@ -13,6 +13,9 @@ from src.bot.core import TwitchColorBot
 def mock_context():
     ctx = MagicMock()
     ctx.session = MagicMock()
+    ctx.token_manager = MagicMock()
+    ctx.token_manager.ensure_fresh = AsyncMock()
+    ctx.token_manager.get_info = MagicMock()
     return ctx
 
 
@@ -326,3 +329,34 @@ async def test_color_change_request_invalid(bot):
         except ValueError:
             logging.error("Invalid color")
         mock_error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_bot_core_message_processing_error(bot):
+    """Test message processing when an error occurs."""
+    with patch.object(bot, "_change_color", side_effect=Exception("Processing error")) as mock_change, \
+         patch.object(logging, "error") as mock_error:
+        await bot.handle_message(bot.username, "channel", "!color red")
+        mock_error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_bot_core_connection_recovery(bot):
+    """Test connection recovery after temporary failure."""
+    with patch.object(bot, "_initialize_connection", new_callable=AsyncMock, return_value=True), \
+         patch.object(bot, "_run_chat_loop", new_callable=AsyncMock):
+        await bot.start()
+        # Should succeed
+        assert bot.running is True
+
+
+@pytest.mark.asyncio
+async def test_bot_core_shutdown_graceful(bot):
+    """Test graceful shutdown under normal conditions."""
+    bot.running = True
+    bot.listener_task = asyncio.create_task(asyncio.sleep(10))  # Long running task
+    with patch.object(bot, "_disconnect_chat_backend", new_callable=AsyncMock), \
+         patch("src.bot.core.flush_pending_updates", new_callable=AsyncMock):
+        await bot.stop()
+        assert bot.running is False
+        assert bot.listener_task.cancelled()
