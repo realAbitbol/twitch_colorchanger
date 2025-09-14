@@ -8,17 +8,11 @@ ARG TARGETARCH
 COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \
-    if [ "$TARGETARCH" = "riscv64" ]; then \
-        apk add --no-cache --virtual .build-deps gcc musl-dev python3-dev; \
-    fi && \
     pip wheel -r requirements.txt -w /app/wheels && \
     # Strip all .so files in built wheels (if any)
-    find /app/wheels -name '*.so' -exec strip --strip-unneeded {} + || true && \
-    if [ "$TARGETARCH" = "riscv64" ]; then \
-        apk del .build-deps; \
-    fi
+    find /app/wheels -name '*.so' -exec strip --strip-unneeded {} + || true
 
-# Runtime stage: minimal image, install from prebuilt wheels only
+    # Runtime stage: minimal image, install from prebuilt wheels only
 FROM python:${PYTHON_VERSION} AS runtime
 
 # Optional build metadata passed from CI (safe defaults if not provided)
