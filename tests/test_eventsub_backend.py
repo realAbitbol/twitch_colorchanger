@@ -1,8 +1,8 @@
 """Tests for src/chat/eventsub_backend.py."""
 
-import aiohttp
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 
 from src.chat.eventsub_backend import EventSubChatBackend

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import unittest.mock as mock
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
-import unittest.mock as mock
 
 import aiohttp
 import pytest

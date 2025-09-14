@@ -21,7 +21,7 @@ class TestColoredFormatter:
             name="test", level=logging.DEBUG, pathname="", lineno=0, msg="test", args=(), exc_info=None
         )
         formatted = formatter.format(record)
-        assert "\033[36mDEBUG   \033[0m test" == formatted
+        assert formatted == "\033[36mDEBUG   \033[0m test"
 
     def test_colored_formatter_info_color(self, formatter):
         """Test INFO level color code."""
@@ -29,7 +29,7 @@ class TestColoredFormatter:
             name="test", level=logging.INFO, pathname="", lineno=0, msg="test", args=(), exc_info=None
         )
         formatted = formatter.format(record)
-        assert "\033[32mINFO    \033[0m test" == formatted
+        assert formatted == "\033[32mINFO    \033[0m test"
 
     def test_colored_formatter_warning_color(self, formatter):
         """Test WARNING level color code."""
@@ -37,7 +37,7 @@ class TestColoredFormatter:
             name="test", level=logging.WARNING, pathname="", lineno=0, msg="test", args=(), exc_info=None
         )
         formatted = formatter.format(record)
-        assert "\033[33mWARNING \033[0m test" == formatted
+        assert formatted == "\033[33mWARNING \033[0m test"
 
     def test_colored_formatter_error_color(self, formatter):
         """Test ERROR level color code."""
@@ -45,7 +45,7 @@ class TestColoredFormatter:
             name="test", level=logging.ERROR, pathname="", lineno=0, msg="test", args=(), exc_info=None
         )
         formatted = formatter.format(record)
-        assert "\033[31mERROR   \033[0m test" == formatted
+        assert formatted == "\033[31mERROR   \033[0m test"
 
 
 class TestFseventsFilter:

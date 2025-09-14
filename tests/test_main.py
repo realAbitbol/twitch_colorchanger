@@ -127,7 +127,7 @@ async def test_main_exceptions_handling():
     """Test main handles general exceptions."""
     with patch('src.main.emit_startup_instructions', side_effect=Exception("Startup error")), \
          patch('src.main.log_error') as mock_log_error, \
-         patch('sys.exit') as mock_exit, \
+         patch('sys.exit'), \
          patch('builtins.print'):
         await main()
         mock_log_error.assert_called_once_with("Main application error", ANY)
@@ -163,12 +163,12 @@ async def test_main_invalid_config_file():
 async def test_main_missing_config():
     """Test main function when config file is missing, verifying graceful failure."""
     with patch('src.main.get_configuration', side_effect=SystemExit(1)), \
-         patch('src.main.log_error') as mock_log_error, \
-         patch('sys.exit') as mock_exit, \
+         patch('src.main.log_error'), \
+         patch('sys.exit'), \
          patch('src.main.emit_startup_instructions'), \
-         patch('builtins.print'):
-        with pytest.raises(SystemExit):
-            await main()
+         patch('builtins.print'), \
+         pytest.raises(SystemExit):
+        await main()
 
 
 @pytest.mark.asyncio

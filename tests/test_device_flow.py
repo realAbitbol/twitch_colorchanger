@@ -302,7 +302,7 @@ async def test_handle_device_code_invalid_response(monkeypatch):
             return InvalidResp()
         async def __aenter__(self):
             return self
-        async def __aexit__(self, *args):
+        async def __aexit__(self, *args):  # noqa: D401
             pass
     monkeypatch.setattr("aiohttp.ClientSession", lambda: InvalidSession())
     result = await flow.request_device_code()

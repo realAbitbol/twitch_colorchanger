@@ -1,6 +1,5 @@
 """Tests for src/manager/__init__.py."""
 
-import pytest
 
 from src.manager import __all__
 

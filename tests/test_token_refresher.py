@@ -1,7 +1,7 @@
 """Tests for src/bot/token_refresher.py."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -75,7 +75,7 @@ async def test_cancel_refresh_active():
     task.cancel()
     try:
         await task
-    except asyncio.CancelledError:
+    except asyncio.CancelledError:  # noqa
         pass
 
 
@@ -91,7 +91,7 @@ async def test_token_refresher_stop_during_refresh():
     task.cancel()
     try:
         await task
-    except asyncio.CancelledError:
+    except asyncio.CancelledError:  # noqa
         pass
 
 

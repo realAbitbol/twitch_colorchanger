@@ -1,6 +1,7 @@
 """Unit and integration tests for src/errors/handling.py."""
 
 
+import asyncio
 import functools
 from unittest.mock import patch
 
@@ -44,6 +45,7 @@ async def no_sleep_retry_async(operation, max_attempts=6, backoff_func=None):
 async def test_handle_api_error_success():
     """Test handle_api_error with successful operation."""
     async def operation():
+        await asyncio.sleep(0)
         return "success"
 
     result = await handle_api_error(operation, "test context")
@@ -116,6 +118,7 @@ async def test_handle_api_error_400():
 async def test_handle_retryable_error_success_first():
     """Test handle_retryable_error success on first attempt."""
     async def operation(attempt):
+        await asyncio.sleep(0)
         return "success", False
 
     result = await handle_retryable_error(operation, "test context", max_attempts=3)
@@ -129,6 +132,7 @@ async def test_handle_retryable_error_retry_success():
     call_count = 0
 
     async def operation(attempt):
+        await asyncio.sleep(0)
         nonlocal call_count
         call_count += 1
         if call_count < 2:
@@ -171,6 +175,7 @@ async def test_handle_retryable_error_network_retry():
     call_count = 0
 
     async def operation(attempt):
+        await asyncio.sleep(0)
         nonlocal call_count
         call_count += 1
         if call_count < 2:
@@ -190,6 +195,7 @@ async def test_handle_retryable_error_custom_max(log_mock):
     call_count = 0
 
     async def operation(attempt):
+        await asyncio.sleep(0)
         nonlocal call_count
         call_count += 1
         if call_count < 3:

@@ -1,3 +1,4 @@
+import math
 import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -37,7 +38,7 @@ async def test_init_color_cache():
     assert hasattr(changer, "_cache_lock")
     assert hasattr(changer, "_current_color_cache")
     assert hasattr(changer, "_successful_color_cache")
-    assert changer._cache_ttl == 30.0
+    assert math.isclose(changer._cache_ttl, 30.0)
     assert isinstance(changer._current_color_cache, dict)
     assert isinstance(changer._successful_color_cache, dict)
 

@@ -322,7 +322,7 @@ async def test_handle_message_malformed(bot):
 @pytest.mark.asyncio
 async def test_color_change_request_invalid(bot):
     """Test color_change_request with invalid parameters or edge cases."""
-    with patch.object(bot, "_change_color", side_effect=ValueError("Invalid color")) as mock_change, \
+    with patch.object(bot, "_change_color", side_effect=ValueError("Invalid color")), \
          patch.object(logging, "error") as mock_error:
         try:
             await bot._change_color("invalid_color")
@@ -334,7 +334,7 @@ async def test_color_change_request_invalid(bot):
 @pytest.mark.asyncio
 async def test_bot_core_message_processing_error(bot):
     """Test message processing when an error occurs."""
-    with patch.object(bot, "_change_color", side_effect=Exception("Processing error")) as mock_change, \
+    with patch.object(bot, "_change_color", side_effect=Exception("Processing error")), \
          patch.object(logging, "error") as mock_error:
         await bot.handle_message(bot.username, "channel", "!color red")
         mock_error.assert_called()
