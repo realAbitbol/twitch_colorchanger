@@ -25,7 +25,7 @@ async def test_user_lock_pruning_logs(monkeypatch, tmp_path: Path, caplog) -> No
     # Allow a tiny loop cycle
     await asyncio.sleep(0)
 
-    msgs = [r.message for r in caplog.records]
+    msgs = [r.getMessage() for r in caplog.records]
     # Expect prune log referencing user_lock_prune template (remaining may vary) human text contains 'Pruned user locks'
     if not any("Pruned user locks" in m for m in msgs):
         raise AssertionError(f"Expected prune log message, got {msgs}")

@@ -47,7 +47,7 @@ async def test_unknown_expiry_exhaustion(monkeypatch, caplog):
         await tm._handle_unknown_expiry("u")  # noqa: SLF001
 
     assert info.forced_unknown_attempts == 3
-    exhausted_logs = [r for r in caplog.records if r.levelno >= logging.WARNING and "exhausted" in r.message]
+    exhausted_logs = [r for r in caplog.records if r.levelno >= logging.WARNING and "exhausted" in r.getMessage()]
     assert exhausted_logs, "Expected exhaustion log entry containing 'exhausted'"
 
 
@@ -141,7 +141,7 @@ async def test_periodic_validation_error_logged(monkeypatch, caplog):
     monkeypatch.setattr(tm, "validate", fake_validate)  # type: ignore[arg-type]
     caplog.set_level(logging.WARNING)
     await tm._maybe_periodic_or_unknown_resolution("u", info, 40)  # noqa: SLF001
-    msgs = [r.message for r in caplog.records]
+    msgs = [r.getMessage() for r in caplog.records]
     assert any("⚠️ Periodic remote token validation error for user u" in m for m in msgs)
 
 
@@ -211,7 +211,7 @@ async def test_update_hook_error_logged(monkeypatch, caplog):
     # Allow task scheduling and callback execution over a couple of loop turns
     await asyncio.sleep(0)
     await asyncio.sleep(0)
-    msgs = [r.message for r in caplog.records]
+    msgs = [r.getMessage() for r in caplog.records]
     assert any("⚠️ Retained background task error" in m for m in msgs)
 
 
