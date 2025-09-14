@@ -236,7 +236,7 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         await self._ensure_self_user_id()
         await self._record_token_scopes()
         await self._subscribe_channel_chat(
-            self._primary_channel or primary_channel.lower()
+            self._primary_channel or primary_channel.lstrip("#").lower()
         )
         self._save_id_cache()
         return True
@@ -264,7 +264,7 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         self._token = token
         self._username = username.lower()
         self._user_id = user_id
-        pchan = primary_channel.lower()
+        pchan = primary_channel.lstrip("#").lower()
         self._primary_channel = pchan
         self._channels = [pchan]
         self._client_id = client_id
@@ -364,7 +364,7 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         Returns:
             bool: True if joined successfully, False otherwise.
         """
-        channel_l = channel.lower()
+        channel_l = channel.lstrip("#").lower()
         if channel_l in self._channels:
             return True
         # Attempt batch resolve (single new channel) to leverage cache logic
@@ -644,12 +644,12 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             logging.debug(
                 f"📋 EventSub channel mapping user={self._username} mapping={mapping}"
             )
-            # Map back to original channel names (with #)
+            # Map back to original channel names (with # stripped for cache keys)
             for i, stripped in enumerate(stripped_logins):
                 original = needed[i]
                 uid = mapping.get(stripped)
                 if uid:
-                    self._channel_ids[original] = uid
+                    self._channel_ids[original.lstrip("#")] = uid
             # Log any unresolved
             unresolved = [c for c in needed if c not in self._channel_ids]
             for miss in unresolved:
@@ -670,7 +670,7 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
                 if isinstance(data, dict):
                     for k, v in data.items():
                         if isinstance(k, str) and isinstance(v, str):
-                            self._channel_ids.setdefault(k.lower(), v)
+                            self._channel_ids.setdefault(k.lstrip("#").lower(), v)
         except Exception as e:  # noqa: BLE001
             logging.info(f"⚠️ EventSub cache load error: {str(e)}")
 
