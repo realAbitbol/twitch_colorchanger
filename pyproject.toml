@@ -17,9 +17,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
-dependencies = [
-    "pydantic>=2.0.0,<3.0.0"
-]  # Runtime deps still managed via requirements.txt; can be migrated later.
+dependencies = []
 
 [project.scripts]
 
