@@ -52,7 +52,7 @@ def test_normalize_user_channels_persists(tmp_path):
     # Convert back to dicts for assertion compatibility
     normalized = [uc.to_dict() for uc in normalized_configs]
     assert changed is False  # Normalization occurred during UserConfig creation, but normalize() returns False
-    assert normalized[0]["channels"] == ["#frank"]  # Updated expectation to include '#' prefix per corrected normalization
+    assert normalized[0]["channels"] == ["frank"]  # Updated expectation to strip '#' prefix per corrected normalization
 
 
 def test_userconfig_normalize_and_validate():
@@ -66,7 +66,7 @@ def test_userconfig_normalize_and_validate():
     changed = uc.normalize()
     assert changed is False
     assert uc.username == "Grace".strip()
-    assert uc.channels == ["#grace"]  # Updated expectation to include '#' prefix per corrected normalization
+    assert uc.channels == ["grace"]  # Updated expectation to strip '#' prefix per corrected normalization
     assert uc.validate() is True
 
 

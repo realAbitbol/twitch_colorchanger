@@ -16,13 +16,13 @@ def _normalize_channels(channels: list[str] | Any) -> tuple[list[str], bool]:
         Tuple of (normalized_channels, changed) where changed is True
         if the list was modified.
 
-    Updated to add '#' prefix to match corrected channel normalization.
+    Updated to strip '#' prefix to match corrected channel normalization.
     """
     if not isinstance(channels, list):
         return [], True
     normalized = sorted(
         dict.fromkeys(
-            "#" + ch.lower().strip().lstrip("#") for ch in channels if ch and ch.strip()
+            ch.lower().strip().lstrip("#") for ch in channels if ch and ch.strip()
         )
     )
     changed = normalized != channels
@@ -58,11 +58,11 @@ class UserConfig(BaseModel):
     def validate_channels(cls, v: Any) -> list[str]:
         """Validate and normalize channels.
 
-        Strips whitespace and leading '#', adds '#' prefix for consistency,
+        Strips whitespace and leading '#', ensures consistent no '#' prefix for consistency,
         filters empty strings, deduplicates and sorts the list.
-        Ensures consistent '#' prefix for all channels.
+        Ensures consistent no '#' prefix for all channels.
 
-        Updated to add '#' prefix to match corrected channel normalization.
+        Updated to strip '#' prefix to match corrected channel normalization.
         """
         if not isinstance(v, list):
             raise ValueError("channels must be a list")
@@ -71,7 +71,7 @@ class UserConfig(BaseModel):
             if isinstance(c, str):
                 stripped = c.strip().lstrip("#").lower()
                 if stripped:
-                    validated.append("#" + stripped)
+                    validated.append(stripped)
         # Dedup and sort
         validated = sorted(dict.fromkeys(validated))
         return validated

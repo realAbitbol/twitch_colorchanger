@@ -47,7 +47,7 @@ async def test_queue_and_flush_coalesces(tmp_path: Path, monkeypatch) -> None:
         raise AssertionError("First field should persist (merged)")
     if rec.get("refresh_token") != "two":
         raise AssertionError("Merged refresh token missing")
-    if sorted(rec.get("channels", [])) != ["#x"]:
+    if sorted(rec.get("channels", [])) != ["x"]:
         raise AssertionError(f"Channels not normalized or deduped: {rec.get('channels')}")
 
 

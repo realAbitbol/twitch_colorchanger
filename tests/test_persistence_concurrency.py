@@ -32,4 +32,4 @@ async def test_queue_vs_direct_last_wins(monkeypatch, tmp_path: Path):
     users = data["users"] if isinstance(data, dict) and "users" in data else data
     # Expect last queued update to dominate (final) combined with direct last value before flush overwritten by queued.
     zoe_entry = next(u for u in users if u.get("username") == "zoe")
-    assert set(zoe_entry["channels"]) == {"#zoe", "#final"}
+    assert set(zoe_entry["channels"]) == {"zoe", "final"}
