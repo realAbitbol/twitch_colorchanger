@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import aiohttp
@@ -165,3 +166,297 @@ async def test_can_subscribe_failure():
     backend._token_invalid_flag = False
 
     assert backend._can_subscribe() is False
+
+
+@pytest.mark.asyncio
+async def test_handshake_and_session_ws_connect_failure():
+    """Test _handshake_and_session handles WebSocket connection failure."""
+    backend = EventSubChatBackend()
+    backend._client_id = "client123"
+    backend._token = "token123"
+
+    session_mock = MagicMock()
+    session_mock.ws_connect = AsyncMock(side_effect=Exception("Connection failed"))
+    backend._session = session_mock
+
+    result = await backend._handshake_and_session()
+    assert result is False
+    assert backend._ws is None
+
+
+@pytest.mark.asyncio
+async def test_handle_challenge_if_needed_no_challenge():
+    """Test _handle_challenge_if_needed when no challenge is pending."""
+    backend = EventSubChatBackend()
+    backend._pending_challenge = None
+
+    ws_mock = MagicMock()
+    handshake_details = {}
+
+    result = await backend._handle_challenge_if_needed(ws_mock, handshake_details)
+    assert result is True
+    assert "challenge_handshake" not in handshake_details
+
+
+@pytest.mark.asyncio
+async def test_handle_challenge_if_needed_bad_type():
+    """Test _handle_challenge_if_needed handles non-TEXT challenge message."""
+    backend = EventSubChatBackend()
+    backend._pending_challenge = "expected_challenge"
+
+    challenge_msg = MagicMock()
+    challenge_msg.type = aiohttp.WSMsgType.CLOSED
+    challenge_msg.data = None
+
+    ws_mock = MagicMock()
+    ws_mock.receive = AsyncMock(return_value=challenge_msg)
+
+    handshake_details = {}
+
+    result = await backend._handle_challenge_if_needed(ws_mock, handshake_details)
+    assert result is False
+    assert handshake_details["challenge_error"] == "bad_challenge_type"
+    assert backend._pending_challenge is None
+
+
+@pytest.mark.asyncio
+async def test_handle_challenge_if_needed_parse_error():
+    """Test _handle_challenge_if_needed handles invalid JSON in challenge."""
+    backend = EventSubChatBackend()
+    backend._pending_challenge = "expected_challenge"
+
+    challenge_msg = MagicMock()
+    challenge_msg.type = aiohttp.WSMsgType.TEXT
+    challenge_msg.data = "invalid json"
+
+    ws_mock = MagicMock()
+    ws_mock.receive = AsyncMock(return_value=challenge_msg)
+
+    handshake_details = {}
+
+    result = await backend._handle_challenge_if_needed(ws_mock, handshake_details)
+    assert result is False
+    assert "challenge_error" in handshake_details
+    assert backend._pending_challenge is None
+
+
+@pytest.mark.asyncio
+async def test_handle_challenge_if_needed_no_challenge_value():
+    """Test _handle_challenge_if_needed handles challenge without value."""
+    backend = EventSubChatBackend()
+    backend._pending_challenge = "expected_challenge"
+
+    challenge_msg = MagicMock()
+    challenge_msg.type = aiohttp.WSMsgType.TEXT
+    challenge_msg.data = '{"type": "challenge"}'
+
+    ws_mock = MagicMock()
+    ws_mock.receive = AsyncMock(return_value=challenge_msg)
+
+    handshake_details = {}
+
+    result = await backend._handle_challenge_if_needed(ws_mock, handshake_details)
+    assert result is False
+    assert handshake_details["challenge_error"] == "no_challenge_value"
+    assert backend._pending_challenge is None
+
+
+@pytest.mark.asyncio
+async def test_handle_challenge_if_needed_mismatch():
+    """Test _handle_challenge_if_needed handles challenge mismatch."""
+    backend = EventSubChatBackend()
+    backend._pending_challenge = "expected_challenge"
+
+    challenge_msg = MagicMock()
+    challenge_msg.type = aiohttp.WSMsgType.TEXT
+    challenge_msg.data = '{"challenge": "wrong_challenge"}'
+
+    ws_mock = MagicMock()
+    ws_mock.receive = AsyncMock(return_value=challenge_msg)
+
+    handshake_details = {}
+
+    result = await backend._handle_challenge_if_needed(ws_mock, handshake_details)
+    assert result is False
+    assert backend._pending_challenge is None
+
+
+@pytest.mark.asyncio
+async def test_process_welcome_message_close_frame():
+    """Test _process_welcome_message handles close frame."""
+    backend = EventSubChatBackend()
+
+    welcome = MagicMock()
+    welcome.type = aiohttp.WSMsgType.CLOSE
+    welcome.data = 1000
+    welcome.extra = "reason"
+
+    ws_mock = MagicMock()
+    ws_mock.receive = AsyncMock(return_value=welcome)
+    handshake_details = {}
+
+    success, details = await backend._process_welcome_message(ws_mock, handshake_details)
+    assert success is False
+    assert details["error"] == "closed_by_server"
+    assert details["close_code"] == 1000
+
+
+@pytest.mark.asyncio
+async def test_process_welcome_message_error_frame():
+    """Test _process_welcome_message handles error frame."""
+    backend = EventSubChatBackend()
+
+    welcome = MagicMock()
+    welcome.type = aiohttp.WSMsgType.ERROR
+    welcome.data = "ws_error"
+
+    ws_mock = MagicMock()
+    ws_mock.receive = AsyncMock(return_value=welcome)
+    handshake_details = {}
+
+    success, details = await backend._process_welcome_message(ws_mock, handshake_details)
+    assert success is False
+    assert details["error"] == "ws_error"
+
+
+@pytest.mark.asyncio
+async def test_process_welcome_message_bad_type():
+    """Test _process_welcome_message handles non-TEXT frame."""
+    backend = EventSubChatBackend()
+
+    welcome = MagicMock()
+    welcome.type = aiohttp.WSMsgType.BINARY
+    welcome.data = b"binary data"
+
+    ws_mock = MagicMock()
+    ws_mock.receive = AsyncMock(return_value=welcome)
+    handshake_details = {}
+
+    success, details = await backend._process_welcome_message(ws_mock, handshake_details)
+    assert success is False
+    assert details["error"] == "bad_welcome_type"
+
+
+@pytest.mark.asyncio
+async def test_process_welcome_message_parse_error():
+    """Test _process_welcome_message handles invalid JSON."""
+    backend = EventSubChatBackend()
+
+    welcome = MagicMock()
+    welcome.type = aiohttp.WSMsgType.TEXT
+    welcome.data = "invalid json"
+
+    ws_mock = MagicMock()
+    ws_mock.receive = AsyncMock(return_value=welcome)
+    handshake_details = {}
+
+    success, details = await backend._process_welcome_message(ws_mock, handshake_details)
+    assert success is False
+    assert "error" in details
+    assert "welcome_parse_error" in details["error"]
+
+
+@pytest.mark.asyncio
+async def test_process_welcome_message_no_session_id():
+    """Test _process_welcome_message handles welcome without session ID."""
+    backend = EventSubChatBackend()
+
+    welcome = MagicMock()
+    welcome.type = aiohttp.WSMsgType.TEXT
+    welcome.data = '{"payload": {"session": {}}}'
+
+    ws_mock = MagicMock()
+    ws_mock.receive = AsyncMock(return_value=welcome)
+    handshake_details = {}
+
+    success, details = await backend._process_welcome_message(ws_mock, handshake_details)
+    assert success is False
+    assert details["error"] == "no_session_id"
+
+
+@pytest.mark.asyncio
+async def test_handshake_and_session_bad_welcome_type():
+    """Test _handshake_and_session handles non-TEXT welcome message."""
+    backend = EventSubChatBackend()
+    backend._client_id = "client123"
+    backend._token = "token123"
+
+    welcome = MagicMock()
+    welcome.type = aiohttp.WSMsgType.CLOSED
+    welcome.data = None
+
+    ws_mock = MagicMock()
+    ws_mock.receive = AsyncMock(return_value=welcome)
+
+    session_mock = MagicMock()
+    session_mock.ws_connect = AsyncMock(return_value=ws_mock)
+    backend._session = session_mock
+
+    result = await backend._handshake_and_session()
+    assert result is False
+    assert backend._session_id is None
+
+
+@pytest.mark.asyncio
+async def test_handshake_and_session_welcome_parse_error():
+    """Test _handshake_and_session handles invalid JSON in welcome."""
+    backend = EventSubChatBackend()
+    backend._client_id = "client123"
+    backend._token = "token123"
+
+    welcome = MagicMock()
+    welcome.type = aiohttp.WSMsgType.TEXT
+    welcome.data = "invalid json"
+
+    ws_mock = MagicMock()
+    ws_mock.receive = AsyncMock(return_value=welcome)
+
+    session_mock = MagicMock()
+    session_mock.ws_connect = AsyncMock(return_value=ws_mock)
+    backend._session = session_mock
+
+    result = await backend._handshake_and_session()
+    assert result is False
+    assert backend._session_id is None
+
+
+@pytest.mark.asyncio
+async def test_handshake_and_session_no_session_id():
+    """Test _handshake_and_session handles welcome without session ID."""
+    backend = EventSubChatBackend()
+    backend._client_id = "client123"
+    backend._token = "token123"
+
+    welcome = MagicMock()
+    welcome.type = aiohttp.WSMsgType.TEXT
+    welcome.data = '{"payload": {"session": {}}}'
+
+    ws_mock = MagicMock()
+    ws_mock.receive = AsyncMock(return_value=welcome)
+
+    session_mock = MagicMock()
+    session_mock.ws_connect = AsyncMock(return_value=ws_mock)
+    backend._session = session_mock
+
+    result = await backend._handshake_and_session()
+    assert result is False
+    assert backend._session_id is None
+
+
+@pytest.mark.asyncio
+async def test_handshake_and_session_timeout():
+    """Test _handshake_and_session handles timeout on welcome."""
+    backend = EventSubChatBackend()
+    backend._client_id = "client123"
+    backend._token = "token123"
+
+    ws_mock = MagicMock()
+    ws_mock.receive = AsyncMock(side_effect=asyncio.TimeoutError)
+
+    session_mock = MagicMock()
+    session_mock.ws_connect = AsyncMock(return_value=ws_mock)
+    backend._session = session_mock
+
+    result = await backend._handshake_and_session()
+    assert result is False
+    # Note: code doesn't set _ws to None on exception
