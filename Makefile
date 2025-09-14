@@ -149,4 +149,4 @@ check-env:
 	@echo "Pip version: $(shell pip --version)"
 	@echo "Virtual environment: $(VIRTUAL_ENV)"
 	@echo "Dependencies:"
-	@pip list | grep -E "(aiohttp|watchdog|ruff|mypy|bandit|mdformat)"
+	@pip list | grep -E "(aiohttp|ruff|mypy|bandit|mdformat)"

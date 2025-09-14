@@ -9,18 +9,6 @@ import os
 import sys
 
 
-class WatchdogSuppressFilter(logging.Filter):
-    """Filter to suppress watchdog and fsevents logging noise."""
-
-    def filter(self, record):
-        """Return False to suppress the log record if it's from watchdog or fsevents."""
-        return not (
-            record.name.startswith("watchdog")
-            or "fsevents" in record.name
-            or record.name == "fsevents"
-        )
-
-
 class ColoredFormatter(logging.Formatter):
     """Custom logging formatter that adds ANSI color codes to log levels.
 
@@ -65,11 +53,18 @@ class ColoredFormatter(logging.Formatter):
         return f"{colored_level} {message}"
 
 
+class FseventsFilter(logging.Filter):
+    """Filter to suppress fsevents-related log messages."""
+
+    def filter(self, record):
+        """Return False to suppress the log record if it contains 'fsevents'."""
+        return "fsevents" not in record.getMessage().lower()
+
+
 class LoggerConfigurator:
     """Handles logging configuration cleanly without monkey-patching.
 
-    Supports environment variable configuration for log levels and
-    watchdog noise suppression.
+    Supports environment variable configuration for log levels.
     """
 
     def __init__(self, config=None):
@@ -81,31 +76,20 @@ class LoggerConfigurator:
         self.config = config or {}
 
     def configure(self):
-        """Configure logging with colored output and optional watchdog suppression.
+        """Configure logging with colored output.
 
         Uses environment variables:
         - DEBUG: Set to 'true', '1', or 'yes' for DEBUG level, otherwise INFO
-        - SUPPRESS_WATCHDOG: Set to 'true', '1', or 'yes' to suppress watchdog noise
         """
         # Determine log level from environment
         debug_env = os.environ.get("DEBUG", "").lower()
         log_level = logging.DEBUG if debug_env in ("true", "1", "yes") else logging.INFO
 
-        # Determine if watchdog suppression is enabled
-        suppress_watchdog = os.environ.get("SUPPRESS_WATCHDOG", "true").lower() in (
-            "true",
-            "1",
-            "yes",
-        )
-
         # Create formatter and handler
         formatter = ColoredFormatter("%(message)s")
         handler = logging.StreamHandler(sys.stderr)
         handler.setFormatter(formatter)
-
-        # Add watchdog suppression filter if enabled
-        if suppress_watchdog:
-            handler.addFilter(WatchdogSuppressFilter())
+        handler.addFilter(FseventsFilter())
 
         # Configure root logger
         logging.basicConfig(
@@ -118,10 +102,7 @@ class LoggerConfigurator:
         root_logger = logging.getLogger()
         root_logger.setLevel(log_level)
 
-        # Apply formatter to all existing handlers (in case any were added)
+        # Apply formatter and filter to all existing handlers (in case any were added)
         for h in root_logger.handlers:
             h.setFormatter(formatter)
-            if suppress_watchdog and not any(
-                isinstance(f, WatchdogSuppressFilter) for f in h.filters
-            ):
-                h.addFilter(WatchdogSuppressFilter())
+            h.addFilter(FseventsFilter())

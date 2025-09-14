@@ -77,7 +77,8 @@ def emit_startup_instructions() -> None:
     print("👉 Supports preset Twitch and random hex colors")
     print("👉 Handles multiple users simultaneously")
     print("👉 Auto-refreshes tokens to minimize re-authorization")
-    print("👉 type 'cdd' to disable or 'cce' to enable in any joined channel.")
+    print("👉 type 'ccd' to disable or 'cce' to enable in any joined channel.")
+    print("👉 type 'ccc <color>' to manually change color (preset or hex).")
     print(
         "🔒 Security notice : Remember to never share your client id, client secret or your tokens!"
     )

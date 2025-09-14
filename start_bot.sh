@@ -85,7 +85,7 @@ if [ -f "requirements.txt" ]; then
         }
     else
         echo "Warning: pip not found. You may need to install dependencies manually"
-        echo "Dependencies: aiohttp, watchdog"
+        echo "Dependencies: aiohttp"
     fi
     echo
 fi

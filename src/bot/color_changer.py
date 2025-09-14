@@ -106,17 +106,6 @@ class ColorChanger:
         )
         return data, status_code
 
-    def _calculate_retry_delay(self, attempt: int) -> float:
-        """Calculate exponential backoff delay for retries.
-
-        Args:
-            attempt: Current attempt number (0-based).
-
-        Returns:
-            Delay in seconds, capped at 60.
-        """
-        return min(1 * (2**attempt), 60)
-
     async def _get_user_info_impl(self) -> dict[str, Any] | None:
         """Implementation of user info fetching with retries.
 
@@ -393,24 +382,6 @@ class ColorChanger:
             http_status=status_code,
             error=self._extract_color_error_snippet(),
         )
-
-    def _handle_color_exception(
-        self, e: Exception, attempt: int
-    ) -> ColorRequestResult | None:
-        """Handle exceptions during color change request.
-
-        Args:
-            e: The exception that occurred.
-            attempt: Current attempt number.
-
-        Returns:
-            ColorRequestResult or None for retry.
-        """
-        if attempt < 5:
-            return None  # retry
-        if isinstance(e, TimeoutError):
-            return ColorRequestResult(ColorRequestStatus.TIMEOUT, error=str(e))
-        return ColorRequestResult(ColorRequestStatus.INTERNAL_ERROR, error=str(e))
 
     async def _change_color(self, hex_color: str | None = None) -> bool:
         """Change the user's chat color.

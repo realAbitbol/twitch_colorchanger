@@ -114,7 +114,6 @@ class TokenManager:
         self._tokens_lock = threading.Lock()
         self.background_task: asyncio.Task[Any] | None = None
         self.running = False
-        self.logger = None
         self._client_cache: dict[tuple[str, str], TokenClient] = {}
         # Registered per-user async hooks (called after successful token refresh).
         # Multiple hooks can be registered (e.g., persist + propagate to backends).

@@ -4,7 +4,6 @@ Main entry point for the Twitch Color Changer Bot
 """
 
 import asyncio
-import atexit
 import logging
 import os
 import sys
@@ -59,20 +58,6 @@ async def main() -> None:
 
 
 # Best-effort safety net: ensure any lingering aiohttp session is closed
-@atexit.register
-def _cleanup_any_context() -> None:  # pragma: no cover - process exit path
-    """Cleanup function registered with atexit for emergency resource cleanup.
-
-    This function is called when the process exits and attempts to clean up
-    any remaining resources, particularly aiohttp sessions from the application
-    context. It performs lazy imports to avoid side effects if not needed.
-    """
-    # Import lazily to avoid import side-effects if not needed
-    from .application_context import (  # noqa: F401
-        ApplicationContext,
-    )
-
-
 if __name__ == "__main__":
     try:
         asyncio.run(main())

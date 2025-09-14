@@ -57,7 +57,6 @@ Automatically change your Twitch username color after each message you send in c
   - [Turbo/Prime Limitations](#turboprime-limitations)
   - [API Issues](#api-issues)
   - [Logging & Debugging](#logging--debugging)
-- [Technical Documentation](#technical-documentation)
 - [Contributing](#contributing)
 - [License](#license)
   - [Why GPL v3?](#why-gpl-v3)
@@ -70,7 +69,6 @@ Automatically change your Twitch username color after each message you send in c
 
 ## Features
 
-
 ### Core Features
 
 - **🎨 Dynamic Color Changes**: Automatically changes your Twitch chat color after every message
@@ -81,7 +79,6 @@ Automatically change your Twitch username color after each message you send in c
 - **🔄 Token Refresh**: Automatic token validation and refresh with fallback to authorization flow when needed
 - **🐳 Docker Ready**: Multi-platform support (amd64, arm64, arm/v7, arm/v6, riscv64)
 - **💾 Persistent Config**: Interactive setup with configuration file persistence
-- **👀 Live Config Reload**: Automatically detects config file changes and restarts bots without manual intervention
 - **🟢 Runtime Toggle**: Enable/disable automatic color changes live with simple chat commands
 
 ### Additional Features
@@ -106,7 +103,6 @@ Automatically change your Twitch username color after each message you send in c
 The bot requires minimal dependencies for optimal performance:
 
 - **Core**: `aiohttp>=3.12.0,<4.0.0` - Async HTTP client for Twitch API communication
-- **Live Config**: `watchdog>=3.0.0,<4.0.0` - File system monitoring for runtime config reload
 
 All dependencies are automatically installed via `requirements.txt`.
 
@@ -264,6 +260,16 @@ Behavior:
 - Only reacts to the bot user's own messages
 - Disabling pauses API color calls but keeps all connections and stats active
 - `ccc <color>` bypasses the enable/disable toggle and always attempts a change
+
+Examples:
+
+- `cce` - Enable automatic color changes
+- `ccd` - Disable automatic color changes
+- `ccc red` - Set color to Twitch preset "red"
+- `ccc #ff0000` - Set color to hex red (Prime/Turbo users only)
+- `ccc ABC` - Set color to hex #aabbcc (Prime/Turbo users only)
+- `ccc nonsense` - Invalid argument, logs info message and no action taken
+- `ccc #abcdef` - For non-Prime users, hex colors are ignored with info log
 
 Tip: Use `DEBUG=true` to see log messages about auto color enable/disable status.
 
@@ -484,7 +490,6 @@ All internal timing and behavior constants can be overridden via environment var
 | `CONFIG_WRITE_DEBOUNCE` | Delay after save for watcher resume | 0.5 |
 | `RELOAD_WATCH_DELAY` | Delay after config reload before resuming watch | 2.0 |
 
-
 **Exponential Backoff:**
 
 | Variable | Description | Default |
@@ -614,6 +619,16 @@ python -m src.main
 - **Channel permissions**: Ensure the bot can read chat in those channels
 - **Live config reload**: After adding channels, the bot will automatically restart and join new channels
 
+### Command-Related Issues
+
+**"Bot not responding to commands":**
+
+- **Message sender**: Commands only work when sent by the bot's own account (other users are ignored)
+- **Enabled state**: Check if automatic color changes are disabled (`ccd` command) - use `cce` to re-enable
+- **Channel membership**: Ensure the bot is connected to the channel where you're sending commands
+- **Command syntax**: Verify correct command format (e.g., `ccc red`, not `ccc red extra`)
+- **Prime/Turbo restrictions**: Hex colors via `ccc` are ignored for non-Prime/Turbo users
+
 ### Authentication Issues
 
 - **Missing scopes**: ensure tokens include `chat:read`, `user:read:chat`, and `user:manage:chat_color` (optional: `chat:edit`)
@@ -643,12 +658,6 @@ python -m src.main
 - Set `DEBUG=true` for verbose logs
 
 If issues persist, open an issue with: platform, Python/Docker version, relevant log snippet (exclude tokens).
-
----
-
-## Technical Documentation
-
-For developers and technical implementation details:
 
 ---
 
@@ -731,7 +740,6 @@ If this bot has saved you time or enhanced your Twitch experience, consider supp
 - 🎨 **Unique functionality** - One of the few bots that automatically changes Twitch chat colors
 - 👥 **Multi-user support** - Run multiple accounts simultaneously
 - 🐳 **Docker ready** - Easy deployment with comprehensive platform support
-- 🔄 **Live config reload** - No restarts needed for configuration changes
 - 📚 **Well documented** - Complete guides for users and developers
 - 🛡️ **Actively maintained** - Regular updates and bug fixes
 
