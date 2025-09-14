@@ -169,3 +169,42 @@ async def test_main_missing_config():
          patch('builtins.print'):
         with pytest.raises(SystemExit):
             await main()
+
+
+@pytest.mark.asyncio
+async def test_main_function_invalid_args():
+    """Test main function with invalid command-line arguments."""
+    # Since main() doesn't take args, test with invalid config that causes failure
+    with patch('src.main.get_configuration', side_effect=ValueError("Invalid args")), \
+         patch('src.main.log_error') as mock_log_error, \
+         patch('sys.exit') as mock_exit, \
+         patch('src.main.emit_startup_instructions'), \
+         patch('builtins.print'):
+        await main()
+        mock_log_error.assert_called_once()
+        mock_exit.assert_called_once_with(1)
+
+
+@pytest.mark.asyncio
+async def test_main_function_config_parse_error():
+    """Test main function when configuration parsing fails."""
+    with patch('src.main.get_configuration', side_effect=ValueError("Parse error")), \
+         patch('src.main.log_error') as mock_log_error, \
+         patch('sys.exit') as mock_exit, \
+         patch('src.main.emit_startup_instructions'), \
+         patch('builtins.print'):
+        await main()
+        mock_log_error.assert_called_once()
+        mock_exit.assert_called_once_with(1)
+
+
+@pytest.mark.asyncio
+async def test_main_function_unexpected_exception():
+    """Test main function handling of unexpected exceptions during execution."""
+    with patch('src.main.emit_startup_instructions', side_effect=RuntimeError("Unexpected")), \
+         patch('src.main.log_error') as mock_log_error, \
+         patch('sys.exit') as mock_exit, \
+         patch('builtins.print'):
+        await main()
+        mock_log_error.assert_called_once()
+        mock_exit.assert_called_once_with(1)

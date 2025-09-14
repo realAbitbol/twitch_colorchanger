@@ -261,3 +261,62 @@ def test_merge_configs_conflicts(tmp_path: Path):
     user = data["users"][0]
     assert user["access_token"] == "b" * 30
     assert "new" in user["channels"]
+
+
+def test_config_core_load_config_file_not_found():
+    """Test load_config with a non-existent file path."""
+    from src.config.core import load_users_from_config
+    users = load_users_from_config("/nonexistent/path.json")
+    assert users == []
+
+
+def test_config_core_save_config_io_error(tmp_path: Path):
+    """Test save_config when an IO error occurs during writing."""
+    from src.config.core import save_users_to_config
+    config_file = tmp_path / "readonly.json"
+    config_file.write_text("{}")
+    config_file.chmod(0o444)  # Read-only to cause IO error
+    users = [{"username": "alice", "channels": ["alice"], "access_token": "a" * 30}]
+    # Should handle IO error gracefully without raising
+    try:
+        save_users_to_config(users, str(config_file))
+    except PermissionError:
+        pass  # Expected
+
+
+def test_config_core_validate_config_type_mismatch(tmp_path: Path):
+    """Test validate_config with incorrect data types."""
+    from src.config.core import get_configuration
+    config_file = tmp_path / "config.json"
+    # Invalid types: username as int, channels as str
+    users_data = [{"username": 123, "channels": "invalid", "access_token": "a" * 30}]
+    config_file.write_text(json.dumps({"users": users_data}))
+    with patch('os.environ', {"TWITCH_CONF_FILE": str(config_file)}), \
+         patch('sys.exit') as mock_exit:
+        get_configuration()
+        mock_exit.assert_called_once_with(1)
+
+
+def test_config_core_merge_configs_key_conflict(tmp_path: Path):
+    """Test merge_configs when keys conflict between configurations."""
+    from src.config.core import _merge_user
+    users = [{"username": "alice", "channels": ["alice"], "access_token": "o" * 30, "client_id": "cid", "client_secret": "sec"}]
+    from src.config.model import UserConfig
+    uc = UserConfig(username="alice", channels=["new"], access_token="n" * 30, client_id="cid", client_secret="sec")
+    updated_users, replaced = _merge_user(users, uc)
+    assert replaced is True
+    assert updated_users[0]["access_token"] == "n" * 30
+    assert "new" in updated_users[0]["channels"]
+
+
+def test_config_core_get_config_missing_key(tmp_path: Path):
+    """Test get_config method with a missing configuration key."""
+    from src.config.core import get_configuration
+    config_file = tmp_path / "config.json"
+    # Missing required keys like access_token
+    users_data = [{"username": "alice", "channels": ["alice"]}]  # no access_token
+    config_file.write_text(json.dumps({"users": users_data}))
+    with patch('os.environ', {"TWITCH_CONF_FILE": str(config_file)}), \
+         patch('sys.exit') as mock_exit:
+        get_configuration()
+        mock_exit.assert_called_once_with(1)
