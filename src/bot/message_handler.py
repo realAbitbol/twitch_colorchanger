@@ -32,18 +32,21 @@ class MessageHandler:
             channel: Channel where the message was sent.
             message: The message content.
         """
-        if sender.lower() != self.username.lower():
-            return
-        raw = message.strip()
-        msg_lower = raw.lower()
-        handled = await self._maybe_handle_toggle(msg_lower)
-        if handled:
-            return
-        # Direct color command: "ccc <color>" (preset or hex, case-insensitive).
-        if await self._maybe_handle_ccc(raw, msg_lower):
-            return
-        if self._is_color_change_allowed():
-            await self._change_color()  # type: ignore
+        try:
+            if sender.lower() != self.username.lower():
+                return
+            raw = message.strip()
+            msg_lower = raw.lower()
+            handled = await self._maybe_handle_toggle(msg_lower)
+            if handled:
+                return
+            # Direct color command: "ccc <color>" (preset or hex, case-insensitive).
+            if await self._maybe_handle_ccc(raw, msg_lower):
+                return
+            if self._is_color_change_allowed():
+                await self._change_color()  # type: ignore
+        except Exception as e:
+            logging.error(f"Error handling message from {sender}: {e}")
 
     def _is_color_change_allowed(self) -> bool:
         """Check if automatic color changes are currently allowed.

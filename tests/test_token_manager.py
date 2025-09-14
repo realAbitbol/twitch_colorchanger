@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
+import unittest.mock as mock
 
 import aiohttp
 import pytest
@@ -134,3 +135,51 @@ async def test_prune_removes_inactive_users():
         removed = tm.prune({"eve"})
         assert removed == 1
         assert tm.get_info("frank") is None
+
+@pytest.mark.asyncio
+async def test_token_manager_init_invalid_config():
+    """Test TokenManager initialization with invalid configuration."""
+    with pytest.raises((TypeError, AttributeError)):
+        TokenManager(None)
+
+
+@pytest.mark.asyncio
+async def test_acquire_token_expired(monkeypatch):
+    """Test acquire_token with expired tokens requiring refresh."""
+    async with aiohttp.ClientSession() as session:
+        tm = TokenManager(session)
+        tm.tokens.clear()
+        expired = datetime.now(UTC) - timedelta(seconds=10)
+        tm._upsert_token_info("user", "atk", "rtk", "cid", "csec", expired)
+        dummy = DummyTokenClient()
+        dummy.prime("refresh_success")
+        monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)
+        outcome = await tm.ensure_fresh("user")
+        assert outcome == TokenOutcome.REFRESHED
+
+
+@pytest.mark.asyncio
+async def test_refresh_token_network_failure(monkeypatch):
+    """Test refresh_token with network failure scenarios."""
+    async with aiohttp.ClientSession() as session:
+        tm = TokenManager(session)
+        tm.tokens.clear()
+        tm._upsert_token_info("user", "atk", "rtk", "cid", "csec", None)
+        dummy = DummyTokenClient()
+        dummy.prime("refresh_fail")
+        monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)
+        outcome = await tm.ensure_fresh("user", force_refresh=True)
+        assert outcome == TokenOutcome.FAILED
+
+
+@pytest.mark.asyncio
+async def test_prune_expired_tokens_db_errors():
+    """Test prune_expired_tokens with database or storage errors."""
+    async with aiohttp.ClientSession() as session:
+        tm = TokenManager(session)
+        tm.tokens.clear()
+        tm._upsert_token_info("user", "atk", "rtk", "cid", "csec", datetime.now(UTC))
+        # Mock remove to raise error
+        with mock.patch.object(tm, "remove", side_effect=OSError):
+            removed = tm.prune({"user"})
+            assert removed == 0

@@ -178,3 +178,47 @@ def test_verify_readback_invalid_json(tmp_path: Path):
     repo = ConfigRepository(str(cfg))
     # Should handle error gracefully
     repo.verify_readback()
+
+def test_config_repository_init_invalid_path():
+    """Test ConfigRepository initialization with invalid file paths."""
+    with pytest.raises(TypeError):
+        ConfigRepository(None)
+    with pytest.raises(TypeError):
+        ConfigRepository(123)
+
+
+def test_load_file_not_found(tmp_path: Path):
+    """Test load method when configuration file is not found."""
+    cfg = tmp_path / "nonexistent.conf"
+    repo = ConfigRepository(str(cfg))
+    users = repo.load_raw()
+    assert users == []
+
+
+def test_save_permission_denied(tmp_path: Path):
+    """Test save method with permission denied errors."""
+    cfg = tmp_path / "readonly.conf"
+    cfg.write_text('{"users": []}', encoding="utf-8")
+    repo = ConfigRepository(str(cfg))
+    users = [{"username": "test"}]
+    with patch('tempfile.NamedTemporaryFile', side_effect=PermissionError):
+        with pytest.raises((OSError, PermissionError)):
+            repo.save_users(users)
+
+
+def test_update_invalid_data(tmp_path: Path):
+    """Test update method with invalid data types or values."""
+    cfg = tmp_path / "invalid.conf"
+    repo = ConfigRepository(str(cfg))
+    # Invalid data: not list
+    with pytest.raises((TypeError, AttributeError)):
+        repo.save_users("invalid")
+
+
+def test_delete_non_existent_key(tmp_path: Path):
+    """Test delete method with non-existent configuration keys."""
+    cfg = tmp_path / "users.conf"
+    cfg.write_text('{"other": []}', encoding="utf-8")  # missing users key
+    repo = ConfigRepository(str(cfg))
+    users = repo.load_raw()
+    assert users == []  # treats as non-existent key

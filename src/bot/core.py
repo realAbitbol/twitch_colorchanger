@@ -140,9 +140,13 @@ class TwitchColorBot(MessageHandler, ColorChanger, TokenRefresher):  # pylint: d
         async with self._state_lock:
             self.running = True
         if not self._setup_token_manager():
+            async with self._state_lock:
+                self.running = False
             return
         await self._handle_initial_token_refresh()
         if not await self._initialize_connection():
+            async with self._state_lock:
+                self.running = False
             return
         await self._run_chat_loop()
 

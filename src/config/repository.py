@@ -27,6 +27,8 @@ class ConfigRepository:
         Args:
             path: Path to the configuration file.
         """
+        if not isinstance(path, str | os.PathLike):
+            raise TypeError("path must be str or os.PathLike")
         self.path = str(path)
         self._last_checksum: str | None = None
         self._file_mtime: float | None = None
@@ -107,6 +109,8 @@ class ConfigRepository:
         Returns:
             True if the file was written, False if skipped due to no changes.
         """
+        if not isinstance(users, list):
+            raise TypeError("users must be a list")
         checksum = self._compute_checksum(users)
         if self._last_checksum == checksum:
             logging.info(f"Skipped save (checksum match) users={len(users)}")
