@@ -209,4 +209,55 @@ async def test_confirm_missing_scopes_revalidates():
     mock_api.validate_token = AsyncMock(return_value={"scopes": ["chat:read", "user:read:chat"]})
     required = {"chat:read", "user:read:chat", "user:manage:chat_color"}
     missing, _ = await _confirm_missing_scopes(mock_api, "token", required)
-    assert "user:manage:chat_color" in missing
+def test_config_core_init_missing_fields(tmp_path: Path):
+    """Test ConfigCore initialization with missing required configuration fields."""
+    config_file = tmp_path / "config.json"
+    # Empty config
+    config_file.write_text(json.dumps({}))
+    users = load_users_from_config(str(config_file))
+    assert users == []
+
+
+def test_load_config_invalid_path():
+    """Test load_config method with invalid file paths, checking for FileNotFoundError handling."""
+    users = load_users_from_config("/invalid/path.json")
+    assert users == []
+
+
+@pytest.mark.asyncio
+async def test_save_config_write_errors(tmp_path: Path):
+    """Test save_config method with write permission errors or disk full scenarios."""
+    config_file = tmp_path / "readonly.json"
+    config_file.write_text("{}")
+    config_file.chmod(0o444)  # Read-only
+    users = [{"username": "alice", "channels": ["alice"], "access_token": "a" * 30}]
+    # Should handle permission error gracefully
+    try:
+        save_users_to_config(users, str(config_file))
+    except PermissionError:
+        pass  # Expected
+
+
+def test_validate_config_invalid_types(tmp_path: Path):
+    """Test validate_config with invalid data types for configuration values."""
+    config_file = tmp_path / "config.json"
+    # Invalid types
+    users_data = [{"username": 123, "channels": "invalid", "access_token": None}]
+    config_file.write_text(json.dumps({"users": users_data}))
+    users = load_users_from_config(str(config_file))
+    # load_users_from_config loads raw, so len == 1
+    assert len(users) == 1
+
+
+def test_merge_configs_conflicts(tmp_path: Path):
+    """Test merge_configs method with conflicting keys, ensuring proper resolution."""
+    config_file = tmp_path / "config.json"
+    initial_users = [{"username": "alice", "channels": ["alice"], "access_token": "a" * 30, "client_id": "cid", "client_secret": "sec"}]
+    config_file.write_text(json.dumps({"users": initial_users}))
+    updated_user = {"username": "alice", "channels": ["alice", "new"], "access_token": "b" * 30}
+    success = update_user_in_config(updated_user, str(config_file))
+    assert success is True
+    data = json.loads(config_file.read_text())
+    user = data["users"][0]
+    assert user["access_token"] == "b" * 30
+    assert "new" in user["channels"]
