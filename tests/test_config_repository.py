@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -201,9 +200,8 @@ def test_save_permission_denied(tmp_path: Path):
     cfg.write_text('{"users": []}', encoding="utf-8")
     repo = ConfigRepository(str(cfg))
     users = [{"username": "test"}]
-    with patch('tempfile.NamedTemporaryFile', side_effect=PermissionError):
-        with pytest.raises((OSError, PermissionError)):
-            repo.save_users(users)
+    with patch('tempfile.NamedTemporaryFile', side_effect=PermissionError), pytest.raises((OSError, PermissionError)):
+        repo.save_users(users)
 
 
 def test_update_invalid_data(tmp_path: Path):

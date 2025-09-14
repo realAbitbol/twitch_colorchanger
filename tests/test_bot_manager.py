@@ -529,7 +529,7 @@ async def test_run_main_loop_shutdown():
     manager.restart_requested = False
     manager.tasks = [MagicMock()]
 
-    async def mock_sleep(seconds):
+    def mock_sleep(seconds):
         manager.shutdown_initiated = True
 
     with patch("asyncio.sleep", side_effect=mock_sleep), \
@@ -551,7 +551,7 @@ async def test_run_main_loop_restart():
 
     call_count = 0
 
-    async def mock_sleep(seconds):
+    def mock_sleep(seconds):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -596,7 +596,7 @@ async def test_run_main_loop_restart_fail():
 
     call_count = 0
 
-    async def mock_sleep(seconds):
+    def mock_sleep(seconds):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -605,6 +605,7 @@ async def test_run_main_loop_restart_fail():
             manager.running = False
 
     async def mock_restart():
+        await asyncio.sleep(0)
         manager.restart_requested = False
         return False
 

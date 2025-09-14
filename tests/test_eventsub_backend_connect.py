@@ -81,6 +81,7 @@ async def test_resolve_initial_channel_success(monkeypatch):
 
     # Mock _batch_resolve_channels to set channel_ids
     async def mock_batch_resolve(channels):
+        await asyncio.sleep(0)
         backend._channel_ids["testchan"] = "12345"
 
     monkeypatch.setattr(backend, "_batch_resolve_channels", mock_batch_resolve)
@@ -99,6 +100,7 @@ async def test_ensure_self_user_id_success(monkeypatch):
 
     # Mock _fetch_user
     async def mock_fetch_user(username):
+        await asyncio.sleep(0)
         return {"id": "67890"}
 
     monkeypatch.setattr(backend, "_fetch_user", mock_fetch_user)

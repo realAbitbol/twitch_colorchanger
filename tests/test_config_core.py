@@ -208,7 +208,7 @@ async def test_confirm_missing_scopes_revalidates():
     mock_api = MagicMock()
     mock_api.validate_token = AsyncMock(return_value={"scopes": ["chat:read", "user:read:chat"]})
     required = {"chat:read", "user:read:chat", "user:manage:chat_color"}
-    missing, _ = await _confirm_missing_scopes(mock_api, "token", required)
+    _, _ = await _confirm_missing_scopes(mock_api, "token", required)
 def test_config_core_init_missing_fields(tmp_path: Path):
     """Test ConfigCore initialization with missing required configuration fields."""
     config_file = tmp_path / "config.json"
