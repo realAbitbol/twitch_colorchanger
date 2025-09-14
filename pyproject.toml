@@ -17,7 +17,9 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
-dependencies = []  # Runtime deps still managed via requirements.txt; can be migrated later.
+dependencies = [
+    "pydantic>=2.0.0,<3.0.0"
+]  # Runtime deps still managed via requirements.txt; can be migrated later.
 
 [project.scripts]
 
@@ -141,3 +143,15 @@ known-third-party = ["aiohttp"]
 wrap = "keep"           # Preserve existing line wrapping
 end_of_line = "lf"      # Use Unix line endings
 number = false          # Don't renumber ordered lists
+
+# Pytest configuration
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = [
+    "--cov=src",
+    "--cov-report=html",
+    "--cov-report=term",
+    "--strict-markers",
+    "--strict-config",
+]
+asyncio_mode = "auto"
