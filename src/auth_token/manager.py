@@ -143,7 +143,7 @@ class TokenManager:
                 await self.background_task
             except asyncio.CancelledError:
                 raise
-            except (ValueError, TypeError) as e:
+            except (ValueError, TypeError, RuntimeError) as e:
                 logging.debug(f"⚠️ Error cancelling stale background task: {str(e)}")
             finally:
                 self.background_task = None
@@ -213,12 +213,11 @@ class TokenManager:
             return
         self.running = False
         if self.background_task:
-            self.background_task.cancel()
             try:
+                self.background_task.cancel()
                 await self.background_task
             except (RuntimeError, OSError, ValueError) as e:
                 logging.error(f"Error awaiting cancelled background task: {e}")
-                raise
             finally:
                 self.background_task = None
 

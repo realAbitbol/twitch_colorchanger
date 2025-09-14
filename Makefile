@@ -1,6 +1,6 @@
 # Makefile for Twitch ColorChanger Bot Development
 
-.PHONY: help install install-dev lint security check-all check clean build docker-build docker-run dev-setup pre-commit dev-check ci validate-config docs docs-serve profile version check-env ruff-lint ruff-format ruff-check md-format md-check vulture-check package-clean
+.PHONY: help install install-dev lint security check-all check clean build docker-build docker-run dev-setup pre-commit dev-check ci validate-config docs docs-serve profile version check-env ruff-lint ruff-format ruff-check md-format md-check vulture-check package-clean test coverage
 
 # Default target
 help:
@@ -22,6 +22,8 @@ help:
 	@echo "  docker-run      - Run Docker container"
 	@echo "  validate-config - Validate configuration file"
 	@echo "  package-clean   - Remove build, dist, egg-info and reinstall editable"
+	@echo "  test            - Run all tests"
+	@echo "  coverage        - Run tests with coverage report"
 
 # Installation
 install:
@@ -125,6 +127,13 @@ ci: install-dev check-all
 # Configuration validation
 validate-config:
 	python -c "from src.config import get_configuration; from src.config_validator import validate_all_users; users = get_configuration(); print('Config valid:', validate_all_users(users))"
+
+# Testing
+test:
+	.venv/bin/python -m pytest --no-cov
+
+coverage:
+	.venv/bin/python -m pytest
 
 # Documentation
 docs:
