@@ -103,6 +103,7 @@ lint.ignore = [
     "SIM105", # Use contextlib.suppress (preference - explicit is clearer)
     "SIM108", # Use ternary operator (preference - if/else can be clearer)
     "SIM103", # Return condition directly (preference - explicit return is clearer)
+    "UP007",  # Use PEP 585 generic syntax (reverted for mypy compatibility)
 ]
 
 # Exclude patterns

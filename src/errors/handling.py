@@ -71,7 +71,7 @@ async def handle_api_error(operation: Callable[[], Awaitable[T]], context: str) 
 
 
 async def handle_retryable_error(
-    operation: Callable[[int], Awaitable[tuple[T, bool]]],
+    operation: Callable[[int], Awaitable[tuple[T | None, bool]]],
     context: str,
     max_attempts: int = 3,
 ) -> T:
@@ -92,7 +92,7 @@ async def handle_retryable_error(
         InternalError: If retries are exhausted and operation fails.
     """
 
-    async def wrapped_operation(attempt: int) -> tuple[T, bool]:
+    async def wrapped_operation(attempt: int) -> tuple[T | None, bool]:
         try:
             result, should_retry = await operation(attempt)
             return result, should_retry
@@ -107,7 +107,7 @@ async def handle_retryable_error(
                 raise InternalError(
                     f"Non-retryable error in {context}: {str(e)}"
                 ) from e
-            return None, should_retry  # type: ignore
+            return None, should_retry
 
     result = await retry_async(wrapped_operation, max_attempts)
     if result is None:

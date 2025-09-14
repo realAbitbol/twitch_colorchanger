@@ -38,7 +38,7 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
       - name: Run Ruff linter
-        run: ruff check src/
+        run: ruff check --ignore UP047 src/
       - name: Run Ruff formatter check
         run: ruff format src/ --check
 

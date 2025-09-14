@@ -10,7 +10,7 @@ T = TypeVar("T")
 
 
 async def retry_async(
-    operation: Callable[[int], Awaitable[tuple[T, bool]]],
+    operation: Callable[[int], Awaitable[tuple[T | None, bool]]],
     max_attempts: int = 6,
     backoff_func: Callable[[int], float] = lambda attempt: min(1 * (2**attempt), 60),
 ) -> T | None:
