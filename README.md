@@ -4,6 +4,7 @@
 
 [![Build and Push Docker Images](https://github.com/realAbitbol/twitch_colorchanger/actions/workflows/docker-build.yml/badge.svg)](https://github.com/realAbitbol/twitch_colorchanger/actions/workflows/docker-build.yml)
 [![Code Quality](https://github.com/realAbitbol/twitch_colorchanger/actions/workflows/code-quality.yml/badge.svg)](https://github.com/realAbitbol/twitch_colorchanger/actions/workflows/code-quality.yml)
+[![codecov](https://codecov.io/gh/realAbitbol/twitch_colorchanger/graph/badge.svg?token=FBL1LGJ7PI)](https://codecov.io/gh/realAbitbol/twitch_colorchanger)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python](https://img.shields.io/badge/Python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![Docker](https://img.shields.io/badge/Docker-Multi--Platform-blue.svg)](https://hub.docker.com/r/damastah/twitch-colorchanger)
