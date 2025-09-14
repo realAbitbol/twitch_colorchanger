@@ -25,6 +25,8 @@ class ColorChangeService:
         Args:
             bot (TwitchColorBot): The bot instance to perform color changes on.
         """
+        if bot is None:
+            raise TypeError("bot cannot be None")
         self.bot = bot
 
     async def change_color(self, hex_color: str | None = None) -> bool:

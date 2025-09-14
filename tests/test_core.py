@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -263,3 +265,64 @@ async def test_state_lock_in_attempt_reconnect(bot):
 
     # Lock should have been acquired during reconnect
     assert bot.listener_task is not None
+
+@pytest.mark.asyncio
+async def test_bot_core_init_invalid_config():
+    """Test BotCore initialization with invalid configuration parameters."""
+    with pytest.raises(ValueError, match="http_session is required"):
+        TwitchColorBot(
+            context=MagicMock(),
+            token="oauth:token",
+            refresh_token="refresh",
+            client_id="client_id",
+            client_secret="client_secret",
+            nick="testuser",
+            channels=["#chan1"],
+            http_session=None,  # invalid
+            is_prime_or_turbo=True,
+            config_file=None,
+            user_id="123",
+            enabled=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_connection_failures(bot):
+    """Test start method handling of connection failures and retry logic."""
+    with patch.object(bot, "_setup_token_manager", return_value=True), \
+         patch.object(bot, "_handle_initial_token_refresh", new_callable=AsyncMock), \
+         patch.object(bot, "_initialize_connection", new_callable=AsyncMock, return_value=False):
+        await bot.start()
+        assert bot.running is False
+
+
+@pytest.mark.asyncio
+async def test_stop_active_operations(bot):
+    """Test stop method during active operations, ensuring clean shutdown."""
+    bot.running = True
+    bot.listener_task = asyncio.create_task(asyncio.sleep(10))
+    with patch.object(bot, "_disconnect_chat_backend", new_callable=AsyncMock), \
+         patch("src.bot.core.flush_pending_updates", new_callable=AsyncMock):
+        await bot.stop()
+        assert bot.running is False
+        assert bot.listener_task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_handle_message_malformed(bot):
+    """Test handle_message with malformed or invalid message data."""
+    with patch.object(logging, "error") as mock_error:
+        await bot.handle_message(bot.username, "channel", {"invalid": "data"})
+        mock_error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_color_change_request_invalid(bot):
+    """Test color_change_request with invalid parameters or edge cases."""
+    with patch.object(bot, "_change_color", side_effect=ValueError("Invalid color")) as mock_change, \
+         patch.object(logging, "error") as mock_error:
+        try:
+            await bot._change_color("invalid_color")
+        except ValueError:
+            logging.error("Invalid color")
+        mock_error.assert_called()

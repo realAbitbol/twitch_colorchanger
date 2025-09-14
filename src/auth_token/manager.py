@@ -105,6 +105,8 @@ class TokenManager:
         Args:
             http_session: HTTP session for making API requests.
         """
+        if http_session is None:
+            raise TypeError("http_session cannot be None")
         # Guard: if already initialized (singleton), skip re-initialization.
         if getattr(self, "_inst_initialized", False):  # pragma: no cover - simple guard
             return

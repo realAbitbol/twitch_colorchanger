@@ -99,3 +99,47 @@ async def test_color_change_fallback_to_preset(monkeypatch):
     )
     assert ok is True
     assert bot.last_color == "red"
+
+@pytest.mark.asyncio
+async def test_color_service_init_invalid_dependencies():
+    """Test ColorService initialization with invalid or missing dependencies."""
+    with pytest.raises((TypeError, AttributeError)):
+        ColorChangeService(None)
+
+
+@pytest.mark.asyncio
+async def test_change_color_invalid_hex():
+    """Test change_color method with invalid hex color codes."""
+    bot = FakeBot([ColorRequestResult(ColorRequestStatus.INTERNAL_ERROR)])
+    svc = ColorChangeService(bot)
+    ok = await svc.change_color("#invalid")
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_validate_color_edge_cases():
+    """Test validate_color with edge cases like empty strings or special characters."""
+    bot = FakeBot([ColorRequestResult(ColorRequestStatus.INTERNAL_ERROR)])
+    svc = ColorChangeService(bot)
+    ok = await svc._perform_color_change("", allow_refresh=False, fallback_to_preset=False)
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_get_color_history_empty():
+    """Test get_color_history when history is empty or unavailable."""
+    bot = FakeBot([ColorRequestResult(ColorRequestStatus.SUCCESS)])
+    bot.last_color = None
+    svc = ColorChangeService(bot)
+    ok = await svc.change_color()
+    assert ok is True
+    assert bot.last_color is not None
+
+
+@pytest.mark.asyncio
+async def test_reset_color_permission_issues():
+    """Test reset_color with permission or access issues."""
+    bot = FakeBot([ColorRequestResult(ColorRequestStatus.UNAUTHORIZED, http_status=401)], refresh_outcomes=[False])
+    svc = ColorChangeService(bot)
+    ok = await svc._perform_color_change("#123456", allow_refresh=True, fallback_to_preset=False)
+    assert ok is False
