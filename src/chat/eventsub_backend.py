@@ -123,7 +123,7 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         self._reconnect_requested = False
 
         # cache file for broadcaster ids (login->id)
-        self._cache_path: Path = Path(
+        self._cache_path = Path(
             os.environ.get("TWITCH_BROADCASTER_CACHE", "broadcaster_ids.cache.json")
         )
 
@@ -676,12 +676,19 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
 
     def _save_id_cache(self) -> None:
         try:
+            self._cache_path.parent.mkdir(parents=True, exist_ok=True)
             tmp_path = self._cache_path.with_suffix(".tmp")
             with tmp_path.open("w", encoding="utf-8") as fh:
                 json.dump(self._channel_ids, fh, separators=(",", ":"))
             os.replace(tmp_path, self._cache_path)
+        except FileNotFoundError as e:
+            logging.error(f"⚠️ EventSub cache save failed: File not found - {str(e)}")
+        except OSError as e:
+            logging.error(f"⚠️ EventSub cache save failed: OS error - {str(e)}")
+        except PermissionError as e:
+            logging.error(f"⚠️ EventSub cache save failed: Permission denied - {str(e)}")
         except Exception as e:  # noqa: BLE001
-            logging.info(f"⚠️ EventSub cache save error: {str(e)}")
+            logging.error(f"⚠️ EventSub cache save failed: Unexpected error - {str(e)}")
 
     async def _fetch_user(self, login: str) -> dict[str, Any] | None:
         if not self._token or not self._client_id:

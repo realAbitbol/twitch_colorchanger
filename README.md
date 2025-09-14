@@ -468,6 +468,7 @@ The bot supports extensive configuration through environment variables, allowing
 |----------|-------------|---------|
 | `DEBUG` | Enable debug logging | `false` |
 | `TWITCH_CONF_FILE` | Path to configuration file | `twitch_colorchanger.conf` |
+| `TWITCH_BROADCASTER_CACHE` | Path to broadcaster ID cache file | `broadcaster_ids.cache.json` |
 
 #### Internal Configuration Constants
 
@@ -534,7 +535,7 @@ Required scopes (automatically requested during device flow):
 | Receive self chat messages over EventSub | `user:read:chat` |
 | Change chat color via Helix | `user:manage:chat_color` |
 
-The bot handles connection management automatically with built-in reconnection logic. Channel names are resolved to broadcaster IDs and cached for performance. If EventSub fails to initialize, the bot will log the failure and stop for that user.
+The bot handles connection management automatically with built-in reconnection logic. Channel names are resolved to broadcaster IDs and cached for performance. The cache is persisted relative to the current working directory by default. For Docker deployments, both `TWITCH_CONF_FILE` and `TWITCH_BROADCASTER_CACHE` should be set to absolute paths in the mounted volume to ensure persistence across container restarts. If EventSub fails to initialize, the bot will log the failure and stop for that user.
 
 ---
 
