@@ -77,7 +77,7 @@ Automatically change your Twitch username color after each message you send in c
 - **🔌 Modern Chat Backend**: Uses EventSub WebSocket for reliable, modern chat connectivity.
 - **🔑 Automatic Token Setup**: Smart token management with automatic authorization flow - just provide client credentials!
 - **🔄 Token Refresh**: Automatic token validation and refresh with fallback to authorization flow when needed
-- **🐳 Docker Ready**: Multi-platform support (amd64, arm64, arm/v7, arm/v6, riscv64)
+- **🐳 Docker Ready**: Multi-platform support (amd64, arm64, arm/v7, arm/v6)
 - **💾 Persistent Config**: Interactive setup with configuration file persistence
 - **🟢 Runtime Toggle**: Enable/disable automatic color changes live with simple chat commands
 
@@ -304,7 +304,6 @@ Multi-platform images are available on:
 - `linux/arm64` - ARM 64-bit (Apple Silicon, modern ARM servers)
 - `linux/arm/v7` - ARM 32-bit (Raspberry Pi 2/3/4)
 - `linux/arm/v6` - ARM v6 (Raspberry Pi Zero/1)
-- `linux/riscv64` - RISC-V 64-bit
 
 #### Docker Compose
 
