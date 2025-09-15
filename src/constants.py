@@ -173,8 +173,8 @@ COLOR_CACHE_TTL_SECONDS = _get_env_int("COLOR_CACHE_TTL_SECONDS", 30)  # Color c
 CONFIG_DEBOUNCE_SECONDS = _get_env_float(
     "CONFIG_DEBOUNCE_SECONDS", 0.25
 )  # Config save debounce delay
-USER_LOCK_TTL_DAYS = _get_env_int("USER_LOCK_TTL_DAYS", 24)  # User lock TTL in days
-USER_LOCK_TTL_SECONDS = USER_LOCK_TTL_DAYS * 3600  # User lock TTL in seconds
+USER_LOCK_TTL_HOURS = _get_env_int("USER_LOCK_TTL_HOURS", 1)  # User lock TTL in hours
+USER_LOCK_TTL_SECONDS = USER_LOCK_TTL_HOURS * 3600  # User lock TTL in seconds
 CONFIG_MAX_FAILURES_WARNING = _get_env_int(
     "CONFIG_MAX_FAILURES_WARNING", 3
 )  # Max failures before warning

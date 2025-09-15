@@ -41,7 +41,7 @@ _DEBOUNCE_SECONDS = CONFIG_DEBOUNCE_SECONDS  # adjustable small delay to coalesc
 # explicit persistence). These are created lazily to avoid unbounded growth.
 _USER_LOCKS: dict[str, tuple[asyncio.Lock, float]] = {}
 _USER_LOCKS_LOCK = asyncio.Lock()
-_LOCK_TTL_SECONDS = USER_LOCK_TTL_SECONDS  # prune inactive user locks after 24h
+_LOCK_TTL_SECONDS = USER_LOCK_TTL_SECONDS  # prune inactive user locks after 1h
 
 
 async def _get_user_lock(username: str) -> asyncio.Lock:
