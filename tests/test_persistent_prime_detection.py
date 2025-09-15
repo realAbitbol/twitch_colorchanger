@@ -12,14 +12,11 @@ class FakeBot:
         self.username = "tester"
         self.use_random_colors = True
         self.last_color: str | None = None
-        self.colors_changed = 0
         self._results = results
         self._result_index = 0
         self.user_id = "123"
         self.persist_called = False
 
-    def increment_colors_changed(self) -> None:
-        self.colors_changed += 1
 
     async def _perform_color_request(self, params: dict[str, Any], action: str) -> ColorRequestResult:  # noqa: D401
         if self._result_index >= len(self._results):
