@@ -140,7 +140,7 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         # cache file for broadcaster ids (login->id)
         self._cache_path = Path(
             os.environ.get("TWITCH_BROADCASTER_CACHE", "broadcaster_ids.cache.json")
-        )
+        ).resolve()
 
         # last validated OAuth scopes (lowercased)
         self._scopes: set[str] = set()
@@ -245,7 +245,7 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         )
         if not self._validate_client_id():
             return False
-        self._load_id_cache()
+        await self._load_id_cache()
         if not await self._handshake_and_session():
             return False
         if not await self._resolve_initial_channel():
@@ -255,7 +255,7 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         await self._subscribe_channel_chat(
             self._primary_channel or primary_channel.lstrip("#").lower()
         )
-        self._save_id_cache()
+        await self._save_id_cache()
         return True
 
     # ---- connect helpers (complexity reduction) ----
@@ -392,7 +392,7 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             return False
         await self._subscribe_channel_chat(channel_l)
         self._channels.append(channel_l)
-        self._save_id_cache()
+        await self._save_id_cache()
         return True
 
     async def listen(self) -> None:  # noqa: D401
@@ -681,7 +681,7 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             )
 
     # ---- cache helpers ----
-    def _load_id_cache(self) -> None:
+    def _sync_load_cache(self):
         try:
             if self._cache_path.exists():
                 with self._cache_path.open("r", encoding="utf-8") as fh:
@@ -690,15 +690,20 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
                     for k, v in data.items():
                         if isinstance(k, str) and isinstance(v, str):
                             self._channel_ids.setdefault(k.lstrip("#").lower(), v)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logging.info(f"⚠️ EventSub cache load error: {str(e)}")
 
-    def _save_id_cache(self) -> None:
+    async def _load_id_cache(self) -> None:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._sync_load_cache)
+
+    def _sync_save_cache(self):
         try:
             self._cache_path.parent.mkdir(parents=True, exist_ok=True)
             tmp_path = self._cache_path.with_suffix(".tmp")
             with tmp_path.open("w", encoding="utf-8") as fh:
                 json.dump(self._channel_ids, fh, separators=(",", ":"))
+                fh.flush()
             os.replace(tmp_path, self._cache_path)
         except FileNotFoundError as e:
             logging.error(f"⚠️ EventSub cache save failed: File not found - {str(e)}")
@@ -706,8 +711,12 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             logging.error(f"⚠️ EventSub cache save failed: Permission denied - {str(e)}")
         except OSError as e:
             logging.error(f"⚠️ EventSub cache save failed: OS error - {str(e)}")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logging.error(f"⚠️ EventSub cache save failed: Unexpected error - {str(e)}")
+
+    async def _save_id_cache(self) -> None:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._sync_save_cache)
 
     async def _fetch_user(self, login: str) -> dict[str, Any] | None:
         if not self._token or not self._client_id:

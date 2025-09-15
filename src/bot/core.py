@@ -149,7 +149,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         logging.info(f"▶️ Starting bot user={self.username}")
         async with self._state_lock:
             self.running = True
-        if not self.token_handler.setup_token_manager():
+        if not await self.token_handler.setup_token_manager():
             async with self._state_lock:
                 self.running = False
             return
@@ -288,9 +288,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         """Wait for the listener task to complete."""
         await self.connection_manager.wait_for_listener_task()
 
-    def _setup_token_manager(self) -> bool:
+    async def _setup_token_manager(self) -> bool:
         """Set up the token manager."""
-        return self.token_handler.setup_token_manager()
+        return await self.token_handler.setup_token_manager()
 
     async def _handle_initial_token_refresh(self) -> None:
         """Handle initial token refresh."""

@@ -48,7 +48,7 @@ async def test_end_to_end_smoke(tmp_path: Path, monkeypatch):
         tm.tokens.clear()
         # Seed a token expiring very soon
         near_expiry = datetime.now(UTC) + timedelta(seconds=2)
-        tm._upsert_token_info("smoke", "atk", "rtk", "cid", "csec", near_expiry)
+        await tm._upsert_token_info("smoke", "atk", "rtk", "cid", "csec", near_expiry)
         dummy = SmokeTokenClient()
         dummy.prime()
         monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)

@@ -1,4 +1,4 @@
-import threading
+import asyncio
 from datetime import datetime, timedelta
 
 import pytest
@@ -18,16 +18,16 @@ async def test_remove_and_prune(monkeypatch):
     tm._client_cache = {}
     tm._update_hooks = {}
     tm._hook_tasks = []
-    tm._tokens_lock = threading.Lock()
+    tm._tokens_lock = asyncio.Lock()
 
     info1 = TokenInfo("u1", "a1", "r1", "cid", "csec", datetime.now()+timedelta(hours=1))
     info2 = TokenInfo("u2", "a2", "r2", "cid", "csec", datetime.now()+timedelta(hours=1))
     tm.tokens["u1"] = info1
     tm.tokens["u2"] = info2
 
-    assert tm.remove("u1") is True
+    assert await tm.remove("u1") is True
     assert "u1" not in tm.tokens
-    removed = tm.prune({"u2"})
+    removed = await tm.prune({"u2"})
     assert removed == 0
-    removed2 = tm.prune(set())
+    removed2 = await tm.prune(set())
     assert removed2 == 1 and not tm.tokens

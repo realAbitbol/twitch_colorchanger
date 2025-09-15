@@ -15,7 +15,8 @@ def mock_context():
     ctx.session = MagicMock()
     ctx.token_manager = MagicMock()
     ctx.token_manager.ensure_fresh = AsyncMock()
-    ctx.token_manager.get_info = MagicMock()
+    ctx.token_manager.get_info = AsyncMock()
+    ctx.token_manager._upsert_token_info = AsyncMock()
     return ctx
 
 
@@ -394,6 +395,6 @@ async def test_initialize_connection_failure(bot):
 @pytest.mark.asyncio
 async def test_change_color_exception(bot):
     """Test _change_color when color changer raises exception."""
-    with patch.object(bot.color_changer, "_change_color", side_effect=ValueError("Color change failed")):
-        with pytest.raises(ValueError, match="Color change failed"):
-            await bot._change_color("invalid")
+    with patch.object(bot.color_changer, "_change_color", side_effect=ValueError("Color change failed")), \
+         pytest.raises(ValueError, match="Color change failed"):
+        await bot._change_color("invalid")

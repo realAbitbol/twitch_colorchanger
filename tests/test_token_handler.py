@@ -14,7 +14,7 @@ def mock_context():
     ctx.session = MagicMock()
     ctx.token_manager = MagicMock()
     ctx.token_manager.ensure_fresh = AsyncMock()
-    ctx.token_manager.get_info = MagicMock()
+    ctx.token_manager.get_info = AsyncMock()
     return ctx
 
 
@@ -51,7 +51,7 @@ async def test_check_and_refresh_token_force_refresh_failure(token_handler, bot)
     """Test check_and_refresh_token with force refresh failure."""
     bot.token_manager = MagicMock()
     bot.token_manager.ensure_fresh = AsyncMock(return_value=MagicMock(name="FAILED"))
-    bot.token_manager.get_info = MagicMock(return_value=None)
+    bot.token_manager.get_info = AsyncMock(return_value=None)
 
     result = await token_handler.check_and_refresh_token(force=True)
     assert result is False
@@ -64,7 +64,7 @@ async def test_check_and_refresh_token_backend_update_failure(token_handler, bot
     bot.token_manager.ensure_fresh = AsyncMock(return_value=MagicMock(name="SUCCESS"))
     info = MagicMock()
     info.access_token = "new_token"
-    bot.token_manager.get_info = MagicMock(return_value=info)
+    bot.token_manager.get_info = AsyncMock(return_value=info)
     bot.connection_manager.chat_backend = MagicMock()
     bot.connection_manager.chat_backend.update_token = MagicMock(side_effect=ValueError("Update failed"))
 
@@ -118,7 +118,7 @@ async def test_validate_config_prerequisites_missing_file(token_handler, bot):
 async def test_setup_token_manager_registration_failure(token_handler, bot):
     """Test setup_token_manager with registration failure."""
     bot.context.token_manager = None
-    result = token_handler.setup_token_manager()
+    result = await token_handler.setup_token_manager()
     assert result is False
 
 
@@ -136,9 +136,9 @@ async def test_normalize_channels_if_needed_persist_failure(token_handler, bot):
 async def test_setup_token_manager_success(token_handler, bot):
     """Test setup_token_manager with successful setup."""
     bot.context.token_manager = MagicMock()
-    bot.context.token_manager._upsert_token_info = MagicMock()
+    bot.context.token_manager._upsert_token_info = AsyncMock()
     bot.context.token_manager.register_update_hook = MagicMock()
-    result = token_handler.setup_token_manager()
+    result = await token_handler.setup_token_manager()
     assert result is True
     assert bot.token_manager == bot.context.token_manager
 
@@ -152,7 +152,7 @@ async def test_handle_initial_token_refresh_success(token_handler, bot):
     info.access_token = "new_token"
     info.refresh_token = "new_refresh"
     info.expiry = "expiry"
-    bot.token_manager.get_info = MagicMock(return_value=info)
+    bot.token_manager.get_info = AsyncMock(return_value=info)
     bot.access_token = "old_token"
     bot.refresh_token = "old_refresh"
     with patch.object(token_handler, "_persist_token_changes", new_callable=AsyncMock):
@@ -171,7 +171,7 @@ async def test_handle_initial_token_refresh_no_change(token_handler, bot):
     info.access_token = "same_token"
     info.refresh_token = "same_refresh"
     info.expiry = "same_expiry"
-    bot.token_manager.get_info = MagicMock(return_value=info)
+    bot.token_manager.get_info = AsyncMock(return_value=info)
     bot.access_token = "same_token"
     bot.refresh_token = "same_refresh"
     with patch.object(token_handler, "_persist_token_changes", new_callable=AsyncMock) as mock_persist:
@@ -233,7 +233,7 @@ async def test_check_and_refresh_token_success(token_handler, bot):
     info = MagicMock()
     info.access_token = "new_token"
     info.expiry = "expiry"
-    bot.token_manager.get_info = MagicMock(return_value=info)
+    bot.token_manager.get_info = AsyncMock(return_value=info)
     bot.access_token = "old_token"
     bot.connection_manager.chat_backend = MagicMock()
     bot.connection_manager.chat_backend.update_token = MagicMock()

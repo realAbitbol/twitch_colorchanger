@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import os
+import tempfile
 from unittest.mock import AsyncMock, patch
 
 import pytest
-import asyncio
 
 from src.bot.message_handler import MessageHandler
 
@@ -233,17 +235,22 @@ async def test_maybe_handle_toggle_enable_disable(handler):
 @pytest.mark.asyncio
 async def test_persist_enabled_flag_success_and_exception(handler):
     """Test _persist_enabled_flag for success and exception cases."""
-    handler.config_file = "/tmp/test.json"
-    # Success
-    with patch("src.bot.message_handler.queue_user_update") as mock_queue:
-        await handler._persist_enabled_flag(True)
-        mock_queue.assert_called_once()
+    temp_file = await asyncio.to_thread(tempfile.NamedTemporaryFile, suffix='.json', delete=False)
+    try:
+        handler.config_file = temp_file.name
+        # Success
+        with patch("src.bot.message_handler.queue_user_update") as mock_queue:
+            await handler._persist_enabled_flag(True)
+            mock_queue.assert_called_once()
 
-    # Exception
-    with patch("src.bot.message_handler.queue_user_update", side_effect=Exception("Test")) as mock_queue, \
-         patch("src.bot.message_handler.logging.warning") as mock_warning:
-        await handler._persist_enabled_flag(True)
-        mock_warning.assert_called_once()
+        # Exception
+        with patch("src.bot.message_handler.queue_user_update", side_effect=Exception("Test")) as mock_queue, \
+             patch("src.bot.message_handler.logging.warning") as mock_warning:
+            await handler._persist_enabled_flag(True)
+            mock_warning.assert_called_once()
+    finally:
+        temp_file.close()
+        await asyncio.to_thread(os.unlink, temp_file.name)
 
 
 def test_is_color_change_allowed_true_false(handler):

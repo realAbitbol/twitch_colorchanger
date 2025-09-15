@@ -237,7 +237,7 @@ async def test_restart_with_new_config_success():
     ctx = MagicMock()
     ctx.session = MagicMock()
     ctx.token_manager = MagicMock()
-    ctx.token_manager.prune = MagicMock()
+    ctx.token_manager.prune = AsyncMock()
     users_config = [
         {
             "username": "user1",
@@ -464,7 +464,7 @@ async def test_restart_with_new_config_prune_error():
     ctx = MagicMock()
     ctx.session = MagicMock()
     ctx.token_manager = MagicMock()
-    ctx.token_manager.prune.side_effect = ValueError("Prune failed")
+    ctx.token_manager.prune = AsyncMock(side_effect=ValueError("Prune failed"))
     users_config = [
         {
             "username": "user1",

@@ -55,7 +55,7 @@ async def test_periodic_validation_triggers_refresh(monkeypatch):
         tm.tokens.clear()
         # Token with known expiry far enough to skip proactive immediate refresh
         expiry = datetime.now(UTC) + timedelta(seconds=5000)
-        tm._upsert_token_info("puser", "acc", "ref", "cid", "csec", expiry)
+        await tm._upsert_token_info("puser", "acc", "ref", "cid", "csec", expiry)
 
         dummy = PeriodicDummyClient()
         dummy.prime(validate_outcome=False, refresh_on_force=True)
@@ -83,7 +83,7 @@ async def test_periodic_validation_success_no_refresh(monkeypatch):
         tm = TokenManager(session)
         tm.tokens.clear()
         expiry = datetime.now(UTC) + timedelta(seconds=5000)
-        tm._upsert_token_info("puser2", "acc2", "ref2", "cid", "csec", expiry)
+        await tm._upsert_token_info("puser2", "acc2", "ref2", "cid", "csec", expiry)
 
         dummy = PeriodicDummyClient()
         dummy.prime(validate_outcome=True)
