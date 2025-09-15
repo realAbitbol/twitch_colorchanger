@@ -62,9 +62,12 @@ async def test_retry_async_backoff_timing():
         return None, True
 
     with patch('asyncio.sleep', side_effect=mock_sleep):
-        await retry_async(operation, max_attempts=3, backoff_func=lambda a: 2 ** a)
+        await retry_async(operation, max_attempts=3)
 
-    assert delays == [1, 2]  # Delays for attempt 0 and 1
+    # With Tenacity's exponential backoff (multiplier=1, max=60)
+    # Attempt 1: 1^1 = 1
+    # Attempt 2: 1^2 = 2
+    assert delays == [1, 2]  # Delays for attempt 1 and 2
 
 
 @pytest.mark.asyncio
