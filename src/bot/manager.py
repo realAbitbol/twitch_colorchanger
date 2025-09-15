@@ -12,6 +12,7 @@ import aiohttp
 
 from ..application_context import ApplicationContext
 from ..config.model import UserConfig
+from ..constants import BOT_STARTUP_DELAY_SECONDS, MANAGER_LOOP_SLEEP_SECONDS
 from .core import TwitchColorBot
 
 _jitter_rng = SystemRandom()
@@ -91,7 +92,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         logging.debug(f"🚀 Launching bot tasks (count={len(self.bots)})")
         for bot in self.bots:
             self.tasks.append(asyncio.create_task(bot.start()))
-        await asyncio.sleep(1)
+        await asyncio.sleep(BOT_STARTUP_DELAY_SECONDS)
         self.running = True
         self.shutdown_initiated = False
         logging.debug("✅ All bots started successfully")
@@ -246,7 +247,7 @@ async def _run_main_loop(manager: BotManager) -> None:
         manager: The BotManager instance to monitor.
     """
     while manager.running:
-        await asyncio.sleep(1)
+        await asyncio.sleep(MANAGER_LOOP_SLEEP_SECONDS)
         if manager.shutdown_initiated:
             logging.warning("🔻 Shutdown initiated - stopping bots")
             async with manager._manager_lock:

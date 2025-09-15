@@ -19,6 +19,13 @@ from ..chat import EventSubChatBackend
 from ..config.async_persistence import (
     flush_pending_updates,
 )
+from ..constants import (
+    BOT_STOP_DELAY_SECONDS,
+    INITIAL_BACKOFF_SECONDS,
+    LISTENER_TASK_TIMEOUT_SECONDS,
+    MAX_BACKOFF_SECONDS,
+    RECONNECT_MAX_ATTEMPTS,
+)
 from .color_changer import ColorChanger
 from .message_handler import MessageHandler
 from .token_refresher import TokenRefresher
@@ -225,9 +232,9 @@ class TwitchColorBot(MessageHandler, ColorChanger, TokenRefresher):  # pylint: d
         error: Exception,
         cb: Callable[[asyncio.Task[None]], None],
         *,
-        initial_backoff: float = 1.0,
-        max_backoff: float = 60.0,
-        max_attempts: int = 5,
+        initial_backoff: float = INITIAL_BACKOFF_SECONDS,
+        max_backoff: float = MAX_BACKOFF_SECONDS,
+        max_attempts: int = RECONNECT_MAX_ATTEMPTS,
     ) -> None:
         """Attempt to reconnect chat backend with exponential backoff.
 
@@ -286,7 +293,7 @@ class TwitchColorBot(MessageHandler, ColorChanger, TokenRefresher):  # pylint: d
             except Exception as e:
                 logging.debug(f"Config flush error: {str(e)}")
         self.running = False
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(BOT_STOP_DELAY_SECONDS)
 
     async def _initialize_connection(self) -> bool:
         """Prepare identity, choose backend, connect, and register handlers."""
@@ -389,7 +396,9 @@ class TwitchColorBot(MessageHandler, ColorChanger, TokenRefresher):  # pylint: d
         """
         if self.listener_task and not self.listener_task.done():
             try:
-                await asyncio.wait_for(self.listener_task, timeout=2.0)
+                await asyncio.wait_for(
+                    self.listener_task, timeout=LISTENER_TASK_TIMEOUT_SECONDS
+                )
             except TimeoutError:
                 self.listener_task.cancel()
             except asyncio.CancelledError:

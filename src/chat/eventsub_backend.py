@@ -14,6 +14,21 @@ from urllib.parse import parse_qs, urlparse
 import aiohttp
 
 from ..api.twitch import TwitchAPI
+from ..constants import (
+    EVENTSUB_CONSECUTIVE_401_THRESHOLD,
+    EVENTSUB_FAST_AUDIT_MAX_SECONDS,
+    EVENTSUB_FAST_AUDIT_MIN_SECONDS,
+    EVENTSUB_JITTER_FACTOR,
+    EVENTSUB_MAX_BACKOFF_SECONDS,
+    EVENTSUB_RECONNECT_DELAY_SECONDS,
+    EVENTSUB_STALE_THRESHOLD_SECONDS,
+    EVENTSUB_SUB_CHECK_INTERVAL_SECONDS,
+    JITTER_RESOLUTION,
+    WEBSOCKET_CLOSE_SESSION_STALE,
+    WEBSOCKET_CLOSE_TOKEN_REFRESH,
+    WEBSOCKET_HEARTBEAT_SECONDS,
+    WEBSOCKET_MESSAGE_TIMEOUT_SECONDS,
+)
 
 MessageHandler = Callable[[str, str, str], Any]
 
@@ -133,14 +148,16 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         # runtime resilience state
         self._backoff = 1.0
         self._last_activity = time.monotonic()
-        self._next_sub_check = self._last_activity + 600.0  # 10 min default
-        self._stale_threshold = 70.0  # heartbeat*2 + grace
-        self._max_backoff = 60.0
+        self._next_sub_check = (
+            self._last_activity + EVENTSUB_SUB_CHECK_INTERVAL_SECONDS
+        )  # 10 min default
+        self._stale_threshold = EVENTSUB_STALE_THRESHOLD_SECONDS  # heartbeat*2 + grace
+        self._max_backoff = EVENTSUB_MAX_BACKOFF_SECONDS
 
         # audit scheduling
-        self._audit_interval = 600.0
-        self._fast_audit_min = 60.0
-        self._fast_audit_max = 120.0
+        self._audit_interval = EVENTSUB_SUB_CHECK_INTERVAL_SECONDS
+        self._fast_audit_min = EVENTSUB_FAST_AUDIT_MIN_SECONDS
+        self._fast_audit_max = EVENTSUB_FAST_AUDIT_MAX_SECONDS
         self._fast_audit_pending = False
 
         # token invalidation tracking
@@ -193,8 +210,8 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         if b <= a:
             return a
         span = b - a
-        # 1e6 discrete steps for jitter resolution
-        r = secrets.randbelow(1_000_000) / 1_000_000.0
+        # JITTER_RESOLUTION discrete steps for jitter resolution
+        r = secrets.randbelow(JITTER_RESOLUTION) / JITTER_RESOLUTION
         return a + r * span
 
     async def connect(
@@ -290,12 +307,14 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
                 headers["Authorization"] = f"Bearer {self._token}"
             self._ws = await self._session.ws_connect(
                 self._ws_url,
-                heartbeat=30,
+                heartbeat=WEBSOCKET_HEARTBEAT_SECONDS,
                 headers=headers,
                 protocols=("twitch-eventsub-ws",),
             )
             logging.info(f"🔌 EventSub WebSocket connected for {self._username}")
-            welcome = await asyncio.wait_for(self._ws.receive(), timeout=10)
+            welcome = await asyncio.wait_for(
+                self._ws.receive(), timeout=WEBSOCKET_MESSAGE_TIMEOUT_SECONDS
+            )
             if welcome.type != aiohttp.WSMsgType.TEXT:
                 logging.error("⚠️ EventSub bad welcome frame")
                 return False
@@ -683,10 +702,10 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             os.replace(tmp_path, self._cache_path)
         except FileNotFoundError as e:
             logging.error(f"⚠️ EventSub cache save failed: File not found - {str(e)}")
-        except OSError as e:
-            logging.error(f"⚠️ EventSub cache save failed: OS error - {str(e)}")
         except PermissionError as e:
             logging.error(f"⚠️ EventSub cache save failed: Permission denied - {str(e)}")
+        except OSError as e:
+            logging.error(f"⚠️ EventSub cache save failed: OS error - {str(e)}")
         except Exception as e:  # noqa: BLE001
             logging.error(f"⚠️ EventSub cache save failed: Unexpected error - {str(e)}")
 
@@ -755,9 +774,9 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         if status == 202:
             self._on_subscribed(channel_login)
             return
-        self._log_subscribe_non_202(status, channel_login, data)
+        self._log_subscribe_non_202(status, channel_login)
         if status == 401:
-            self._handle_subscribe_unauthorized(channel_login, data)
+            self._handle_subscribe_unauthorized(channel_login)
             return
         self._on_subscribe_other(channel_login, status)
 
@@ -793,19 +812,20 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
                 return True
         return False
 
-    def _log_subscribe_non_202(
-        self, status: int, channel_login: str, data: Any
-    ) -> None:
+    def _log_subscribe_non_202(self, status: int, channel_login: str) -> None:
         logging.warning(
             f"⚠️ EventSub subscribe non-202 status={status} channel={channel_login}"
         )
 
-    def _handle_subscribe_unauthorized(self, channel_login: str, data: Any) -> None:
+    def _handle_subscribe_unauthorized(self, channel_login: str) -> None:
         self._consecutive_subscribe_401 += 1
         logging.warning(
             f"🚫 EventSub subscribe unauthorized channel={channel_login} count={self._consecutive_subscribe_401}"
         )
-        if self._consecutive_subscribe_401 >= 2 and not self._token_invalid_flag:
+        if (
+            self._consecutive_subscribe_401 >= EVENTSUB_CONSECUTIVE_401_THRESHOLD
+            and not self._token_invalid_flag
+        ):
             self._token_invalid_flag = True
             logging.error(
                 "🚫 EventSub token invalid source={source} channel={channel}".format(
@@ -919,10 +939,10 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         if close_code is None:
             return None
         CLOSE_CODE_ACTIONS = {
-            4001: "token_refresh",
+            WEBSOCKET_CLOSE_TOKEN_REFRESH: "token_refresh",
             4002: "token_refresh",
             4003: "token_refresh",
-            4007: "session_stale",
+            WEBSOCKET_CLOSE_SESSION_STALE: "session_stale",
         }
         action = CLOSE_CODE_ACTIONS.get(int(close_code))
         if action == "token_refresh":
@@ -976,7 +996,9 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         if not self._ws:
             return None
         try:
-            msg = await asyncio.wait_for(self._ws.receive(), timeout=10)
+            msg = await asyncio.wait_for(
+                self._ws.receive(), timeout=WEBSOCKET_MESSAGE_TIMEOUT_SECONDS
+            )
             return msg
         except TimeoutError:
             if time.monotonic() - self._last_activity > self._stale_threshold:
@@ -1046,7 +1068,9 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
                 await self._reconnect_cleanup()
 
                 # --- RECONNECT DELAY ---
-                await asyncio.sleep(1.0)  # 1 second delay before reconnect
+                await asyncio.sleep(
+                    EVENTSUB_RECONNECT_DELAY_SECONDS
+                )  # 1 second delay before reconnect
 
                 logging.info(
                     "🔄 EventSub reconnect attempt={attempt} ws_url={ws_url} session_id={session_id} channels={channels}".format(
@@ -1091,7 +1115,8 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
                     f"❌ EventSub reconnect failed attempt={attempt} backoff={round(self._backoff, 2)}"
                 )
                 await asyncio.sleep(
-                    self._backoff + self._jitter(0, 0.25 * self._backoff)
+                    self._backoff
+                    + self._jitter(0, EVENTSUB_JITTER_FACTOR * self._backoff)
                 )
                 self._backoff = min(self._backoff * 2, self._max_backoff)
         return False
@@ -1106,7 +1131,7 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
                 headers["Authorization"] = f"Bearer {self._token}"
             ws = await self._session.ws_connect(
                 self._ws_url,
-                heartbeat=30,
+                heartbeat=WEBSOCKET_HEARTBEAT_SECONDS,
                 headers=headers,
                 protocols=("twitch-eventsub-ws",),
             )
@@ -1147,7 +1172,9 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
 
         # Wait for challenge message
         try:
-            challenge_msg = await asyncio.wait_for(ws.receive(), timeout=10)
+            challenge_msg = await asyncio.wait_for(
+                ws.receive(), timeout=WEBSOCKET_MESSAGE_TIMEOUT_SECONDS
+            )
             handshake_details["challenge_type"] = str(
                 getattr(challenge_msg, "type", None)
             )
@@ -1197,7 +1224,9 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
     async def _process_welcome_message(self, ws, handshake_details):
         """Process the welcome message after connection or challenge."""
         try:
-            welcome = await asyncio.wait_for(ws.receive(), timeout=10)
+            welcome = await asyncio.wait_for(
+                ws.receive(), timeout=WEBSOCKET_MESSAGE_TIMEOUT_SECONDS
+            )
             handshake_details["welcome_type"] = str(getattr(welcome, "type", None))
             handshake_details["welcome_raw"] = getattr(welcome, "data", None)
 
