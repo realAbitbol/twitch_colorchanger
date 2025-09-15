@@ -1092,7 +1092,33 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
                     )
                 )
                 if not handshake_ok:
-                    raise RuntimeError(f"handshake failed: {handshake_details}")
+                    # Log sanitized handshake details to diagnose failures without leaking sensitive headers
+                    try:
+                        details = (
+                            handshake_details
+                            if isinstance(handshake_details, dict)
+                            else {"details": str(handshake_details)}
+                        )
+                        if isinstance(details, dict):
+                            details = dict(details)
+                            # Remove any request headers (may contain Authorization)
+                            details.pop("request_headers", None)
+                            raw = details.get("welcome_raw")
+                            if isinstance(raw, bytes | str) and len(raw) > 2048:
+                                details["welcome_raw"] = (
+                                    raw
+                                    if isinstance(raw, str)
+                                    else raw.decode(errors="ignore")
+                                )[:2048] + "...<truncated>"
+                        logging.error(
+                            f"🧪 EventSub handshake failure details: {json.dumps(details, default=str)}"
+                        )
+                    except Exception as log_e:  # noqa: BLE001
+                        logging.error(
+                            f"🧪 EventSub handshake details logging error: {str(log_e)}"
+                        )
+                    # Raise a generic error to continue existing backoff flow
+                    raise RuntimeError("handshake failed")
 
                 # subscribe / resubscribe work
                 await self._do_subscribe_cycle()
@@ -1170,7 +1196,7 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         )
         handshake_details["challenge_handshake"] = True
 
-        # Wait for challenge message
+        # Wait for challenge (or possibly welcome) message
         try:
             challenge_msg = await asyncio.wait_for(
                 ws.receive(), timeout=WEBSOCKET_MESSAGE_TIMEOUT_SECONDS
@@ -1184,10 +1210,46 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
                 self._pending_challenge = None
                 return False
 
+            # Parse JSON
             challenge_data = json.loads(challenge_msg.data)
+            handshake_details["challenge_data"] = challenge_data
+
+            # If server sent WELCOME first (common in real EventSub), bypass challenge
+            meta = (
+                challenge_data.get("metadata")
+                if isinstance(challenge_data, dict)
+                else None
+            )
+            mtype = (
+                meta.get("message_type")
+                if isinstance(meta, dict)
+                else (
+                    challenge_data.get("type")
+                    if isinstance(challenge_data, dict)
+                    else None
+                )
+            )
+            payload = (
+                challenge_data.get("payload")
+                if isinstance(challenge_data, dict)
+                else None
+            )
+            session_obj = payload.get("session") if isinstance(payload, dict) else None
+            session_id = (
+                session_obj.get("id") if isinstance(session_obj, dict) else None
+            )
+            if (isinstance(mtype, str) and mtype == "session_welcome") or isinstance(
+                session_id, str
+            ):
+                # Stash the already-received welcome so we don't read another frame
+                handshake_details["challenge_bypassed"] = "welcome_first"
+                handshake_details["pre_welcome_raw"] = challenge_msg.data
+                self._pending_challenge = None
+                return True
+
+            # Normal challenge path
             received_challenge = challenge_data.get("challenge")
             handshake_details["challenge_received"] = received_challenge
-            handshake_details["challenge_data"] = challenge_data
 
             if not isinstance(received_challenge, str):
                 handshake_details["challenge_error"] = "no_challenge_value"
@@ -1224,6 +1286,20 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
     async def _process_welcome_message(self, ws, handshake_details):
         """Process the welcome message after connection or challenge."""
         try:
+            # If a welcome frame was already consumed during challenge check, use it
+            pre = handshake_details.get("pre_welcome_raw")
+            if pre is not None:
+                handshake_details["welcome_type"] = "pre_received"
+                handshake_details["welcome_raw"] = pre
+                data = json.loads(pre)
+                self._session_id = data.get("payload", {}).get("session", {}).get("id")
+                handshake_details["session_id"] = self._session_id
+                handshake_details["welcome_json"] = data
+                if not self._session_id:
+                    handshake_details["error"] = "no_session_id"
+                    return False, handshake_details
+                return True, handshake_details
+
             welcome = await asyncio.wait_for(
                 ws.receive(), timeout=WEBSOCKET_MESSAGE_TIMEOUT_SECONDS
             )
