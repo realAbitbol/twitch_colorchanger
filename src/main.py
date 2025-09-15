@@ -57,8 +57,8 @@ async def main() -> None:
         logging.info("✅ Application shutdown complete")
 
 
-# Best-effort safety net: ensure any lingering aiohttp session is closed
-if __name__ == "__main__":
+def run() -> None:
+    """Synchronous entry point for the application."""
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
@@ -68,3 +68,7 @@ if __name__ == "__main__":
     except Exception as e:
         log_error("Top-level error", e)
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    run()
