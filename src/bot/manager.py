@@ -4,18 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import signal
-from secrets import SystemRandom
 from typing import Any
-
-import aiohttp
 
 from ..application_context import ApplicationContext
 from ..config.model import UserConfig
-from ..constants import BOT_STARTUP_DELAY_SECONDS, MANAGER_LOOP_SLEEP_SECONDS
+from ..constants import MANAGER_LOOP_SLEEP_SECONDS
 from .core import TwitchColorBot
-
-_jitter_rng = SystemRandom()
+from .lifecycle_manager import BotLifecycleManager
+from .signal_handler import SignalHandler
 
 
 class BotManager:  # pylint: disable=too-many-instance-attributes
@@ -38,8 +34,6 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         http_session: Shared aiohttp ClientSession.
     """
 
-    tasks: list[asyncio.Task[Any]]
-
     def __init__(
         self,
         users_config: list[dict[str, Any]],
@@ -53,189 +47,105 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             config_file: Path to configuration file for persistence.
             context: Application context with shared services.
         """
-        # Convert dict configs to UserConfig dataclasses for type safety
-        self.users_config = [UserConfig.from_dict(u) for u in users_config]
-        self.config_file = config_file
-        self.bots: list[TwitchColorBot] = []
-        self.tasks: list[asyncio.Task[Any]] = []
-        self.running = False
-        self.shutdown_initiated = False
-        self.restart_requested = False
-        self.new_config: list[dict[str, Any]] | None = None
-        self.context = context
-        self.http_session: aiohttp.ClientSession | None = None
-        self._manager_lock = asyncio.Lock()
+        self.lifecycle = BotLifecycleManager(users_config, config_file, context)
+        self.signals = SignalHandler()
 
+    # Delegate attributes to composed objects
+    @property
+    def users_config(self):
+        return self.lifecycle.users_config
+
+    @property
+    def config_file(self):
+        return self.lifecycle.config_file
+
+    @property
+    def bots(self):
+        return self.lifecycle.bots
+
+    @bots.setter
+    def bots(self, value):
+        self.lifecycle.bots = value
+
+    @property
+    def tasks(self):
+        return self.lifecycle.tasks
+
+    @tasks.setter
+    def tasks(self, value):
+        self.lifecycle.tasks = value
+
+    @property
+    def running(self):
+        return self.lifecycle.running
+
+    @running.setter
+    def running(self, value: bool):
+        self.lifecycle.running = value
+
+    @property
+    def shutdown_initiated(self):
+        return self.signals.shutdown_initiated
+
+    @shutdown_initiated.setter
+    def shutdown_initiated(self, value: bool):
+        self.signals.shutdown_initiated = value
+
+    @property
+    def restart_requested(self):
+        return self.lifecycle.restart_requested
+
+    @restart_requested.setter
+    def restart_requested(self, value: bool):
+        self.lifecycle.restart_requested = value
+
+    @property
+    def new_config(self):
+        return self.lifecycle.new_config
+
+    @new_config.setter
+    def new_config(self, value):
+        self.lifecycle.new_config = value
+
+    @property
+    def context(self):
+        return self.lifecycle.context
+
+    @property
+    def http_session(self):
+        return self.lifecycle.http_session
+
+    @property
+    def _manager_lock(self):
+        return self.lifecycle._manager_lock
+
+    # Delegate methods to composed objects
     async def _start_all_bots(self) -> bool:
-        """Start all bots from the user configuration.
-
-        Creates bot instances, launches their tasks, and sets running state.
-
-        Returns:
-            True if all bots started successfully, False otherwise.
-        """
-        logging.info(f"▶️ Starting all bots (count={len(self.users_config)})")
-        if not self.context:
-            raise RuntimeError("ApplicationContext required")
-        self.http_session = self.context.session
-        for user_config in self.users_config:
-            try:
-                bot = self._create_bot(user_config)
-                self.bots.append(bot)
-            except (ValueError, RuntimeError, TypeError) as e:
-                logging.error(
-                    f"💥 Failed to create bot: {str(e)} user={user_config.username}"
-                )
-        if not self.bots:
-            logging.error("⚠️ No bots created - aborting start")
-            return False
-        logging.debug(f"🚀 Launching bot tasks (count={len(self.bots)})")
-        for bot in self.bots:
-            self.tasks.append(asyncio.create_task(bot.start()))
-        await asyncio.sleep(BOT_STARTUP_DELAY_SECONDS)
-        self.running = True
-        self.shutdown_initiated = False
-        logging.debug("✅ All bots started successfully")
-        return True
+        return await self.lifecycle._start_all_bots()
 
     def _create_bot(self, user_config: UserConfig) -> TwitchColorBot:
-        """Create a TwitchColorBot instance from user configuration.
-
-        Args:
-            user_config: User configuration dataclass.
-
-        Returns:
-            Configured TwitchColorBot instance.
-        """
-        if not self.context or not self.context.session:
-            raise RuntimeError("Context/session not initialized")
-        username = user_config.username
-        bot = TwitchColorBot(
-            context=self.context,
-            token=user_config.access_token or "",
-            refresh_token=user_config.refresh_token or "",
-            client_id=user_config.client_id or "",
-            client_secret=user_config.client_secret or "",
-            nick=username,
-            channels=user_config.channels,
-            http_session=self.context.session,
-            is_prime_or_turbo=user_config.is_prime_or_turbo,
-            config_file=self.config_file,
-            user_id=None,
-            enabled=user_config.enabled,
-            token_expiry=user_config.token_expiry,
-        )
-        logging.debug(f"🆕 Bot created: {username}")
-        return bot
+        return self.lifecycle._create_bot(user_config)
 
     async def _stop_all_bots(self) -> None:
-        """Stop all running bots and clean up resources."""
-        if not self.running:
-            return
-        logging.warning("🛑 Stopping all bots")
-        self._cancel_all_tasks()
-        self._close_all_bots()
-        await self._wait_for_task_completion()
-        self.running = False
-        logging.info("🛑 All bots stopped")
+        await self.lifecycle._stop_all_bots()
 
     def _cancel_all_tasks(self) -> None:
-        """Cancel all running bot tasks."""
-        for i, task in enumerate(self.tasks):
-            try:
-                if task and not task.done():
-                    task.cancel()
-                    logging.debug(f"🛑 Cancelled task index={i}")
-            except (ValueError, TypeError) as e:
-                logging.warning(f"💥 Error cancelling task index={i}: {str(e)}")
+        self.lifecycle._cancel_all_tasks()
 
     def _close_all_bots(self) -> None:
-        """Close all bot instances."""
-        for i, bot in enumerate(self.bots):
-            try:
-                bot.close()
-                logging.info(f"🔻 Closed bot for user {bot.username}")
-            except (OSError, ValueError, RuntimeError) as e:
-                logging.warning(
-                    f"💥 Error closing bot index={i}: {str(e)} user={getattr(bot, 'username', None)}"
-                )
+        self.lifecycle._close_all_bots()
 
     async def _wait_for_task_completion(self) -> None:
-        """Wait for all bot tasks to complete and log any exceptions."""
-        if not self.tasks:
-            return
-        try:
-            results = await asyncio.gather(*self.tasks, return_exceptions=True)
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    logging.warning(
-                        f"💥 Task index={i} finished with exception: {str(result)}"
-                    )
-        except (RuntimeError, ValueError, TypeError) as e:
-            logging.warning(f"💥 Error waiting for task completion: {str(e)}")
-        finally:
-            self.tasks.clear()
+        await self.lifecycle._wait_for_task_completion()
 
     def stop(self) -> None:
-        """Initiate shutdown of all bots."""
-        self.shutdown_initiated = True
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self._stop_all_bots())
-        except RuntimeError:
-            pass
+        self.signals.stop()
 
     async def _restart_with_new_config(self) -> bool:
-        """Restart all bots with the new configuration.
-
-        Saves statistics, stops old bots, starts new ones, and restores statistics.
-
-        Returns:
-            True if restart successful, False otherwise.
-        """
-        async with self._manager_lock:
-            if not self.new_config:
-                return False
-            logging.info("🔄 Restarting with new configuration")
-            await self._stop_all_bots()
-            self.bots.clear()
-            self.tasks.clear()
-            old_count = len(self.users_config)
-            self.users_config = (
-                [UserConfig.from_dict(u) for u in self.new_config]
-                if self.new_config
-                else []
-            )
-            new_count = len(self.users_config)
-            logging.info(f"🛠️ Configuration updated old={old_count} new={new_count}")
-            success = await self._start_all_bots()
-            if success:
-                try:
-                    # Prune tokens for users no longer present
-                    if self.context and self.context.token_manager:
-                        active = {u.username.lower() for u in self.users_config}
-                        self.context.token_manager.prune(active)
-                except (ValueError, RuntimeError) as e:
-                    logging.debug(f"⚠️ Error pruning tokens: {str(e)}")
-            self.restart_requested = False
-            self.new_config = None
-            return success
+        return await self.lifecycle._restart_with_new_config()
 
     def setup_signal_handlers(self) -> None:  # pragma: no cover
-        """Set up signal handlers for graceful shutdown on SIGINT/SIGTERM."""
-
-        def handler(signum: int, _frame: object | None) -> None:  # noqa: D401
-            # Idempotent signal handler: only trigger once
-            if self.shutdown_initiated:
-                return
-            logging.warning(
-                f"🛑 Signal received - initiating shutdown (signal={signum})"
-            )
-            self.shutdown_initiated = True
-            # We don't directly stop bots here; main loop will detect flag and perform orderly shutdown
-
-        signal.signal(signal.SIGINT, handler)
-        signal.signal(signal.SIGTERM, handler)
+        self.signals.setup_signal_handlers()
 
 
 async def _run_main_loop(manager: BotManager) -> None:

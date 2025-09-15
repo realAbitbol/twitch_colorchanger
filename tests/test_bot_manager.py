@@ -27,7 +27,7 @@ async def test_start_all_bots_success():
     ]
     manager = BotManager(users_config, "test.conf", context=ctx)
 
-    with patch.object(manager, "_create_bot") as mock_create:
+    with patch.object(manager.lifecycle, "_create_bot") as mock_create:
         mock_bot = MagicMock()
         mock_bot.start = AsyncMock()
         mock_create.return_value = mock_bot
@@ -75,7 +75,7 @@ async def test_start_all_bots_create_fails():
     ]
     manager = BotManager(users_config, "test.conf", context=ctx)
 
-    with patch.object(manager, "_create_bot", side_effect=ValueError("Create failed")):
+    with patch.object(manager.lifecycle, "_create_bot", side_effect=ValueError("Create failed")):
         result = await manager._start_all_bots()
 
         assert result is False
@@ -264,8 +264,8 @@ async def test_restart_with_new_config_success():
         }
     ]
 
-    with patch.object(manager, "_stop_all_bots", new_callable=AsyncMock) as mock_stop, \
-         patch.object(manager, "_start_all_bots", new_callable=AsyncMock, return_value=True) as mock_start:
+    with patch.object(manager.lifecycle, "_stop_all_bots", new_callable=AsyncMock) as mock_stop, \
+         patch.object(manager.lifecycle, "_start_all_bots", new_callable=AsyncMock, return_value=True) as mock_start:
         result = await manager._restart_with_new_config()
 
         assert result is True
@@ -318,8 +318,8 @@ async def test_restart_with_new_config_start_fails():
         }
     ]
 
-    with patch.object(manager, "_stop_all_bots", new_callable=AsyncMock) as mock_stop, \
-         patch.object(manager, "_start_all_bots", new_callable=AsyncMock, return_value=False) as mock_start:
+    with patch.object(manager.lifecycle, "_stop_all_bots", new_callable=AsyncMock) as mock_stop, \
+         patch.object(manager.lifecycle, "_start_all_bots", new_callable=AsyncMock, return_value=False) as mock_start:
         result = await manager._restart_with_new_config()
 
         assert result is False
@@ -376,7 +376,7 @@ async def test_start_all_bots_partial_failure():
         mock_bot.start = AsyncMock()
         return mock_bot
 
-    with patch.object(manager, "_create_bot", side_effect=mock_create):
+    with patch.object(manager.lifecycle, "_create_bot", side_effect=mock_create):
         result = await manager._start_all_bots()
 
         assert result is True  # At least one bot succeeded
@@ -491,8 +491,8 @@ async def test_restart_with_new_config_prune_error():
         }
     ]
 
-    with patch.object(manager, "_stop_all_bots", new_callable=AsyncMock) as mock_stop, \
-         patch.object(manager, "_start_all_bots", new_callable=AsyncMock, return_value=True) as mock_start:
+    with patch.object(manager.lifecycle, "_stop_all_bots", new_callable=AsyncMock) as mock_stop, \
+         patch.object(manager.lifecycle, "_start_all_bots", new_callable=AsyncMock, return_value=True) as mock_start:
         result = await manager._restart_with_new_config()
 
         assert result is True

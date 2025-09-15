@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .core import TwitchColorBot
 
 import aiohttp
 
@@ -21,15 +24,88 @@ CHAT_COLOR_ENDPOINT = "chat/color"
 class ColorChanger:
     """Mixin class for handling color change logic and API calls."""
 
+    def __init__(self, bot: TwitchColorBot) -> None:
+        """Initialize the ColorChanger with a bot instance.
+
+        Args:
+            bot: The TwitchColorBot instance this changer belongs to.
+        """
+        self.bot = bot
+        # Initialize color cache
+        self._init_color_cache()
+
     # Expected attributes from consumer class
-    username: str
-    config_file: str | None
-    user_id: str | None
-    api: TwitchAPI
-    access_token: str
-    client_id: str
-    _color_service: ColorChangeService | None
-    last_color: str | None
+    @property
+    def username(self) -> str:
+        return self.bot.username
+
+    @property
+    def config_file(self) -> str | None:
+        return self.bot.config_file
+
+    @config_file.setter
+    def config_file(self, value: str | None) -> None:
+        self.bot.config_file = value
+
+    @property
+    def user_id(self) -> str | None:
+        return self.bot.user_id
+
+    @user_id.setter
+    def user_id(self, value: str | None) -> None:
+        self.bot.user_id = value
+
+    @property
+    def api(self) -> TwitchAPI:
+        return self.bot.api
+
+    @api.setter
+    def api(self, value: TwitchAPI) -> None:
+        self.bot.api = value
+
+    @api.deleter
+    def api(self) -> None:
+        pass  # For mock patching compatibility
+
+    @property
+    def access_token(self) -> str:
+        return self.bot.access_token
+
+    @property
+    def client_id(self) -> str:
+        return self.bot.client_id
+
+    @property
+    def _color_service(self) -> ColorChangeService | None:
+        return self.bot._color_service
+
+    @_color_service.setter
+    def _color_service(self, value: ColorChangeService | None) -> None:
+        self.bot._color_service = value
+
+    @property
+    def last_color(self) -> str | None:
+        return self.bot.last_color
+
+    @last_color.setter
+    def last_color(self, value: str | None) -> None:
+        self.bot.last_color = value
+
+    @property
+    def _last_color_change_payload(self) -> dict[str, Any] | None:
+        return self.bot._last_color_change_payload
+
+    @_last_color_change_payload.setter
+    def _last_color_change_payload(self, value: dict[str, Any] | None) -> None:
+        self.bot._last_color_change_payload = value
+
+    @property
+    def use_random_colors(self) -> bool:
+        return self.bot.use_random_colors
+
+    def _build_user_config(self) -> dict[str, Any]:
+        """Build user configuration dictionary."""
+        return self.bot._build_user_config()
 
     """Mixin class for handling color change logic and API calls."""
 
@@ -37,7 +113,6 @@ class ColorChanger:
         """Initialize the color cache for optimization."""
         self._cache_lock = asyncio.Lock()
         self._current_color_cache: dict[str, dict[str, Any]] = {}
-        self._successful_color_cache: dict[str, set[str]] = {}
         self._cache_ttl = 30.0  # 30 seconds for current color cache
 
     async def on_persistent_prime_detection(self) -> None:
@@ -283,19 +358,6 @@ class ColorChanger:
         Uses cache to skip API calls for known successful colors.
         """
         color = params.get("color")
-        if color and self.user_id:
-            async with self._cache_lock:
-                if (
-                    self.user_id in self._successful_color_cache
-                    and color in self._successful_color_cache[self.user_id]
-                ):
-                    logging.debug(
-                        f"Using cached successful color change: {color} user={self.username}"
-                    )
-                    return ColorRequestResult(
-                        ColorRequestStatus.SUCCESS, http_status=204
-                    )
-
         logging.debug(f"Performing color request action={action} user={self.username}")
 
         async def operation(attempt):
@@ -320,13 +382,9 @@ class ColorChanger:
             result: ColorRequestResult = await handle_retryable_error(
                 operation, f"Color change {action}", max_attempts=6
             )
-            # Cache successful color changes
+            # Update current color cache since we just set it
             if result.status == ColorRequestStatus.SUCCESS and color and self.user_id:
                 async with self._cache_lock:
-                    if self.user_id not in self._successful_color_cache:
-                        self._successful_color_cache[self.user_id] = set()
-                    self._successful_color_cache[self.user_id].add(color)
-                    # Also update current color cache since we just set it
                     self._current_color_cache[self.user_id] = {
                         "color": color,
                         "timestamp": time.time(),

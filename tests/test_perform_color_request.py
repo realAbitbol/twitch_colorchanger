@@ -54,10 +54,10 @@ async def test_perform_color_request_status_mapping(monkeypatch):
     bot.api = fake_api  # type: ignore
 
     # Call private method sequentially
-    r1 = await bot._perform_color_request({"user_id": "u", "color": "#123456"}, action="color_change")
-    r2 = await bot._perform_color_request({"user_id": "u", "color": "#123456"}, action="color_change")
-    r3 = await bot._perform_color_request({"user_id": "u", "color": "#123456"}, action="color_change")
-    r4 = await bot._perform_color_request({"user_id": "u", "color": "#123456"}, action="color_change")
+    r1 = await bot.color_changer._perform_color_request({"user_id": "u", "color": "#123456"}, action="color_change")
+    r2 = await bot.color_changer._perform_color_request({"user_id": "u", "color": "#123456"}, action="color_change")
+    r3 = await bot.color_changer._perform_color_request({"user_id": "u", "color": "#123456"}, action="color_change")
+    r4 = await bot.color_changer._perform_color_request({"user_id": "u", "color": "#123456"}, action="color_change")
 
     assert r1.status == ColorRequestStatus.SUCCESS
     assert r2.status == ColorRequestStatus.UNAUTHORIZED
