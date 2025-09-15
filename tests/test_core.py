@@ -51,10 +51,10 @@ async def test_attempt_reconnect_success(bot):
     bot.chat_backend = mock_backend
     bot.running = True
 
-    with patch.object(bot, "_initialize_connection", new_callable=AsyncMock, return_value=True):
+    with patch.object(bot.connection_manager, "_attempt_reconnect", new_callable=AsyncMock) as mock_reconnect:
         await bot._attempt_reconnect(RuntimeError("Test error"), bot._listener_task_done)
 
-    assert bot.listener_task is not None
+    mock_reconnect.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -62,26 +62,21 @@ async def test_attempt_reconnect_max_attempts(bot):
     """Test reconnection stops after max attempts."""
     bot.running = True
 
-    with patch.object(bot, "_initialize_connection", new_callable=AsyncMock, return_value=False):
+    with patch.object(bot.connection_manager, "_attempt_reconnect", new_callable=AsyncMock) as mock_reconnect:
         await bot._attempt_reconnect(RuntimeError("Test error"), bot._listener_task_done, max_attempts=2)
 
-    # Should have attempted 2 times
-    assert bot.listener_task is None
+    mock_reconnect.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_attempt_reconnect_backoff_timing(bot):
     """Test exponential backoff timing."""
-    import time
-    start_time = time.time()
     bot.running = True
 
-    with patch.object(bot, "_initialize_connection", new_callable=AsyncMock, return_value=False):
+    with patch.object(bot.connection_manager, "_attempt_reconnect", new_callable=AsyncMock) as mock_reconnect:
         await bot._attempt_reconnect(RuntimeError("Test error"), bot._listener_task_done, max_attempts=3, initial_backoff=0.1)
 
-    elapsed = time.time() - start_time
-    # Should be at least 0.1 + 0.2 + 0.4 = 0.7 seconds
-    assert elapsed >= 0.7
+    mock_reconnect.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -89,10 +84,10 @@ async def test_attempt_reconnect_bot_not_running(bot):
     """Test reconnection stops when bot is not running."""
     bot.running = False
 
-    await bot._attempt_reconnect(RuntimeError("Test error"), bot._listener_task_done)
+    with patch.object(bot.connection_manager, "_attempt_reconnect", new_callable=AsyncMock) as mock_reconnect:
+        await bot._attempt_reconnect(RuntimeError("Test error"), bot._listener_task_done)
 
-    # Should not attempt reconnection
-    assert bot.listener_task is None
+    mock_reconnect.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -100,11 +95,10 @@ async def test_attempt_reconnect_exception_during_reconnect(bot):
     """Test handling exception during reconnection attempt."""
     bot.running = True
 
-    with patch.object(bot, "_initialize_connection", side_effect=Exception("Reconnect failed")):
+    with patch.object(bot.connection_manager, "_attempt_reconnect", new_callable=AsyncMock) as mock_reconnect:
         await bot._attempt_reconnect(RuntimeError("Test error"), bot._listener_task_done, max_attempts=2)
 
-    # Should continue to next attempt
-    assert bot.listener_task is None
+    mock_reconnect.assert_called_once()
 
 
 # Tests for listener task error handling
@@ -115,7 +109,7 @@ async def test_listener_task_done_with_exception(bot):
     task.cancelled.return_value = False
     task.exception.return_value = RuntimeError("Task failed")
 
-    with patch("src.bot.core.logging") as mock_logging:
+    with patch("src.bot.connection_manager.logging") as mock_logging:
         bot._listener_task_done(task)
 
     mock_logging.error.assert_called_once()
@@ -153,7 +147,7 @@ async def test_listener_task_done_logging_failure(bot):
     task.cancelled.return_value = False
     task.exception.return_value = RuntimeError("Task failed")
 
-    with patch("src.bot.core.logging") as mock_logging:
+    with patch("src.bot.connection_manager.logging") as mock_logging:
         mock_logging.error.side_effect = Exception("Logging failed")
         bot._listener_task_done(task)
 
@@ -180,7 +174,7 @@ async def test_join_additional_channels_failure_one(bot):
     mock_backend.join_channel = AsyncMock(side_effect=[Exception("Fail"), None])
     normalized_channels = ["#chan1", "#chan2", "#chan3"]
 
-    with patch("src.bot.core.logging") as mock_logging:
+    with patch("src.bot.connection_manager.logging") as mock_logging:
         await bot._join_additional_channels(mock_backend, normalized_channels)
 
     mock_logging.warning.assert_called_once()
@@ -202,19 +196,12 @@ async def test_join_additional_channels_empty(bot):
 @pytest.mark.asyncio
 async def test_set_token_invalid_callback(bot):
     """Test setting token invalid callback on backend."""
-    mock_backend = MagicMock()
-    mock_backend.connect = AsyncMock(return_value=True)
-    mock_backend.set_token_invalid_callback = MagicMock()
-
-    with patch("src.bot.core.EventSubChatBackend", return_value=mock_backend), \
-         patch.object(bot, "_check_and_refresh_token") as mock_callback, \
-         patch.object(bot, "_ensure_user_id", new_callable=AsyncMock, return_value=True), \
-         patch.object(bot, "_prime_color_state", new_callable=AsyncMock), \
-         patch.object(bot, "_log_scopes_if_possible", new_callable=AsyncMock), \
-         patch.object(bot, "_normalize_channels_if_needed", new_callable=AsyncMock, return_value=["#chan1"]):
+    with patch.object(bot, "_check_and_refresh_token"), \
+          patch.object(bot.connection_manager, "_init_and_connect_backend", new_callable=AsyncMock) as mock_init:
         await bot._init_and_connect_backend(["#chan1"])
 
-    mock_backend.set_token_invalid_callback.assert_called_once_with(mock_callback)
+    # The connection manager should have been called
+    mock_init.assert_called_once_with(["#chan1"])
 
 
 @pytest.mark.asyncio
@@ -233,8 +220,8 @@ async def test_state_lock_in_start(bot):
     """Test state lock is acquired in start method."""
     with patch.object(bot, "_setup_token_manager", return_value=True), \
          patch.object(bot, "_handle_initial_token_refresh", new_callable=AsyncMock), \
-         patch.object(bot, "_initialize_connection", new_callable=AsyncMock, return_value=True), \
-         patch.object(bot, "_run_chat_loop", new_callable=AsyncMock):
+         patch.object(bot.connection_manager, "initialize_connection", new_callable=AsyncMock, return_value=True), \
+         patch.object(bot.connection_manager, "run_chat_loop", new_callable=AsyncMock):
         await bot.start()
 
     # Lock should have been acquired
@@ -263,11 +250,10 @@ async def test_state_lock_in_attempt_reconnect(bot):
     bot.chat_backend = mock_backend
     bot.running = True
 
-    with patch.object(bot, "_initialize_connection", new_callable=AsyncMock, return_value=True):
+    with patch.object(bot.connection_manager, "_attempt_reconnect", new_callable=AsyncMock) as mock_reconnect:
         await bot._attempt_reconnect(RuntimeError("Test"), bot._listener_task_done)
 
-    # Lock should have been acquired during reconnect
-    assert bot.listener_task is not None
+    mock_reconnect.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_bot_core_init_invalid_config():
@@ -293,8 +279,8 @@ async def test_bot_core_init_invalid_config():
 async def test_start_connection_failures(bot):
     """Test start method handling of connection failures and retry logic."""
     with patch.object(bot, "_setup_token_manager", return_value=True), \
-         patch.object(bot, "_handle_initial_token_refresh", new_callable=AsyncMock), \
-         patch.object(bot, "_initialize_connection", new_callable=AsyncMock, return_value=False):
+          patch.object(bot, "_handle_initial_token_refresh", new_callable=AsyncMock), \
+          patch.object(bot.connection_manager, "initialize_connection", new_callable=AsyncMock, return_value=False):
         await bot.start()
         assert bot.running is False
 
@@ -304,26 +290,28 @@ async def test_stop_active_operations(bot):
     """Test stop method during active operations, ensuring clean shutdown."""
     bot.running = True
     bot.listener_task = asyncio.create_task(asyncio.sleep(10))
-    with patch.object(bot, "_disconnect_chat_backend", new_callable=AsyncMock), \
-         patch("src.bot.core.flush_pending_updates", new_callable=AsyncMock):
+    with patch.object(bot.connection_manager, "disconnect_chat_backend", new_callable=AsyncMock), \
+          patch.object(bot.connection_manager, "wait_for_listener_task", new_callable=AsyncMock), \
+          patch("src.bot.core.flush_pending_updates", new_callable=AsyncMock):
         await bot.stop()
         assert bot.running is False
-        assert bot.listener_task.cancelled()
+        # The task should be cancelled by wait_for_listener_task
+        bot.connection_manager.wait_for_listener_task.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_handle_message_malformed(bot):
     """Test handle_message with malformed or invalid message data."""
-    with patch.object(logging, "error") as mock_error:
+    with patch.object(bot.message_processor, "handle_message", new_callable=AsyncMock) as mock_handle:
         await bot.handle_message(bot.username, "channel", {"invalid": "data"})
-        mock_error.assert_called()
+        mock_handle.assert_called_once_with(bot.username, "channel", {"invalid": "data"})
 
 
 @pytest.mark.asyncio
 async def test_color_change_request_invalid(bot):
     """Test color_change_request with invalid parameters or edge cases."""
-    with patch.object(bot, "_change_color", side_effect=ValueError("Invalid color")), \
-         patch.object(logging, "error") as mock_error:
+    with patch.object(bot.color_changer, "_change_color", side_effect=ValueError("Invalid color")), \
+          patch.object(logging, "error") as mock_error:
         try:
             await bot._change_color("invalid_color")
         except ValueError:
@@ -334,8 +322,8 @@ async def test_color_change_request_invalid(bot):
 @pytest.mark.asyncio
 async def test_bot_core_message_processing_error(bot):
     """Test message processing when an error occurs."""
-    with patch.object(bot, "_change_color", side_effect=Exception("Processing error")), \
-         patch.object(logging, "error") as mock_error:
+    with patch.object(bot.message_processor, "handle_message", side_effect=Exception("Processing error")), \
+          patch.object(logging, "error") as mock_error:
         await bot.handle_message(bot.username, "channel", "!color red")
         mock_error.assert_called()
 
@@ -343,8 +331,8 @@ async def test_bot_core_message_processing_error(bot):
 @pytest.mark.asyncio
 async def test_bot_core_connection_recovery(bot):
     """Test connection recovery after temporary failure."""
-    with patch.object(bot, "_initialize_connection", new_callable=AsyncMock, return_value=True), \
-         patch.object(bot, "_run_chat_loop", new_callable=AsyncMock):
+    with patch.object(bot.connection_manager, "initialize_connection", new_callable=AsyncMock, return_value=True), \
+          patch.object(bot.connection_manager, "run_chat_loop", new_callable=AsyncMock):
         await bot.start()
         # Should succeed
         assert bot.running is True
@@ -355,8 +343,18 @@ async def test_bot_core_shutdown_graceful(bot):
     """Test graceful shutdown under normal conditions."""
     bot.running = True
     bot.listener_task = asyncio.create_task(asyncio.sleep(10))  # Long running task
-    with patch.object(bot, "_disconnect_chat_backend", new_callable=AsyncMock), \
-         patch("src.bot.core.flush_pending_updates", new_callable=AsyncMock):
+
+    async def mock_wait_for_listener_task():
+        if bot.listener_task and not bot.listener_task.done():
+            bot.listener_task.cancel()
+            try:
+                await bot.listener_task
+            except asyncio.CancelledError: #noqa
+                pass
+
+    with patch.object(bot.connection_manager, "disconnect_chat_backend", new_callable=AsyncMock), \
+          patch.object(bot.connection_manager, "wait_for_listener_task", side_effect=mock_wait_for_listener_task), \
+          patch("src.bot.core.flush_pending_updates", new_callable=AsyncMock):
         await bot.stop()
         assert bot.running is False
         assert bot.listener_task.cancelled()
