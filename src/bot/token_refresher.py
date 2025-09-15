@@ -76,6 +76,7 @@ class TokenRefresher:
         self.access_token = info.access_token
         if getattr(info, "refresh_token", None):
             self.refresh_token = info.refresh_token
+        self.token_expiry = info.expiry
         access_changed = bool(info.access_token and info.access_token != old_access)
         refresh_changed = bool(
             getattr(info, "refresh_token", None) and info.refresh_token != old_refresh
@@ -162,6 +163,7 @@ class TokenRefresher:
             if info and info.access_token:
                 if info.access_token != self.access_token:
                     self.access_token = info.access_token
+                    self.token_expiry = info.expiry
                     backend_local = self.chat_backend
                     if backend_local is not None:
                         try:
@@ -231,6 +233,7 @@ class TokenRefresher:
             "client_secret": self.client_secret,
             "access_token": self.access_token,
             "refresh_token": self.refresh_token,
+            "token_expiry": self.token_expiry,
             "channels": channels,
             "is_prime_or_turbo": self.use_random_colors,
             "enabled": getattr(self, "enabled", True),

@@ -63,6 +63,7 @@ class TwitchColorBot(MessageHandler, ColorChanger, TokenRefresher):  # pylint: d
         config_file: str | None = None,
         user_id: str | None = None,
         enabled: bool = True,
+        token_expiry: datetime | None = None,
     ) -> None:
         """Initialize the TwitchColorBot instance.
 
@@ -79,6 +80,7 @@ class TwitchColorBot(MessageHandler, ColorChanger, TokenRefresher):  # pylint: d
             config_file: Path to config file for persistence.
             user_id: Optional pre-known Twitch user ID.
             enabled: Whether to enable automatic color changes.
+            token_expiry: Optional token expiry datetime.
         """
         self.context = context
         self.username = nick
@@ -91,7 +93,7 @@ class TwitchColorBot(MessageHandler, ColorChanger, TokenRefresher):  # pylint: d
         self.client_id = client_id
         self.client_secret = client_secret
         self.user_id = user_id
-        self.token_expiry: datetime | None = None
+        self.token_expiry = token_expiry
 
         # Shared HTTP session (must be provided)
         if not http_session:
