@@ -83,11 +83,11 @@ async def test_unknown_expiry_forced_refresh_attempts_capped(monkeypatch):
         tm = TokenManager(session)
         tm.tokens.clear()
         # Insert token with unknown expiry
-        tm._upsert_token_info("ux", "acc", "ref", "cid", "csec", None)
+        await tm._upsert_token_info("ux", "acc", "ref", "cid", "csec", None)
         dummy = UnknownExpiryClient()
         dummy.prime()
         monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)
-        info = tm.get_info("ux")
+        info = await tm.get_info("ux")
         # Invoke unknown expiry handler multiple times
         for _ in range(5):
             await tm._handle_unknown_expiry("ux")
@@ -105,12 +105,12 @@ async def test_failed_refresh_sets_expired(monkeypatch):
         tm = TokenManager(session)
         tm.tokens.clear()
         expiry = datetime.now(UTC) + timedelta(seconds=100)
-        tm._upsert_token_info("rl", "acc2", "ref2", "cid", "csec", expiry)
+        await tm._upsert_token_info("rl", "acc2", "ref2", "cid", "csec", expiry)
         dummy = RateLimitFailClient()
         dummy.prime()
         monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)
         outcome = await tm.ensure_fresh("rl", force_refresh=True)
-        info = tm.get_info("rl")
+        info = await tm.get_info("rl")
         assert outcome == TokenOutcome.FAILED
         assert info is not None and info.state == TokenState.EXPIRED
 
@@ -122,11 +122,11 @@ async def test_proactive_drift_doubles_threshold_triggers_refresh(monkeypatch):
         tm.tokens.clear()
     remaining_seconds = 5000  # Between 3600 and 7200
     expiry = datetime.now(UTC) + timedelta(seconds=remaining_seconds)
-    tm._upsert_token_info("pd", "acc3", "ref3", "cid", "csec", expiry)
+    await tm._upsert_token_info("pd", "acc3", "ref3", "cid", "csec", expiry)
     dummy = ProactiveDriftClient()
     dummy.prime()
     monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)
-    info = tm.get_info("pd")
+    info = await tm.get_info("pd")
     assert info is not None
     info.last_validation = datetime.now(UTC).timestamp()
     await tm._process_single_background("pd", info, force_proactive=False)  # type: ignore[arg-type]

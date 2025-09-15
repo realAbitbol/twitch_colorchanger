@@ -36,7 +36,7 @@ class TokenRefresher:
     token_manager: Any  # Set in _setup_token_manager
     """Mixin class for handling token refresh and configuration persistence."""
 
-    def _setup_token_manager(self) -> bool:
+    async def _setup_token_manager(self) -> bool:
         """Set up and register with token manager. Returns False on failure."""
         # ApplicationContext guarantees a token_manager; still guard defensively
         self.token_manager = self.context.token_manager
@@ -44,7 +44,7 @@ class TokenRefresher:
             logging.error(f"❌ No token manager available user={self.username}")
             return False
         # Register credentials with the token manager
-        self.token_manager._upsert_token_info(  # noqa: SLF001
+        await self.token_manager._upsert_token_info(  # noqa: SLF001
             username=self.username,
             access_token=self.access_token,
             refresh_token=self.refresh_token,
@@ -68,7 +68,7 @@ class TokenRefresher:
         outcome = await self.token_manager.ensure_fresh(self.username)
         if not outcome:
             return
-        info = self.token_manager.get_info(self.username)
+        info = await self.token_manager.get_info(self.username)
         if not info:
             return
         old_access = self.access_token
@@ -159,7 +159,7 @@ class TokenRefresher:
         self.token_manager = tm
         try:
             outcome = await tm.ensure_fresh(self.username, force_refresh=force)
-            info = tm.get_info(self.username)
+            info = await tm.get_info(self.username)
             if info and info.access_token:
                 if info.access_token != self.access_token:
                     self.access_token = info.access_token

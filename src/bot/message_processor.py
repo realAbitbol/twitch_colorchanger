@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from ..color.utils import TWITCH_PRESET_COLORS
@@ -10,6 +11,10 @@ from ..config.async_persistence import queue_user_update
 
 if TYPE_CHECKING:
     from .core import TwitchColorBot
+
+# Pre-compiled regex patterns for performance
+_HEX_6_PATTERN = re.compile(r"[0-9a-fA-F]{6}")
+_HEX_3_PATTERN = re.compile(r"[0-9a-fA-F]{3}")
 
 
 class MessageProcessor:
@@ -111,11 +116,9 @@ class MessageProcessor:
         if lower in {c.lower() for c in TWITCH_PRESET_COLORS}:
             return lower
         # Hex validation (3 or 6 chars)
-        import re
-
-        if re.fullmatch(r"[0-9a-fA-F]{6}", lower):
+        if _HEX_6_PATTERN.fullmatch(lower):
             return f"#{lower}"
-        if re.fullmatch(r"[0-9a-fA-F]{3}", lower):
+        if _HEX_3_PATTERN.fullmatch(lower):
             # Expand shorthand (#abc -> #aabbcc)
             expanded = "".join(ch * 2 for ch in lower)
             return f"#{expanded}"

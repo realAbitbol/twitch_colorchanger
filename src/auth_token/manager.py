@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
@@ -113,7 +112,7 @@ class TokenManager:
         # Core state
         self.http_session = http_session
         self.tokens: dict[str, TokenInfo] = {}
-        self._tokens_lock = threading.Lock()
+        self._tokens_lock = asyncio.Lock()
         self.background_task: asyncio.Task[Any] | None = None
         self.running = False
         self._client_cache: dict[tuple[str, str], TokenClient] = {}
@@ -166,8 +165,9 @@ class TokenManager:
         """
         if not self.tokens:
             return
-        for username, info in self.tokens.items():
-            await self._initial_validate_user(username, info)
+        async with self._tokens_lock:
+            for username, info in self.tokens.items():
+                await self._initial_validate_user(username, info)
 
     async def _initial_validate_user(self, username: str, info: TokenInfo) -> None:
         try:
@@ -267,7 +267,7 @@ class TokenManager:
 
         self.register_update_hook(username, _propagate)
 
-    def _upsert_token_info(
+    async def _upsert_token_info(
         self,
         username: str,
         access_token: str,
@@ -277,7 +277,7 @@ class TokenManager:
         expiry: datetime | None,
     ) -> TokenInfo:
         """Internal helper to insert/update token state (called by TwitchColorBot)."""
-        with self._tokens_lock:
+        async with self._tokens_lock:
             info = self.tokens.get(username)
             if info is None:
                 info = TokenInfo(
@@ -306,18 +306,18 @@ class TokenManager:
                         info.original_lifetime = remaining
             return info
 
-    def remove(self, username: str) -> bool:
+    async def remove(self, username: str) -> bool:
         """Remove a user from token tracking (e.g., config removal)."""
-        with self._tokens_lock:
+        async with self._tokens_lock:
             if username in self.tokens:
                 del self.tokens[username]
                 logging.debug(f"🗑️ Removed token entry user={username}")
                 return True
         return False
 
-    def prune(self, active_usernames: set[str]) -> int:
+    async def prune(self, active_usernames: set[str]) -> int:
         """Prune tokens not in active set; return count removed."""
-        with self._tokens_lock:
+        async with self._tokens_lock:
             to_remove = [u for u in self.tokens if u not in active_usernames]
             for u in to_remove:
                 del self.tokens[u]
@@ -327,8 +327,8 @@ class TokenManager:
                 )
             return len(to_remove)
 
-    def get_info(self, username: str) -> TokenInfo | None:
-        with self._tokens_lock:
+    async def get_info(self, username: str) -> TokenInfo | None:
+        async with self._tokens_lock:
             return self.tokens.get(username)
 
     def _get_client(self, client_id: str, client_secret: str) -> TokenClient:
@@ -514,10 +514,11 @@ class TokenManager:
                     logging.info(
                         f"⏱️ Token manager loop drift detected drift={int(drift)}s base={base}s"
                     )
-                for username, info in self.tokens.items():
-                    await self._process_single_background(
-                        username, info, force_proactive=drifted
-                    )
+                async with self._tokens_lock:
+                    for username, info in self.tokens.items():
+                        await self._process_single_background(
+                            username, info, force_proactive=drifted
+                        )
                 last_loop = now
                 await asyncio.sleep(base * _jitter_rng.uniform(0.5, 1.5))
             except (RuntimeError, OSError, ValueError, aiohttp.ClientError) as e:

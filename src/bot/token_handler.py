@@ -29,7 +29,7 @@ class TokenHandler:
         """
         self.bot = bot
 
-    def setup_token_manager(self) -> bool:
+    async def setup_token_manager(self) -> bool:
         """Set up and register with token manager. Returns False on failure."""
         # ApplicationContext guarantees a token_manager; still guard defensively
         self.bot.token_manager = self.bot.context.token_manager
@@ -37,7 +37,7 @@ class TokenHandler:
             logging.error(f"❌ No token manager available user={self.bot.username}")
             return False
         # Register credentials with the token manager
-        self.bot.token_manager._upsert_token_info(  # noqa: SLF001
+        await self.bot.token_manager._upsert_token_info(  # noqa: SLF001
             username=self.bot.username,
             access_token=self.bot.access_token,
             refresh_token=self.bot.refresh_token,
@@ -61,7 +61,7 @@ class TokenHandler:
         outcome = await self.bot.token_manager.ensure_fresh(self.bot.username)
         if not outcome:
             return
-        info = self.bot.token_manager.get_info(self.bot.username)
+        info = await self.bot.token_manager.get_info(self.bot.username)
         if not info:
             return
         old_access = self.bot.access_token
@@ -152,7 +152,7 @@ class TokenHandler:
         self.bot.token_manager = tm
         try:
             outcome = await tm.ensure_fresh(self.bot.username, force_refresh=force)
-            info = tm.get_info(self.bot.username)
+            info = await tm.get_info(self.bot.username)
             if info and info.access_token:
                 if info.access_token != self.bot.access_token:
                     self.bot.access_token = info.access_token

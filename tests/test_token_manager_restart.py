@@ -16,7 +16,7 @@ async def test_manager_restart_cancels_old_background(monkeypatch):
         tm = TokenManager(session)
         tm.tokens.clear()
         expiry = datetime.now(UTC) + timedelta(seconds=4000)
-        tm._upsert_token_info("rst", "atk", "rtk", "cid", "csec", expiry)
+        await tm._upsert_token_info("rst", "atk", "rtk", "cid", "csec", expiry)
 
     # Normal start
     await tm.start()

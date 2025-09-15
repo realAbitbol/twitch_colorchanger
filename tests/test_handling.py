@@ -5,17 +5,22 @@ import logging
 from unittest.mock import MagicMock
 
 import pytest
-
 from aiohttp import ClientResponseError
 
 from src.errors.handling import (
     RetryableOperationError,
+    _execute_and_categorize_retryable_operation,
     handle_api_error,
     handle_retryable_error,
     is_retryable_error,
-    _execute_and_categorize_retryable_operation,
 )
-from src.errors.internal import InternalError, NetworkError, OAuthError, ParsingError, RateLimitError
+from src.errors.internal import (
+    InternalError,
+    NetworkError,
+    OAuthError,
+    ParsingError,
+    RateLimitError,
+)
 
 
 @pytest.mark.asyncio

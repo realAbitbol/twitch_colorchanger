@@ -189,7 +189,7 @@ class BotLifecycleManager:  # pylint: disable=too-many-instance-attributes
                     # Prune tokens for users no longer present
                     if self.context and self.context.token_manager:
                         active = {u.username.lower() for u in self.users_config}
-                        self.context.token_manager.prune(active)
+                        await self.context.token_manager.prune(active)
                 except (ValueError, RuntimeError) as e:
                     logging.debug(f"⚠️ Error pruning tokens: {str(e)}")
             self.restart_requested = False

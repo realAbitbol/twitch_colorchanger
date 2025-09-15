@@ -20,7 +20,8 @@ class MockTokenRefresher(TokenRefresher):
         self.context.session = MagicMock()
         self.context.token_manager = MagicMock()
         self.context.token_manager.ensure_fresh = AsyncMock()
-        self.context.token_manager.get_info = MagicMock()
+        self.context.token_manager.get_info = AsyncMock()
+        self.context.token_manager._upsert_token_info = AsyncMock()
         self.chat_backend = MagicMock()
         self.channels = ["#chan1", "#chan2"]
         self.config_file = None
@@ -38,7 +39,7 @@ async def test_check_and_refresh_token_force_refresh_failure(token_refresher):
     """Test _check_and_refresh_token with force refresh failure."""
     token_refresher.token_manager = MagicMock()
     token_refresher.token_manager.ensure_fresh = AsyncMock(return_value=MagicMock(name="FAILED"))
-    token_refresher.token_manager.get_info = MagicMock(return_value=None)
+    token_refresher.token_manager.get_info = AsyncMock(return_value=None)
 
     result = await token_refresher._check_and_refresh_token(force=True)
     assert result is False
@@ -88,7 +89,7 @@ async def test_validate_config_prerequisites_missing_file(token_refresher):
 async def test_setup_token_manager_registration_failure(token_refresher):
     """Test _setup_token_manager with registration failure."""
     token_refresher.context.token_manager = None
-    result = token_refresher._setup_token_manager()
+    result = await token_refresher._setup_token_manager()
     assert result is False
 
 
@@ -105,7 +106,7 @@ async def test_normalize_channels_if_needed_persist_failure(token_refresher):
 @pytest.mark.asyncio
 async def test_setup_token_manager_success(token_refresher):
     """Test _setup_token_manager success."""
-    result = token_refresher._setup_token_manager()
+    result = await token_refresher._setup_token_manager()
     assert result is True
     token_refresher.context.token_manager._upsert_token_info.assert_called_once()
 
