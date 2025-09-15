@@ -95,7 +95,7 @@ class ConfigRepository:
         h = hashlib.sha256()
         # Stable JSON representation
         payload = json.dumps(
-            {"users": users}, sort_keys=True, separators=(",", ":")
+            {"users": users}, sort_keys=True, separators=(",", ":"), default=str
         ).encode()
         h.update(payload)
         return h.hexdigest()
@@ -159,7 +159,7 @@ class ConfigRepository:
                     delete=False,
                     encoding="utf-8",
                 ) as tmp:
-                    json.dump(data, tmp, indent=2)
+                    json.dump(data, tmp, indent=2, default=str)
                     tmp.flush()
                     os.fsync(tmp.fileno())
                     temp_path = tmp.name
