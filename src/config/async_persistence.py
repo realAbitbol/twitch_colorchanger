@@ -15,6 +15,11 @@ import time
 from contextlib import suppress
 from typing import Any
 
+from ..constants import (
+    CONFIG_DEBOUNCE_SECONDS,
+    CONFIG_MAX_FAILURES_WARNING,
+    USER_LOCK_TTL_SECONDS,
+)
 from .core import update_user_in_config
 
 __all__ = [
@@ -29,14 +34,14 @@ __all__ = [
 _PENDING: dict[str, dict[str, Any]] = {}
 _FLUSH_TASK: asyncio.Task[Any] | None = None
 _LOCK = asyncio.Lock()
-_DEBOUNCE_SECONDS = 0.25  # adjustable small delay to coalesce bursts
+_DEBOUNCE_SECONDS = CONFIG_DEBOUNCE_SECONDS  # adjustable small delay to coalesce bursts
 
 # Per-user write locks so a direct immediate write and a batched flush do not
 # interleave for the same username (e.g., rapid toggle paths mixing queue and
 # explicit persistence). These are created lazily to avoid unbounded growth.
 _USER_LOCKS: dict[str, tuple[asyncio.Lock, float]] = {}
 _USER_LOCKS_LOCK = asyncio.Lock()
-_LOCK_TTL_SECONDS = 24 * 3600  # prune inactive user locks after 24h
+_LOCK_TTL_SECONDS = USER_LOCK_TTL_SECONDS  # prune inactive user locks after 24h
 
 
 async def _get_user_lock(username: str) -> asyncio.Lock:
@@ -161,7 +166,7 @@ async def _persist_batch(pending: list[dict[str, Any]], config_file: str) -> int
                 await loop.run_in_executor(None, update_user_in_config, uc, config_file)
         except Exception as e:  # noqa: BLE001
             failures += 1
-            if failures <= 3:
+            if failures <= CONFIG_MAX_FAILURES_WARNING:
                 logging.warning(
                     f"⚠️ Error writing batch item user={uname or uc.get('username')}: {str(e)}"
                 )

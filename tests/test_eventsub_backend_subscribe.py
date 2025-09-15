@@ -172,7 +172,7 @@ async def test_handle_subscribe_unauthorized_consecutive():
     backend._consecutive_subscribe_401 = 0
     backend._token_invalid_flag = False
 
-    backend._handle_subscribe_unauthorized("testchan", {"error": "Unauthorized"})
+    backend._handle_subscribe_unauthorized("testchan")
     assert backend._consecutive_subscribe_401 == 1
     assert backend._token_invalid_flag is False
 
@@ -186,7 +186,7 @@ async def test_handle_subscribe_unauthorized_trigger_invalid():
     backend._token_invalid_flag = False
     backend._token_invalid_callback = None
 
-    backend._handle_subscribe_unauthorized("testchan", {"error": "Unauthorized"})
+    backend._handle_subscribe_unauthorized("testchan")
     assert backend._consecutive_subscribe_401 == 2
     assert backend._token_invalid_flag is True
 
@@ -202,7 +202,7 @@ async def test_handle_subscribe_unauthorized_with_callback():
     callback_mock = AsyncMock()
     backend._token_invalid_callback = callback_mock
 
-    backend._handle_subscribe_unauthorized("testchan", {"error": "Unauthorized"})
+    backend._handle_subscribe_unauthorized("testchan")
     assert callback_mock.called
 
 

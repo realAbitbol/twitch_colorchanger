@@ -7,6 +7,11 @@ from typing import Any, cast
 
 import aiohttp
 
+from ..constants import (
+    DEVICE_FLOW_LOG_INTERVAL_DIVISOR,
+    DEVICE_FLOW_POLL_ADJUSTMENT,
+    DEVICE_FLOW_POLL_INTERVAL_SECONDS,
+)
 from ..utils import format_duration
 
 
@@ -29,7 +34,7 @@ class DeviceCodeFlow:
         # Security linters (Bandit/Ruff S105) flag this as a potential hardcoded password/secret,
         # but it's a fixed public endpoint URL, not credentials.
         self.token_url = "https://id.twitch.tv/oauth2/token"  # nosec B105  # noqa: S105
-        self.poll_interval = 5  # seconds
+        self.poll_interval = DEVICE_FLOW_POLL_INTERVAL_SECONDS  # seconds
 
     async def request_device_code(self) -> dict[str, Any] | None:
         """Request a device code from Twitch for OAuth flow.
@@ -153,7 +158,9 @@ class DeviceCodeFlow:
 
         if error == "authorization_pending":
             # Still waiting for user authorization; continue polling
-            if poll_count % 6 == 0:  # Show message every 30 seconds
+            if (
+                poll_count % DEVICE_FLOW_LOG_INTERVAL_DIVISOR == 0
+            ):  # Show message every 30 seconds
                 logging.info(
                     f"Waiting for authorization {format_duration(elapsed)} elapsed polls={poll_count}"
                 )
@@ -161,7 +168,9 @@ class DeviceCodeFlow:
 
         if error == "slow_down":
             # Server requests slower polling; adjust interval
-            self.poll_interval = min(self.poll_interval + 1, 10)
+            self.poll_interval = min(
+                self.poll_interval + 1, DEVICE_FLOW_POLL_ADJUSTMENT
+            )
             logging.warning(
                 f"Server requested slower polling interval={self.poll_interval}s elapsed={elapsed} polls={poll_count}"
             )
