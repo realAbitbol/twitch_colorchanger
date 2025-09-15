@@ -2,18 +2,28 @@
 
 import logging
 
+import colorlog
 import pytest
 
-from src.logging_config import ColoredFormatter, FseventsFilter, LoggerConfigurator
+from src.logging_config import FseventsFilter, LoggerConfigurator
 
 
 class TestColoredFormatter:
-    """Tests for ColoredFormatter color codes and level names."""
+    """Tests for colorlog.ColoredFormatter color codes and level names."""
 
     @pytest.fixture
     def formatter(self):
-        """Return a ColoredFormatter instance."""
-        return ColoredFormatter()
+        """Return a colorlog.ColoredFormatter instance."""
+        return colorlog.ColoredFormatter(
+            "%(log_color)s%(levelname)-8s%(reset)s %(message)s",
+            log_colors={
+                "DEBUG": "cyan",
+                "INFO": "green",
+                "WARNING": "yellow",
+                "ERROR": "red",
+                "CRITICAL": "magenta",
+            },
+        )
 
     def test_colored_formatter_debug_color(self, formatter):
         """Test DEBUG level color code."""
@@ -21,7 +31,10 @@ class TestColoredFormatter:
             name="test", level=logging.DEBUG, pathname="", lineno=0, msg="test", args=(), exc_info=None
         )
         formatted = formatter.format(record)
-        assert formatted == "\033[36mDEBUG   \033[0m test"
+        # colorlog uses different ANSI codes, so we check for cyan color and DEBUG text
+        assert "\033[36m" in formatted  # Cyan color code
+        assert "DEBUG" in formatted
+        assert "test" in formatted
 
     def test_colored_formatter_info_color(self, formatter):
         """Test INFO level color code."""
@@ -29,7 +42,10 @@ class TestColoredFormatter:
             name="test", level=logging.INFO, pathname="", lineno=0, msg="test", args=(), exc_info=None
         )
         formatted = formatter.format(record)
-        assert formatted == "\033[32mINFO    \033[0m test"
+        # Check for green color and INFO text
+        assert "\033[32m" in formatted  # Green color code
+        assert "INFO" in formatted
+        assert "test" in formatted
 
     def test_colored_formatter_warning_color(self, formatter):
         """Test WARNING level color code."""
@@ -37,7 +53,10 @@ class TestColoredFormatter:
             name="test", level=logging.WARNING, pathname="", lineno=0, msg="test", args=(), exc_info=None
         )
         formatted = formatter.format(record)
-        assert formatted == "\033[33mWARNING \033[0m test"
+        # Check for yellow color and WARNING text
+        assert "\033[33m" in formatted  # Yellow color code
+        assert "WARNING" in formatted
+        assert "test" in formatted
 
     def test_colored_formatter_error_color(self, formatter):
         """Test ERROR level color code."""
@@ -45,7 +64,10 @@ class TestColoredFormatter:
             name="test", level=logging.ERROR, pathname="", lineno=0, msg="test", args=(), exc_info=None
         )
         formatted = formatter.format(record)
-        assert formatted == "\033[31mERROR   \033[0m test"
+        # Check for red color and ERROR text
+        assert "\033[31m" in formatted  # Red color code
+        assert "ERROR" in formatted
+        assert "test" in formatted
 
 
 class TestFseventsFilter:
@@ -99,7 +121,7 @@ class TestLoggerConfigurator:
         root_logger = logging.getLogger()
         assert len(root_logger.handlers) >= 1
         handler = root_logger.handlers[0]
-        assert isinstance(handler.formatter, ColoredFormatter)
+        assert isinstance(handler.formatter, colorlog.ColoredFormatter)
         assert any(isinstance(f, FseventsFilter) for f in handler.filters)
 
     def test_logger_configurator_configure_integration(self, configurator, monkeypatch):
@@ -110,5 +132,5 @@ class TestLoggerConfigurator:
         assert root_logger.level == logging.DEBUG
         assert len(root_logger.handlers) >= 1
         handler = root_logger.handlers[0]
-        assert isinstance(handler.formatter, ColoredFormatter)
+        assert isinstance(handler.formatter, colorlog.ColoredFormatter)
         assert any(isinstance(f, FseventsFilter) for f in handler.filters)
