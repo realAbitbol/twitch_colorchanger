@@ -17,6 +17,9 @@ def mock_context():
     ctx.token_manager.ensure_fresh = AsyncMock()
     ctx.token_manager.get_info = AsyncMock()
     ctx.token_manager._upsert_token_info = AsyncMock()
+    ctx.token_manager.register_update_hook = AsyncMock()
+    # Fix initialization issue
+    ctx.token_manager._instance = ctx.token_manager
     return ctx
 
 
@@ -219,10 +222,10 @@ async def test_token_invalid_callback_execution(bot):
 @pytest.mark.asyncio
 async def test_state_lock_in_start(bot):
     """Test state lock is acquired in start method."""
-    with patch.object(bot, "_setup_token_manager", return_value=True), \
-         patch.object(bot, "_handle_initial_token_refresh", new_callable=AsyncMock), \
-         patch.object(bot.connection_manager, "initialize_connection", new_callable=AsyncMock, return_value=True), \
-         patch.object(bot.connection_manager, "run_chat_loop", new_callable=AsyncMock):
+    with patch.object(bot.token_handler, "setup_token_manager", new_callable=AsyncMock, return_value=True), \
+          patch.object(bot.token_handler, "handle_initial_token_refresh", new_callable=AsyncMock), \
+          patch.object(bot.connection_manager, "initialize_connection", new_callable=AsyncMock, return_value=True), \
+          patch.object(bot.connection_manager, "run_chat_loop", new_callable=AsyncMock):
         await bot.start()
 
     # Lock should have been acquired
@@ -279,8 +282,8 @@ async def test_bot_core_init_invalid_config():
 @pytest.mark.asyncio
 async def test_start_connection_failures(bot):
     """Test start method handling of connection failures and retry logic."""
-    with patch.object(bot, "_setup_token_manager", return_value=True), \
-          patch.object(bot, "_handle_initial_token_refresh", new_callable=AsyncMock), \
+    with patch.object(bot.token_handler, "setup_token_manager", new_callable=AsyncMock, return_value=True), \
+          patch.object(bot.token_handler, "handle_initial_token_refresh", new_callable=AsyncMock), \
           patch.object(bot.connection_manager, "initialize_connection", new_callable=AsyncMock, return_value=False):
         await bot.start()
         assert bot.running is False
@@ -332,7 +335,9 @@ async def test_bot_core_message_processing_error(bot):
 @pytest.mark.asyncio
 async def test_bot_core_connection_recovery(bot):
     """Test connection recovery after temporary failure."""
-    with patch.object(bot.connection_manager, "initialize_connection", new_callable=AsyncMock, return_value=True), \
+    with patch.object(bot.token_handler, "setup_token_manager", new_callable=AsyncMock, return_value=True), \
+          patch.object(bot.token_handler, "handle_initial_token_refresh", new_callable=AsyncMock), \
+          patch.object(bot.connection_manager, "initialize_connection", new_callable=AsyncMock, return_value=True), \
           patch.object(bot.connection_manager, "run_chat_loop", new_callable=AsyncMock):
         await bot.start()
         # Should succeed

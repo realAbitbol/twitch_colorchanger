@@ -183,7 +183,7 @@ class ConnectionManager:
             return False
         try:
             if self.bot.token_manager:
-                self.bot.token_manager.register_eventsub_backend(
+                await self.bot.token_manager.register_eventsub_backend(
                     self.bot.username, backend
                 )
         except Exception as e:

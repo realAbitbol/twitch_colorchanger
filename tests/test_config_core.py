@@ -11,7 +11,7 @@ from src.config.core import (
     _merge_user,
     _missing_scopes,
     _process_single_user_tokens_dataclass,
-    _validate_or_invalidate_scopes_dataclass,
+    _validate_or_invalidate_scopes,
     get_configuration,
     load_users_from_config,
     normalize_user_channels,
@@ -62,12 +62,12 @@ async def test_setup_missing_tokens_provision_failure():
 
 @pytest.mark.asyncio
 async def test_validate_or_invalidate_scopes_missing_scopes():
-    """Test validate_or_invalidate_scopes_dataclass with missing scopes."""
+    """Test _validate_or_invalidate_scopes with missing scopes."""
     user = UserConfig(username="alice", access_token="a" * 30, refresh_token="refresh")
     mock_api = MagicMock()
     mock_api.validate_token = AsyncMock(return_value={"scopes": ["chat:read"]})
     required = {"chat:read", "user:read:chat", "user:manage:chat_color"}
-    retained = await _validate_or_invalidate_scopes_dataclass(user, "a" * 30, "refresh", mock_api, required)
+    retained = await _validate_or_invalidate_scopes(user, "a" * 30, "refresh", mock_api, required)
     assert retained is False
     assert user.access_token is None
 
@@ -276,27 +276,15 @@ async def test_setup_missing_tokens_provisioning_failure():
 
 
 @pytest.mark.asyncio
-async def test_validate_or_invalidate_scopes_dataclass_valid_tokens():
+async def test_validate_or_invalidate_scopes_valid_tokens():
     """Test validating scopes when tokens are valid."""
     user = UserConfig(username="alice", access_token="a" * 30, refresh_token="refresh")
     mock_api = MagicMock()
     mock_api.validate_token = AsyncMock(return_value={"scopes": ["chat:read", "user:read:chat", "user:manage:chat_color"]})
     required = {"chat:read", "user:read:chat", "user:manage:chat_color"}
-    retained = await _validate_or_invalidate_scopes_dataclass(user, "a" * 30, "refresh", mock_api, required)
+    retained = await _validate_or_invalidate_scopes(user, "a" * 30, "refresh", mock_api, required)
     assert retained is True
     assert user.access_token == "a" * 30
-
-
-@pytest.mark.asyncio
-async def test_validate_or_invalidate_scopes_dataclass_missing_scopes():
-    """Test validating scopes invalidates when scopes are missing."""
-    user = UserConfig(username="alice", access_token="a" * 30, refresh_token="refresh")
-    mock_api = MagicMock()
-    mock_api.validate_token = AsyncMock(return_value={"scopes": ["chat:read"]})
-    required = {"chat:read", "user:read:chat", "user:manage:chat_color"}
-    retained = await _validate_or_invalidate_scopes_dataclass(user, "invalid", "refresh", mock_api, required)
-    assert retained is False
-    assert user.access_token is None
 
 
 def test_missing_scopes_identifies_missing():

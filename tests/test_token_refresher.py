@@ -22,6 +22,7 @@ class MockTokenRefresher(TokenRefresher):
         self.context.token_manager.ensure_fresh = AsyncMock()
         self.context.token_manager.get_info = AsyncMock()
         self.context.token_manager._upsert_token_info = AsyncMock()
+        self.context.token_manager.register_update_hook = AsyncMock()
         self.chat_backend = MagicMock()
         self.channels = ["#chan1", "#chan2"]
         self.config_file = None
