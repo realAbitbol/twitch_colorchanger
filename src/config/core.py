@@ -326,7 +326,7 @@ async def setup_missing_tokens(
 
 
 async def _validate_or_invalidate_scopes(
-    user: dict[str, Any],
+    user: Any,
     access: Any,
     refresh: Any,
     api: Any,
@@ -335,7 +335,7 @@ async def _validate_or_invalidate_scopes(
     """Return True if existing tokens are valid & retained else False (forcing provisioning).
 
     Args:
-        user: User config dictionary.
+        user: User config (dict or UserConfig).
         access: Access token.
         refresh: Refresh token.
         api: TwitchAPI instance.
@@ -367,58 +367,6 @@ async def _validate_or_invalidate_scopes(
         if not confirmed_missing:
             return True
         _invalidate_for_missing_scopes(
-            user,
-            required_scopes,
-            confirmed_set if confirmed_set is not None else scope_set,
-        )
-        return False
-    except (aiohttp.ClientError, ValueError, RuntimeError):
-        # Leave tokens untouched if validation fails; treat as retained
-        return True
-
-
-async def _validate_or_invalidate_scopes_dataclass(
-    user: UserConfig,
-    access: Any,
-    refresh: Any,
-    api: Any,
-    required_scopes: set[str],
-) -> bool:
-    """Return True if existing tokens are valid & retained else False (forcing provisioning) for dataclass.
-
-    Args:
-        user: UserConfig instance.
-        access: Access token.
-        refresh: Refresh token.
-        api: TwitchAPI instance.
-        required_scopes: Set of required scopes.
-
-    Returns:
-        True if tokens are valid and retained.
-    """
-    if not (access and refresh):
-        return False
-    try:
-        validation = await api.validate_token(access)
-        # If validation failed (None or non-dict) retain existing tokens; treat as transient.
-        if not isinstance(validation, dict):
-            return True
-        raw_scopes = validation.get("scopes")
-        # If scopes key missing or not a list, retain tokens (don't nuke on malformed payload)
-        if not isinstance(raw_scopes, list):
-            return True
-        scopes_list = [str(s).lower() for s in raw_scopes]
-        scope_set = set(scopes_list)
-        missing = _missing_scopes(required_scopes, scope_set)
-        if not missing:
-            return True
-        # Double-check via one revalidation to avoid false positives.
-        confirmed_missing, confirmed_set = await _confirm_missing_scopes(
-            api, access, required_scopes
-        )
-        if not confirmed_missing:
-            return True
-        _invalidate_for_missing_scopes_dataclass(
             user,
             required_scopes,
             confirmed_set if confirmed_set is not None else scope_set,
@@ -471,38 +419,27 @@ async def _confirm_missing_scopes(
 
 
 def _invalidate_for_missing_scopes(
-    user: dict[str, Any], required_scopes: set[str], current_set: set[str]
+    user: Any, required_scopes: set[str], current_set: set[str]
 ) -> None:
     """Invalidate tokens for missing scopes.
 
     Args:
-        user: User config dictionary.
+        user: User config (dict or UserConfig).
         required_scopes: Set of required scopes.
         current_set: Set of current scopes.
     """
-    user.pop("access_token", None)
-    user.pop("refresh_token", None)
-    user.pop("token_expiry", None)
+    if isinstance(user, dict):
+        user.pop("access_token", None)
+        user.pop("refresh_token", None)
+        user.pop("token_expiry", None)
+        username = user.get("username")
+    else:  # UserConfig
+        user.access_token = None
+        user.refresh_token = None
+        # token_expiry not in UserConfig
+        username = user.username
     logging.warning(
-        f"🚫 Token scopes missing required={';'.join(sorted(required_scopes))} got={';'.join(sorted(current_set)) if current_set else '<none>'} user={user.get('username')} invalidated=true"
-    )
-
-
-def _invalidate_for_missing_scopes_dataclass(
-    user: UserConfig, required_scopes: set[str], current_set: set[str]
-) -> None:
-    """Invalidate tokens for missing scopes for dataclass.
-
-    Args:
-        user: UserConfig instance.
-        required_scopes: Set of required scopes.
-        current_set: Set of current scopes.
-    """
-    user.access_token = None
-    user.refresh_token = None
-    # token_expiry not in UserConfig
-    logging.warning(
-        f"🚫 Token scopes missing required={';'.join(sorted(required_scopes))} got={';'.join(sorted(current_set)) if current_set else '<none>'} user={user.username} invalidated=true"
+        f"🚫 Token scopes missing required={';'.join(sorted(required_scopes))} got={';'.join(sorted(current_set)) if current_set else '<none>'} user={username} invalidated=true"
     )
 
 
@@ -525,7 +462,7 @@ async def _process_single_user_tokens_dataclass(
         when token fields were updated.
     """
     access, refresh, _ = user.access_token, user.refresh_token, None
-    tokens_valid = await _validate_or_invalidate_scopes_dataclass(
+    tokens_valid = await _validate_or_invalidate_scopes(
         user, access, refresh, api, required_scopes
     )
     if tokens_valid:

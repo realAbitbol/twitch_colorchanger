@@ -113,6 +113,8 @@ class TokenManager:
         self.http_session = http_session
         self.tokens: dict[str, TokenInfo] = {}
         self._tokens_lock = asyncio.Lock()
+        self._client_cache_lock = asyncio.Lock()
+        self._hooks_lock = asyncio.Lock()
         self.background_task: asyncio.Task[Any] | None = None
         self.running = False
         self._client_cache: dict[tuple[str, str], TokenClient] = {}
@@ -223,7 +225,7 @@ class TokenManager:
             finally:
                 self.background_task = None
 
-    def register_update_hook(
+    async def register_update_hook(
         self, username: str, hook: Callable[[], Coroutine[Any, Any, None]]
     ) -> None:
         """Register a coroutine hook invoked after a successful token refresh.
@@ -231,13 +233,14 @@ class TokenManager:
         Hooks are additive (multiple hooks can be registered per user).
         Each hook is scheduled fire-and-forget after a token change.
         """
-        lst = self._update_hooks.get(username)
-        if lst is None:
-            self._update_hooks[username] = [hook]
-        else:
-            lst.append(hook)
+        async with self._hooks_lock:
+            lst = self._update_hooks.get(username)
+            if lst is None:
+                self._update_hooks[username] = [hook]
+            else:
+                lst.append(hook)
 
-    def register_eventsub_backend(self, username: str, backend: Any) -> None:
+    async def register_eventsub_backend(self, username: str, backend: Any) -> None:
         """Register chat backend for automatic token propagation.
 
         - If backend has update_access_token(new_token), prefer that.
@@ -253,7 +256,8 @@ class TokenManager:
             return
 
         async def _propagate() -> None:  # coroutine required by register_update_hook
-            info = self.tokens.get(username)
+            async with self._tokens_lock:
+                info = self.tokens.get(username)
             if not info or not info.access_token:
                 return
             try:
@@ -265,7 +269,7 @@ class TokenManager:
             # tiny await to satisfy linters that expect async use
             await asyncio.sleep(0)
 
-        self.register_update_hook(username, _propagate)
+        await self.register_update_hook(username, _propagate)
 
     async def _upsert_token_info(
         self,
@@ -331,14 +335,15 @@ class TokenManager:
         async with self._tokens_lock:
             return self.tokens.get(username)
 
-    def _get_client(self, client_id: str, client_secret: str) -> TokenClient:
-        key = (client_id, client_secret)
-        cli = self._client_cache.get(key)
-        if cli:
+    async def _get_client(self, client_id: str, client_secret: str) -> TokenClient:
+        async with self._client_cache_lock:
+            key = (client_id, client_secret)
+            cli = self._client_cache.get(key)
+            if cli:
+                return cli
+            cli = TokenClient(client_id, client_secret, self.http_session)
+            self._client_cache[key] = cli
             return cli
-        cli = TokenClient(client_id, client_secret, self.http_session)
-        self._client_cache[key] = cli
-        return cli
 
     async def ensure_fresh(
         self, username: str, force_refresh: bool = False
@@ -352,16 +357,19 @@ class TokenManager:
         Returns:
             Outcome of the ensure fresh operation.
         """
-        info = self.tokens.get(username)
-        if not info:
-            return TokenOutcome.FAILED
+        async with self._tokens_lock:
+            info = self.tokens.get(username)
+            if not info:
+                return TokenOutcome.FAILED
 
-        if self._should_skip_refresh(info, force_refresh):
-            return TokenOutcome.VALID
+            if self._should_skip_refresh(info, force_refresh):
+                return TokenOutcome.VALID
 
-        client = self._get_client(info.client_id, info.client_secret)
-        result, _ = await self._refresh_with_lock(client, info, username, force_refresh)
-        return result.outcome
+            client = await self._get_client(info.client_id, info.client_secret)
+            result, _ = await self._refresh_with_lock(
+                client, info, username, force_refresh
+            )
+            return result.outcome
 
     # --- Internal helpers (extracted to reduce complexity) ---
     def _should_skip_refresh(self, info: TokenInfo, force_refresh: bool) -> bool:
@@ -403,7 +411,7 @@ class TokenManager:
         # Fire hook if token actually changed. This is the single authoritative
         # location for firing update hooks to avoid double invocation (the
         # ensure_fresh wrapper deliberately does NOT fire the hook).
-        self._maybe_fire_update_hook(username, token_changed)
+        await self._maybe_fire_update_hook(username, token_changed)
         return result, token_changed
 
     def _apply_successful_refresh(self, info: TokenInfo, result: TokenResult) -> None:
@@ -423,21 +431,22 @@ class TokenManager:
             if remaining > 0:
                 info.original_lifetime = remaining
 
-    def _maybe_fire_update_hook(self, username: str, token_changed: bool) -> None:
+    async def _maybe_fire_update_hook(self, username: str, token_changed: bool) -> None:
         if not token_changed:
             return
-        hooks = self._update_hooks.get(username) or []
+        async with self._hooks_lock:
+            hooks = self._update_hooks.get(username) or []
         for hook in hooks:
             try:
                 # Delegate creation to helper so both Ruff and VS Code recognize
                 # the task is retained and exceptions logged.
-                self._create_retained_task(hook(), category="update_hook")
+                await self._create_retained_task(hook(), category="update_hook")
             except (ValueError, RuntimeError) as e:
                 logging.debug(
                     f"⚠️ Update hook scheduling error user={username} type={type(e).__name__}"
                 )
 
-    def _create_retained_task(
+    async def _create_retained_task(
         self, coro: Coroutine[Any, Any, T], *, category: str
     ) -> asyncio.Task[T]:
         """Create and retain a background task with exception logging.
@@ -447,28 +456,33 @@ class TokenManager:
         """
         # Sonar/VSC S7502: we retain task in self._hook_tasks; suppression justified.
         task: asyncio.Task[T] = asyncio.create_task(coro)  # NOSONAR S7502
-        self._hook_tasks.append(task)
+        async with self._hooks_lock:
+            self._hook_tasks.append(task)
 
         def _cb(t: asyncio.Task[T]) -> None:  # noqa: D401
-            self._hook_tasks.remove(t)
-            if t.cancelled():
-                return
-            exc = t.exception()
-            if not exc:
-                return
-            try:
-                logging.debug(
-                    f"⚠️ Retained background task error category={category} error={str(exc)} type={type(exc).__name__}"
-                )
-            except Exception as log_exc:  # pragma: no cover
-                logging.debug(
-                    "TokenManager retained task logging failed: %s (%s)",
-                    log_exc,
-                    type(log_exc).__name__,
-                )
+            asyncio.create_task(self._remove_hook_task(t, category))
 
         task.add_done_callback(_cb)
         return task
+
+    async def _remove_hook_task(self, t: asyncio.Task[T], category: str) -> None:
+        async with self._hooks_lock:
+            self._hook_tasks.remove(t)
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if not exc:
+            return
+        try:
+            logging.debug(
+                f"⚠️ Retained background task error category={category} error={str(exc)} type={type(exc).__name__}"
+            )
+        except Exception as log_exc:  # pragma: no cover
+            logging.debug(
+                "TokenManager retained task logging failed: %s (%s)",
+                log_exc,
+                type(log_exc).__name__,
+            )
 
     async def validate(self, username: str) -> TokenOutcome:
         """Validate a user's access token remotely.
@@ -479,7 +493,8 @@ class TokenManager:
         Returns:
             VALID if token is valid, FAILED otherwise.
         """
-        info = self.tokens.get(username)
+        async with self._tokens_lock:
+            info = self.tokens.get(username)
         if not info:
             return TokenOutcome.FAILED
         now = time.time()
@@ -487,15 +502,16 @@ class TokenManager:
             return TokenOutcome.VALID
         if not info.expiry:
             return TokenOutcome.FAILED
-        client = self._get_client(info.client_id, info.client_secret)
+        client = await self._get_client(info.client_id, info.client_secret)
         valid, expiry = await client._validate_remote(  # noqa: SLF001
             username, info.access_token
         )
-        info.last_validation = now
-        if valid:
-            info.expiry = expiry
-            return TokenOutcome.VALID
-        return TokenOutcome.FAILED
+        async with self._tokens_lock:
+            info.last_validation = now
+            if valid:
+                info.expiry = expiry
+                return TokenOutcome.VALID
+            return TokenOutcome.FAILED
 
     def _remaining_seconds(self, info: TokenInfo) -> float | None:
         if not info.expiry:
@@ -515,10 +531,11 @@ class TokenManager:
                         f"⏱️ Token manager loop drift detected drift={int(drift)}s base={base}s"
                     )
                 async with self._tokens_lock:
-                    for username, info in self.tokens.items():
-                        await self._process_single_background(
-                            username, info, force_proactive=drifted
-                        )
+                    users = list(self.tokens.items())
+                for username, info in users:
+                    await self._process_single_background(
+                        username, info, force_proactive=drifted
+                    )
                 last_loop = now
                 await asyncio.sleep(base * _jitter_rng.uniform(0.5, 1.5))
             except (RuntimeError, OSError, ValueError, aiohttp.ClientError) as e:
@@ -638,27 +655,29 @@ class TokenManager:
     async def _handle_unknown_expiry(self, username: str) -> None:
         """Resolve unknown expiry with capped forced refresh attempts (max 3)."""
         outcome = await self.ensure_fresh(username, force_refresh=False)
-        info_ref = self.tokens.get(username)
+        async with self._tokens_lock:
+            info_ref = self.tokens.get(username)
         if not info_ref:
             return
         if info_ref.expiry is None:
-            if info_ref.forced_unknown_attempts < 3:
-                info_ref.forced_unknown_attempts += 1
-                forced = await self.ensure_fresh(username, force_refresh=True)
-                if forced == TokenOutcome.FAILED:
-                    logging.warning(
-                        f"⚠️ Forced refresh attempt failed resolving unknown expiry user={username} attempt={info_ref.forced_unknown_attempts}"
-                    )
-                else:
-                    logging.info(
-                        f"✅ Forced refresh resolved unknown expiry user={username} attempt={info_ref.forced_unknown_attempts}"
-                    )
-            else:
+            async with self._tokens_lock:
+                if info_ref.forced_unknown_attempts < 3:
+                    info_ref.forced_unknown_attempts += 1
+            forced = await self.ensure_fresh(username, force_refresh=True)
+            if forced == TokenOutcome.FAILED:
                 logging.warning(
-                    f"⚠️ Forced refresh attempts exhausted resolving unknown expiry user={username}"
+                    f"⚠️ Forced refresh attempt failed resolving unknown expiry user={username} attempt={info_ref.forced_unknown_attempts}"
+                )
+            else:
+                logging.info(
+                    f"✅ Forced refresh resolved unknown expiry user={username} attempt={info_ref.forced_unknown_attempts}"
                 )
         else:
-            if info_ref.forced_unknown_attempts:
-                info_ref.forced_unknown_attempts = 0
-        if outcome == TokenOutcome.FAILED and info_ref.expiry is None:
-            logging.warning(f"⚠️ Validation failed with unknown expiry user={username}")
+            async with self._tokens_lock:
+                if info_ref.forced_unknown_attempts:
+                    info_ref.forced_unknown_attempts = 0
+        async with self._tokens_lock:
+            if outcome == TokenOutcome.FAILED and info_ref.expiry is None:
+                logging.warning(
+                    f"⚠️ Validation failed with unknown expiry user={username}"
+                )

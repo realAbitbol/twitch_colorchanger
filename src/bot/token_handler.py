@@ -47,7 +47,7 @@ class TokenHandler:
         )
         logging.debug(f"📝 Token manager: registered user={self.bot.username}")
         try:
-            self.bot.token_manager.register_update_hook(
+            await self.bot.token_manager.register_update_hook(
                 self.bot.username, self._persist_token_changes
             )
         except (ValueError, RuntimeError) as e:

@@ -54,7 +54,7 @@ class TokenRefresher:
         )
         logging.debug(f"📝 Token manager: registered user={self.username}")
         try:
-            self.token_manager.register_update_hook(
+            await self.token_manager.register_update_hook(
                 self.username, self._persist_token_changes
             )
         except (ValueError, RuntimeError) as e:

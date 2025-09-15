@@ -15,6 +15,8 @@ def mock_context():
     ctx.token_manager = MagicMock()
     ctx.token_manager.ensure_fresh = AsyncMock()
     ctx.token_manager.get_info = AsyncMock()
+    # Fix initialization issue
+    ctx.token_manager._instance = ctx.token_manager
     return ctx
 
 
@@ -137,7 +139,7 @@ async def test_setup_token_manager_success(token_handler, bot):
     """Test setup_token_manager with successful setup."""
     bot.context.token_manager = MagicMock()
     bot.context.token_manager._upsert_token_info = AsyncMock()
-    bot.context.token_manager.register_update_hook = MagicMock()
+    bot.context.token_manager.register_update_hook = AsyncMock()
     result = await token_handler.setup_token_manager()
     assert result is True
     assert bot.token_manager == bot.context.token_manager
