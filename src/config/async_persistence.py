@@ -208,9 +208,8 @@ async def cancel_pending_flush() -> None:
         _FLUSH_TASK.cancel()
         try:
             await _FLUSH_TASK
-        except asyncio.CancelledError:
-            logging.debug("CancelledError caught during task cancellation, re-raising")
-            raise
+        except asyncio.CancelledError:  # noqa
+            pass
         _FLUSH_TASK = None
 
 
