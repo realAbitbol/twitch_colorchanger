@@ -5,10 +5,10 @@ ARG PYTHON_VERSION=3.13-alpine
 FROM python:${PYTHON_VERSION} AS builder
 WORKDIR /app
 ARG TARGETARCH
-COPY requirements.txt .
+COPY pyproject.toml .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \
-    pip wheel -r requirements.txt -w /app/wheels && \
+    pip wheel -e . -w /app/wheels && \
     # Strip all .so files in built wheels (if any)
     find /app/wheels -name '*.so' -exec strip --strip-unneeded {} + || true
 
@@ -36,9 +36,9 @@ WORKDIR /app
 
 # Install app dependencies from wheels (no compiler in final image)
 COPY --from=builder /app/wheels /wheels
-COPY requirements.txt ./
+COPY pyproject.toml ./
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-index --find-links=/wheels --no-compile -r requirements.txt && \
+    pip install --no-index --find-links=/wheels --no-compile -e . && \
     pip uninstall -y pip setuptools wheel
 
 # Copy source

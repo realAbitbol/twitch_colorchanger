@@ -20,7 +20,7 @@ class RetryableException(Exception):
     pass
 
 
-async def retry_async[T](
+async def retry_async[T](  # type: ignore[valid-type]
     operation: Callable[[int], Awaitable[tuple[T | None, bool]]],
     max_attempts: int = 6,
 ) -> T | None:
