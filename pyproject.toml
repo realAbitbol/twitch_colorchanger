@@ -71,7 +71,6 @@ python_version = "3.13"
 
 ignore_missing_imports = true        # Suppress 3rd party stub noise for now
 warn_unused_configs = true
-warn_unused_ignores = true
 warn_redundant_casts = true
 warn_return_any = false              # Allow incremental typing
 warn_no_return = true
@@ -93,21 +92,6 @@ follow_imports = "skip"
 exclude = [
     "tests/",
 ]
-
-# Per-module relaxations (keep legacy modules compiling). Remove over time.
-[[tool.mypy.overrides]]
-module = ["src.config.watcher"]
-disallow_untyped_defs = false
-check_untyped_defs = false
-
-[[tool.mypy.overrides]]
-module = ["src.manager.*"]
-disallow_untyped_defs = false
-check_untyped_defs = false
-
-# Note: PEP 695 generics errors are suppressed with inline # type: ignore[valid-type] comments
-# in the affected files since mypy doesn't yet support PEP 695 syntax
-
 
 # Bandit security linting
 [tool.bandit]

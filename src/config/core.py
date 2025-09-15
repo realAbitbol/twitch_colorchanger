@@ -325,22 +325,6 @@ async def setup_missing_tokens(
     return updated_users
 
 
-def _extract_token_triplet(user: dict[str, Any]) -> tuple[Any, Any, Any]:
-    """Extract token triplet from user config.
-
-    Args:
-        user: User config dictionary.
-
-    Returns:
-        Tuple of (access_token, refresh_token, token_expiry).
-    """
-    return (
-        user.get("access_token"),
-        user.get("refresh_token"),
-        user.get("token_expiry"),
-    )
-
-
 async def _validate_or_invalidate_scopes(
     user: dict[str, Any],
     access: Any,
