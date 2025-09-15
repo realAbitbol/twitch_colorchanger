@@ -122,6 +122,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             config_file=self.config_file,
             user_id=None,
             enabled=user_config.enabled,
+            token_expiry=user_config.token_expiry,
         )
         logging.debug(f"🆕 Bot created: {username}")
         return bot

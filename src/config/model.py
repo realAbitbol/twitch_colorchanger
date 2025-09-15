@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -48,6 +49,7 @@ class UserConfig(BaseModel):
     client_secret: str | None = None
     access_token: str | None = None
     refresh_token: str | None = None
+    token_expiry: datetime | None = None
     channels: list[str] = Field(default_factory=list)
     is_prime_or_turbo: bool = True
     enabled: bool = True  # New flag to enable/disable automatic color change
