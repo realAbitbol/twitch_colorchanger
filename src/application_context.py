@@ -138,7 +138,7 @@ def _atexit_close() -> None:  # pragma: no cover - process teardown path
                 loop.run_until_complete(session.close())
             finally:
                 loop.close()
-            logging.info("HTTP session closed at exit")
+            logging.debug("HTTP session closed at exit")
         except (OSError, ValueError) as e:
             try:
                 logging.warning(f"HTTP session close error at exit: {e}")

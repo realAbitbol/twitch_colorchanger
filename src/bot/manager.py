@@ -143,7 +143,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
             try:
                 if task and not task.done():
                     task.cancel()
-                    logging.info(f"🛑 Cancelled task index={i}")
+                    logging.debug(f"🛑 Cancelled task index={i}")
             except (ValueError, TypeError) as e:
                 logging.warning(f"💥 Error cancelling task index={i}: {str(e)}")
 
@@ -152,7 +152,7 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
         for i, bot in enumerate(self.bots):
             try:
                 bot.close()
-                logging.info(f"🔻 Closed bot index={i} user={bot.username}")
+                logging.info(f"🔻 Closed bot for user {bot.username}")
             except (OSError, ValueError, RuntimeError) as e:
                 logging.warning(
                     f"💥 Error closing bot index={i}: {str(e)} user={getattr(bot, 'username', None)}"

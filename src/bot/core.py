@@ -397,7 +397,7 @@ class TwitchColorBot(MessageHandler, ColorChanger, TokenRefresher):  # pylint: d
 
     def close(self) -> None:
         """Close the bot and mark as not running."""
-        logging.info(f"🔻 Closing bot user={self.username}")
+        logging.debug(f"🔻 Closing bot user={self.username}")
         # Note: close is sync, but since _state_lock is asyncio, we can't use it here.
         # Assuming close is called when no async operations are running.
         self.running = False
