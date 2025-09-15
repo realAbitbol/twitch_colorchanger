@@ -49,7 +49,7 @@ def log_error(message: str, error: Exception) -> None:
     logging.error(f"Error: {message} - {str(error)}")
 
 
-async def handle_api_error[T](operation: Callable[[], Awaitable[T]], context: str) -> T:
+async def handle_api_error[T](operation: Callable[[], Awaitable[T]], context: str) -> T:  # type: ignore[valid-type]
     """Handle API operations with standardized error handling.
 
     This function wraps an API operation, catches exceptions, logs them,
@@ -81,7 +81,7 @@ async def handle_api_error[T](operation: Callable[[], Awaitable[T]], context: st
             raise InternalError(f"Unexpected error in {context}: {str(e)}") from e
 
 
-async def handle_retryable_error[T](
+async def handle_retryable_error[T](  # type: ignore[valid-type]
     operation: Callable[[int], Awaitable[tuple[T | None, bool]]],
     context: str,
     max_attempts: int = 3,
