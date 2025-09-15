@@ -358,3 +358,42 @@ async def test_bot_core_shutdown_graceful(bot):
         await bot.stop()
         assert bot.running is False
         assert bot.listener_task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_start_token_manager_failure(bot):
+    """Test start method when token manager setup fails."""
+    with patch.object(bot.token_handler, "setup_token_manager", return_value=False):
+        await bot.start()
+        assert bot.running is False
+
+
+@pytest.mark.asyncio
+async def test_stop_config_flush_failure(bot):
+    """Test stop method when config flush fails."""
+    bot.running = True
+    bot.config_file = "test.json"
+
+    with patch.object(bot.connection_manager, "disconnect_chat_backend", new_callable=AsyncMock), \
+          patch.object(bot.connection_manager, "wait_for_listener_task", new_callable=AsyncMock), \
+          patch("src.bot.core.flush_pending_updates", side_effect=OSError("Flush failed")), \
+          patch("src.bot.core.logging") as mock_logging:
+        await bot.stop()
+        assert bot.running is False
+        mock_logging.debug.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_initialize_connection_failure(bot):
+    """Test _initialize_connection when connection manager fails."""
+    with patch.object(bot.connection_manager, "initialize_connection", new_callable=AsyncMock, return_value=False):
+        result = await bot._initialize_connection()
+        assert result is False
+
+
+@pytest.mark.asyncio
+async def test_change_color_exception(bot):
+    """Test _change_color when color changer raises exception."""
+    with patch.object(bot.color_changer, "_change_color", side_effect=ValueError("Color change failed")):
+        with pytest.raises(ValueError, match="Color change failed"):
+            await bot._change_color("invalid")

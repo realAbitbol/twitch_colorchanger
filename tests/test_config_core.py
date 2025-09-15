@@ -8,8 +8,11 @@ import pytest
 
 from src.config.core import (
     _confirm_missing_scopes,
+    _merge_user,
     _missing_scopes,
+    _process_single_user_tokens_dataclass,
     _validate_or_invalidate_scopes_dataclass,
+    get_configuration,
     load_users_from_config,
     normalize_user_channels,
     save_users_to_config,
@@ -17,6 +20,108 @@ from src.config.core import (
     update_user_in_config,
 )
 from src.config.model import UserConfig
+
+
+@pytest.mark.asyncio
+async def test_update_user_in_config_validation_failure(tmp_path: Path):
+    """Test update_user_in_config with validation failure."""
+    config_file = tmp_path / "config.json"
+    initial_users = [{"username": "alice", "channels": ["alice"], "access_token": "a" * 30}]
+    config_file.write_text(json.dumps({"users": initial_users}))
+    invalid_user = {"username": "ab", "channels": ["ab"], "access_token": "short"}
+    success = update_user_in_config(invalid_user, str(config_file))
+    assert success is False
+
+
+@pytest.mark.asyncio
+async def test_save_users_to_config_normalize_failure(tmp_path: Path):
+    """Test save_users_to_config with normalization failure."""
+    config_file = tmp_path / "config.json"
+    users = [{"username": "alice", "channels": ["alice"], "access_token": "a" * 30}]
+    # Should succeed normally
+    save_users_to_config(users, str(config_file))
+    data = json.loads(config_file.read_text())
+    assert data["users"][0]["username"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_setup_missing_tokens_provision_failure():
+    """Test setup_missing_tokens with provisioning failure."""
+    users = [UserConfig(username="alice", channels=["alice"], access_token=None, refresh_token=None, client_id="c" * 10, client_secret="s" * 10)]
+    with patch('src.auth_token.provisioner.TokenProvisioner') as mock_provisioner_class, \
+         patch('src.api.twitch.TwitchAPI') as mock_api_class:
+        mock_provisioner = MagicMock()
+        mock_provisioner_class.return_value = mock_provisioner
+        mock_provisioner.provision = AsyncMock(return_value=(None, None, None))
+        mock_api = MagicMock()
+        mock_api_class.return_value = mock_api
+        updated = await setup_missing_tokens(users, "dummy.conf")
+        assert len(updated) == 1
+        assert updated[0].access_token is None
+
+
+@pytest.mark.asyncio
+async def test_validate_or_invalidate_scopes_missing_scopes():
+    """Test validate_or_invalidate_scopes_dataclass with missing scopes."""
+    user = UserConfig(username="alice", access_token="a" * 30, refresh_token="refresh")
+    mock_api = MagicMock()
+    mock_api.validate_token = AsyncMock(return_value={"scopes": ["chat:read"]})
+    required = {"chat:read", "user:read:chat", "user:manage:chat_color"}
+    retained = await _validate_or_invalidate_scopes_dataclass(user, "a" * 30, "refresh", mock_api, required)
+    assert retained is False
+    assert user.access_token is None
+
+
+@pytest.mark.asyncio
+async def test_confirm_missing_scopes_revalidation_failure():
+    """Test confirm_missing_scopes with revalidation failure."""
+    mock_api = MagicMock()
+    mock_api.validate_token = AsyncMock(side_effect=ValueError("API error"))
+    required = {"chat:read", "user:read:chat", "user:manage:chat_color"}
+    missing, confirmed_set = await _confirm_missing_scopes(mock_api, "token", required)
+    assert missing == []
+    assert confirmed_set is None
+
+
+@pytest.mark.asyncio
+async def test_process_single_user_tokens_invalid_credentials():
+    """Test _process_single_user_tokens_dataclass with invalid credentials."""
+    user = UserConfig(username="alice", channels=["alice"], access_token=None, refresh_token=None, client_id="c" * 10, client_secret="s" * 10)
+    mock_api = MagicMock()
+    mock_provisioner = MagicMock()
+    mock_provisioner.provision = AsyncMock(return_value=(None, None, None))
+    required_scopes = {"chat:read"}
+    changed, processed_user = await _process_single_user_tokens_dataclass(user, mock_api, mock_provisioner, required_scopes)
+    assert changed is False
+    assert processed_user.access_token is None
+
+
+def test_merge_user_existing_user_update():
+    """Test _merge_user with existing user update."""
+    users = [{"username": "alice", "channels": ["alice"], "access_token": "old" * 30}]
+    uc = UserConfig(username="alice", channels=["alice", "new"], access_token="new" * 30)
+    updated_users, replaced = _merge_user(users, uc)
+    assert replaced is True
+    assert updated_users[0]["access_token"] == "new" * 30
+    assert "new" in updated_users[0]["channels"]
+
+
+def test_attempt_config_save_file_not_found(tmp_path: Path):
+    """Test save_users_to_config with file not found."""
+    config_file = tmp_path / "missing" / "config.json"
+    users = [{"username": "alice", "channels": ["alice"], "access_token": "a" * 30}]
+    # Should handle gracefully
+    save_users_to_config(users, str(config_file))
+
+
+def test_get_configuration_no_users(tmp_path: Path):
+    """Test get_configuration with no users."""
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps({"users": []}))
+    with patch('os.environ', {"TWITCH_CONF_FILE": str(config_file)}), \
+         patch('sys.exit') as mock_exit:
+        get_configuration()
+        assert mock_exit.call_count >= 1
 
 # Users scenario tests (8 tests)
 

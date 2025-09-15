@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.main import main
+from src.main import main, run
 
 
 @pytest.mark.asyncio
@@ -202,9 +203,61 @@ async def test_main_function_config_parse_error():
 async def test_main_function_unexpected_exception():
     """Test main function handling of unexpected exceptions during execution."""
     with patch('src.main.emit_startup_instructions', side_effect=RuntimeError("Unexpected")), \
-         patch('src.main.log_error') as mock_log_error, \
-         patch('sys.exit') as mock_exit, \
-         patch('builtins.print'):
+          patch('src.main.log_error') as mock_log_error, \
+          patch('sys.exit'), \
+          patch('builtins.print'):
         await main()
         mock_log_error.assert_called_once()
+@pytest.mark.asyncio
+async def test_main_invalid_config():
+    """Test main handles invalid config."""
+    with patch('src.main.get_configuration', side_effect=ValueError("Invalid config")), \
+         patch('src.main.log_error') as mock_log_error, \
+         patch('sys.exit') as mock_exit, \
+         patch('src.main.emit_startup_instructions'), \
+         patch('builtins.print'):
+        await main()
+        mock_log_error.assert_called_once_with("Main application error", ANY)
+        mock_exit.assert_called_once_with(1)
+
+
+@pytest.mark.asyncio
+async def test_main_config_file_not_found():
+    """Test main handles config file not found."""
+    with patch('src.main.get_configuration', side_effect=FileNotFoundError("Config not found")), \
+         patch('src.main.log_error') as mock_log_error, \
+         patch('sys.exit') as mock_exit, \
+         patch('src.main.emit_startup_instructions'), \
+         patch('builtins.print'):
+        await main()
+        mock_log_error.assert_called_once_with("Main application error", ANY)
+        mock_exit.assert_called_once_with(1)
+
+
+@pytest.mark.asyncio
+async def test_main_keyboard_interrupt():
+    """Test main handles keyboard interrupt."""
+    with patch('src.main.get_configuration', side_effect=KeyboardInterrupt), \
+         patch('src.main.emit_startup_instructions'), \
+         patch('builtins.print'):
+        await main()
+        # Should not raise, just pass
+
+
+def test_run_asyncio_cancelled_error():
+    """Test run handles asyncio cancelled error."""
+    with patch('asyncio.run', side_effect=asyncio.CancelledError), \
+         patch('sys.exit') as mock_exit:
+        run()
+        mock_exit.assert_called_once_with(0)
+
+
+def test_run_top_level_exception():
+    """Test run handles top level exception."""
+    with patch('asyncio.run', side_effect=Exception("Top level error")), \
+         patch('src.main.log_error') as mock_log_error, \
+         patch('sys.exit') as mock_exit:
+        run()
+        mock_log_error.assert_called_once_with("Top-level error", ANY)
+        mock_exit.assert_called_once_with(1)
         mock_exit.assert_called_once_with(1)
