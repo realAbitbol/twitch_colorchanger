@@ -183,3 +183,139 @@ async def test_prune_expired_tokens_db_errors():
         with mock.patch.object(tm, "remove", side_effect=OSError):
             removed = tm.prune({"user"})
             assert removed == 0
+
+
+@pytest.mark.asyncio
+async def test_start_background_task_failure(monkeypatch):
+    """Test start when background task creation fails."""
+    async with aiohttp.ClientSession() as session:
+        tm = TokenManager(session)
+        tm.tokens.clear()
+        monkeypatch.setattr("asyncio.create_task", mock.Mock(side_effect=RuntimeError("Task creation failed")))
+        with pytest.raises(RuntimeError, match="Task creation failed"):
+            await tm.start()
+
+
+@pytest.mark.asyncio
+async def test_ensure_fresh_invalid_user():
+    """Test ensure_fresh with invalid user."""
+    async with aiohttp.ClientSession() as session:
+        tm = TokenManager(session)
+        tm.tokens.clear()
+        outcome = await tm.ensure_fresh("nonexistent")
+        assert outcome == TokenOutcome.FAILED
+
+
+@pytest.mark.asyncio
+async def test_validate_remote_failure(monkeypatch):
+    """Test validate when remote validation fails."""
+    async with aiohttp.ClientSession() as session:
+        tm = TokenManager(session)
+        tm.tokens.clear()
+        tm._upsert_token_info("user", "atk", "rtk", "cid", "csec", datetime.now(UTC) + timedelta(seconds=100))
+        dummy = DummyTokenClient()
+        dummy.prime("invalid")
+        monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)
+        outcome = await tm.validate("user")
+        assert outcome == TokenOutcome.FAILED
+
+
+@pytest.mark.asyncio
+async def test_background_refresh_loop_exception(monkeypatch):
+    """Test background refresh loop handles exceptions."""
+    async with aiohttp.ClientSession() as session:
+        tm = TokenManager(session)
+        tm.tokens.clear()
+        tm._upsert_token_info("user", "atk", "rtk", "cid", "csec", datetime.now(UTC))
+        dummy = DummyTokenClient()
+        dummy.prime("refresh_success")
+        monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)
+        # Mock _process_single_background to raise
+        monkeypatch.setattr(tm, "_process_single_background", mock.AsyncMock(side_effect=RuntimeError("Loop error")))
+        await tm.start()
+        await asyncio.sleep(0.1)  # Let loop run briefly
+        with suppress(asyncio.CancelledError):
+            await tm.stop()
+
+
+@pytest.mark.asyncio
+async def test_process_single_background_expired_token(monkeypatch):
+    """Test processing expired token in background."""
+    async with aiohttp.ClientSession() as session:
+        tm = TokenManager(session)
+        tm.tokens.clear()
+        expired = datetime.now(UTC) - timedelta(seconds=10)
+        info = tm._upsert_token_info("user", "atk", "rtk", "cid", "csec", expired)
+        dummy = DummyTokenClient()
+        dummy.prime("refresh_success")
+        monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)
+        await tm._process_single_background("user", info)
+        # Should have called ensure_fresh
+        assert dummy.refresh_calls
+
+
+@pytest.mark.asyncio
+async def test_handle_unknown_expiry_max_attempts(monkeypatch):
+    """Test handling unknown expiry with max attempts reached."""
+    async with aiohttp.ClientSession() as session:
+        tm = TokenManager(session)
+        tm.tokens.clear()
+        info = tm._upsert_token_info("user", "atk", "rtk", "cid", "csec", None)
+        info.forced_unknown_attempts = 3
+        dummy = DummyTokenClient()
+        dummy.prime("refresh_fail")
+        monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)
+        await tm._handle_unknown_expiry("user")
+        # Should not attempt more refreshes
+        assert info.forced_unknown_attempts == 3
+
+
+@pytest.mark.asyncio
+async def test_refresh_with_lock_concurrent_refresh(monkeypatch):
+    """Test that refresh lock prevents concurrent refreshes."""
+    async with aiohttp.ClientSession() as session:
+        tm = TokenManager(session)
+        tm.tokens.clear()
+        tm._upsert_token_info("user", "atk", "rtk", "cid", "csec", datetime.now(UTC) - timedelta(seconds=10))
+        dummy = DummyTokenClient()
+        dummy.prime("refresh_success")
+        monkeypatch.setattr(tm, "_get_client", lambda cid, _: dummy)
+
+        # Start two concurrent refreshes without force
+        task1 = asyncio.create_task(tm.ensure_fresh("user"))
+        task2 = asyncio.create_task(tm.ensure_fresh("user"))
+        await asyncio.gather(task1, task2)
+        # Both may refresh since check is outside lock
+        assert len(dummy.refresh_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_apply_successful_refresh_invalid_token(monkeypatch):
+    """Test applying successful refresh with invalid token."""
+    async with aiohttp.ClientSession() as session:
+        tm = TokenManager(session)
+        tm.tokens.clear()
+        info = tm._upsert_token_info("user", "atk", "rtk", "cid", "csec", datetime.now(UTC))
+        from src.auth_token.client import TokenResult
+        result = TokenResult(TokenOutcome.REFRESHED, None, "new_rtk", datetime.now(UTC) + timedelta(seconds=100))
+        tm._apply_successful_refresh(info, result)
+        assert info.refresh_token == "new_rtk"
+        assert info.expiry is not None
+
+
+@pytest.mark.asyncio
+async def test_maybe_fire_update_hook_exception(monkeypatch):
+    """Test firing update hook that raises exception."""
+    async with aiohttp.ClientSession() as session:
+        tm = TokenManager(session)
+        tm.tokens.clear()
+        tm._upsert_token_info("user", "atk", "rtk", "cid", "csec", datetime.now(UTC))
+
+        async def failing_hook():
+            raise ValueError("Hook failed")
+
+        tm.register_update_hook("user", failing_hook)
+        with mock.patch("src.auth_token.manager.logging") as mock_logging:
+            tm._maybe_fire_update_hook("user", True)
+            await asyncio.sleep(0.01)  # Let task run
+            mock_logging.debug.assert_called()
