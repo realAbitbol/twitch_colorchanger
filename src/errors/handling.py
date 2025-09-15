@@ -81,6 +81,30 @@ async def handle_api_error[T](operation: Callable[[], Awaitable[T]], context: st
             raise InternalError(f"Unexpected error in {context}: {str(e)}") from e
 
 
+def is_retryable_error(error: Exception) -> bool:
+    """Check if an exception should trigger a retry."""
+    return isinstance(
+        error, RetryableOperationError | NetworkError | OSError | ConnectionError
+    )
+
+
+async def _execute_and_categorize_retryable_operation[T](  # type: ignore[valid-type]
+    operation: Callable[[int], Awaitable[tuple[T | None, bool]]],
+    attempt_count: int,
+    context: str,
+) -> T | None:
+    try:
+        result, should_retry = await operation(attempt_count)
+        if not should_retry:
+            return result
+        raise RetryableOperationError(f"Operation indicated retry needed for {context}")
+    except (aiohttp.ClientError, ValueError, RuntimeError, OSError, NetworkError) as e:
+        if is_retryable_error(e):
+            raise
+        log_error(f"Non-retryable error in {context}", e)
+        raise InternalError(f"Non-retryable error in {context}: {str(e)}") from e
+
+
 async def handle_retryable_error[T](  # type: ignore[valid-type]
     operation: Callable[[int], Awaitable[tuple[T | None, bool]]],
     context: str,
@@ -107,7 +131,8 @@ async def handle_retryable_error[T](  # type: ignore[valid-type]
     def before_retry(retry_state):
         nonlocal attempt_count
         attempt_count = retry_state.attempt_number
-        logging.info(f"Retrying {context} (attempt {attempt_count})")
+        if attempt_count > 1:
+            logging.info(f"Retrying {context} (retry {attempt_count})")
 
     def after_retry(retry_state):
         if retry_state.outcome.failed:
@@ -117,24 +142,9 @@ async def handle_retryable_error[T](  # type: ignore[valid-type]
             )
 
     async def wrapped_operation() -> T | None:
-        try:
-            result, should_retry = await operation(attempt_count)
-            if not should_retry:
-                return result
-            # Raise custom exception to trigger retry
-            raise RetryableOperationError(
-                f"Operation indicated retry needed for {context}"
-            )
-        except (aiohttp.ClientError, ValueError, RuntimeError, OSError) as e:
-            # Categorize the error
-            if isinstance(e, NetworkError | OSError | ConnectionError):
-                raise  # Retryable
-            else:
-                # Non-retryable
-                log_error(f"Non-retryable error in {context}", e)
-                raise InternalError(
-                    f"Non-retryable error in {context}: {str(e)}"
-                ) from e
+        return await _execute_and_categorize_retryable_operation(
+            operation, attempt_count, context
+        )
 
     retrying = AsyncRetrying(
         stop=stop_after_attempt(max_attempts),
