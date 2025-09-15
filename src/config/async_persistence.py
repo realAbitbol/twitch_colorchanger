@@ -19,8 +19,9 @@ from .core import update_user_in_config
 
 __all__ = [
     "async_update_user_in_config",
-    "queue_user_update",
+    "cancel_pending_flush",
     "flush_pending_updates",
+    "queue_user_update",
 ]
 
 # --- Debounced batching infrastructure ---
@@ -199,12 +200,27 @@ async def queue_user_update(user_config: dict[str, Any], config_file: str) -> No
             _FLUSH_TASK = asyncio.create_task(_schedule_flush(config_file))
 
 
+async def cancel_pending_flush() -> None:
+    """Cancel any pending flush task to prevent warnings on shutdown."""
+    global _FLUSH_TASK
+    if _FLUSH_TASK and not _FLUSH_TASK.done():
+        logging.debug("Cancelling pending flush task")
+        _FLUSH_TASK.cancel()
+        try:
+            await _FLUSH_TASK
+        except asyncio.CancelledError:
+            logging.debug("CancelledError caught during task cancellation, re-raising")
+            raise
+        _FLUSH_TASK = None
+
+
 async def flush_pending_updates(config_file: str) -> None:
     """Force an immediate flush (e.g., before shutdown).
 
     Args:
         config_file: Path to the configuration file.
     """
+    await cancel_pending_flush()
     await _flush(config_file)
 
 

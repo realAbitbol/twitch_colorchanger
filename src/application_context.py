@@ -9,6 +9,7 @@ import logging
 import aiohttp
 
 from .auth_token.manager import TokenManager
+from .config.async_persistence import cancel_pending_flush
 
 # Global reference for emergency cleanup if normal shutdown is interrupted
 GLOBAL_CONTEXT: ApplicationContext | None = None
@@ -77,6 +78,7 @@ class ApplicationContext:
         async with self._lock:
             logging.info("🔻 Application context shutdown initiated")
             await self._stop_token_manager()
+            await cancel_pending_flush()
             await self._close_http_session()
             self._started = False
             logging.info("✅ Application context shutdown complete")
