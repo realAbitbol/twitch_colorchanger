@@ -196,7 +196,7 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             self._consecutive_subscribe_401 = 0
             logging.info("🔄 EventSub token recovered")
         # Re-validate scopes after token refresh to catch scope changes
-        asyncio.create_task(self._record_token_scopes())
+        _ = asyncio.create_task(self._record_token_scopes())
 
     def _jitter(self, a: float, b: float) -> float:
         """Returns scheduling jitter using a non-crypto source.
@@ -242,6 +242,11 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
 
         Returns:
             bool: True if connection and subscription successful, False otherwise.
+
+        Raises:
+            aiohttp.ClientError: If WebSocket connection fails.
+            ValueError: If credentials are invalid.
+            RuntimeError: If handshake or subscription fails.
         """
         self._capture_initial_credentials(
             token, username, primary_channel, user_id, client_id, client_secret
@@ -302,6 +307,13 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         return True
 
     async def _handshake_and_session(self) -> bool:
+        """Performs WebSocket handshake and establishes session.
+
+        Connects to the EventSub WebSocket URL with appropriate headers, waits for the welcome message, and extracts the session ID.
+
+        Returns:
+            bool: True if handshake successful and session ID obtained, False otherwise.
+        """
         try:
             headers = {}
             if self._client_id:
@@ -336,6 +348,13 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             return False
 
     async def _resolve_initial_channel(self) -> bool:
+        """Resolves initial channel IDs for subscription.
+
+        Attempts to resolve user IDs for the initial list of channels and verifies the primary channel is resolved.
+
+        Returns:
+            bool: True if all channels resolved successfully, False otherwise.
+        """
         try:
             await self._batch_resolve_channels(self._channels)
             if (self._primary_channel or "") not in self._channel_ids:
@@ -345,6 +364,10 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             return False
 
     async def _ensure_self_user_id(self) -> None:
+        """Ensures the bot's user ID is set.
+
+        If the user ID is not already set, fetches the user information for the bot's username and sets the user ID.
+        """
         if self._user_id is not None:
             return
         me = await self._fetch_user(self._username or "")
@@ -352,6 +375,10 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             self._user_id = me.get("id")
 
     async def _record_token_scopes(self) -> None:
+        """Records the validated OAuth scopes for the current token.
+
+        Validates the access token and extracts the list of granted scopes, storing them for later use.
+        """
         try:
             if self._token is None:
                 return
@@ -385,6 +412,11 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
 
         Returns:
             bool: True if joined successfully, False otherwise.
+
+        Raises:
+            aiohttp.ClientError: If network requests fail.
+            ValueError: If channel resolution fails.
+            RuntimeError: If subscription fails.
         """
         channel_l = channel.lstrip("#").lower()
         if channel_l in self._channels:
@@ -451,6 +483,13 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         self._message_handler = handler
 
     async def _handle_text(self, raw: str) -> None:
+        """Handles incoming text messages from the WebSocket.
+
+        Decodes the JSON payload, determines the message type, and dispatches to appropriate handlers for session reconnect or notifications.
+
+        Args:
+            raw (str): The raw JSON string received from the WebSocket.
+        """
         data = self._decode_json(raw)
         if data is None:
             return
@@ -465,6 +504,16 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
 
     # ---- message handling helpers ----
     def _decode_json(self, raw: str) -> dict[str, Any] | None:
+        """Decodes a JSON string into a dictionary.
+
+        Attempts to parse the provided string as JSON and returns the resulting dictionary, or None if parsing fails.
+
+        Args:
+            raw (str): The JSON string to decode.
+
+        Returns:
+            dict[str, Any] | None: The decoded dictionary or None if invalid JSON.
+        """
         try:
             obj = json.loads(raw)
             return obj if isinstance(obj, dict) else None
@@ -584,6 +633,13 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             self._pending_challenge = None
 
     async def _handle_notification(self, data: dict[str, Any]) -> None:
+        """Handles notification messages from EventSub.
+
+        Processes notification payloads, specifically handling channel chat messages by extracting chatter, channel, and message text, then dispatching to handlers.
+
+        Args:
+            data (dict[str, Any]): The notification message data.
+        """
         payload = data.get("payload")
         if not isinstance(payload, dict):
             return
@@ -611,6 +667,16 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             await self._dispatch_message(chatter, channel_login.lower(), message)
 
     def _extract_message_text(self, event: dict[str, Any]) -> str | None:
+        """Extracts the message text from a chat event.
+
+        Retrieves the text content from the message object within the event data.
+
+        Args:
+            event (dict[str, Any]): The event data containing the message.
+
+        Returns:
+            str | None: The extracted message text or None if not found.
+        """
         # event.message = { "text": str, ... }
         msg = event.get("message")
         if isinstance(msg, dict):
@@ -622,6 +688,15 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
     async def _dispatch_message(
         self, username: str, channel: str, message: str
     ) -> None:
+        """Dispatches a chat message to registered handlers.
+
+        Logs the message and invokes the message handler and color handler if set.
+
+        Args:
+            username (str): The username of the chatter.
+            channel (str): The channel name.
+            message (str): The message text.
+        """
         # Emit unified log event with human-readable text
         try:
             logging.info(f"💬 #{channel} {username}: {message}")
@@ -643,6 +718,13 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
                 logging.warning("💥 Color handler error")
 
     async def _batch_resolve_channels(self, channels: list[str]) -> None:
+        """Resolves user IDs for a list of channels in batch.
+
+        Determines which channels lack cached user IDs, validates the token, and fetches user IDs from Twitch API for unresolved channels, updating the cache.
+
+        Args:
+            channels (list[str]): List of channel names to resolve.
+        """
         # Determine which are missing
         needed = [c for c in channels if c not in self._channel_ids]
         if not needed or not (self._token and self._client_id):
@@ -685,6 +767,10 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
 
     # ---- cache helpers ----
     def _sync_load_cache(self):
+        """Synchronously loads broadcaster ID cache from file.
+
+        Attempts to read the cache file and populate the channel IDs dictionary with existing mappings.
+        """
         try:
             if self._cache_path.exists():
                 with self._cache_path.open("r", encoding="utf-8") as fh:
@@ -697,10 +783,18 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             logging.info(f"⚠️ EventSub cache load error: {str(e)}")
 
     async def _load_id_cache(self) -> None:
+        """Loads broadcaster ID cache asynchronously.
+
+        Runs the synchronous cache loading in an executor to avoid blocking the event loop.
+        """
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._sync_load_cache)
 
     def _sync_save_cache(self):
+        """Synchronously saves broadcaster ID cache to file.
+
+        Creates the cache directory if needed, uses file locking to prevent concurrent access, and writes the channel IDs to the cache file.
+        """
         try:
             self._cache_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -725,10 +819,24 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             logging.error(f"⚠️ EventSub cache save failed: Unexpected error - {str(e)}")
 
     async def _save_id_cache(self) -> None:
+        """Saves broadcaster ID cache asynchronously.
+
+        Runs the synchronous cache saving in an executor to avoid blocking the event loop.
+        """
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._sync_save_cache)
 
     async def _fetch_user(self, login: str) -> dict[str, Any] | None:
+        """Fetches user information from Twitch API.
+
+        Makes an API request to get user details for the given login name.
+
+        Args:
+            login (str): The username to fetch.
+
+        Returns:
+            dict[str, Any] | None: User data dictionary or None if failed.
+        """
         if not self._token or not self._client_id:
             return None
         try:
@@ -750,6 +858,13 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             return None
 
     async def _subscribe_channel_chat(self, channel_login: str) -> None:
+        """Subscribes to chat messages for a channel.
+
+        Checks subscription eligibility, retrieves broadcaster ID, builds subscription body, and sends the subscription request.
+
+        Args:
+            channel_login (str): The channel login to subscribe to.
+        """
         if not self._can_subscribe():
             return
         broadcaster_id = self._channel_ids.get(channel_login)
@@ -771,12 +886,29 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             logging.warning(f"💥 EventSub subscribe error channel={channel_login}")
 
     def _can_subscribe(self) -> bool:
+        """Checks if subscription is currently possible.
+
+        Verifies that all required credentials and session state are available and token is not invalid.
+
+        Returns:
+            bool: True if subscription can proceed, False otherwise.
+        """
         return (
             bool(self._session_id and self._token and self._client_id and self._user_id)
             and not self._token_invalid_flag
         )
 
     def _build_subscribe_body(self, broadcaster_id: str) -> dict[str, Any]:
+        """Builds the JSON body for EventSub subscription request.
+
+        Creates the subscription payload with required fields for channel chat message events.
+
+        Args:
+            broadcaster_id (str): The broadcaster user ID.
+
+        Returns:
+            dict[str, Any]: The subscription request body.
+        """
         return {
             "type": EVENTSUB_CHAT_MESSAGE,
             "version": "1",
@@ -790,6 +922,15 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
     def _handle_subscribe_response(
         self, channel_login: str, status: int, data: Any
     ) -> None:
+        """Handles the response from subscription request.
+
+        Processes the HTTP status and data, logging appropriate messages and handling errors like unauthorized access.
+
+        Args:
+            channel_login (str): The channel login being subscribed to.
+            status (int): HTTP status code of the response.
+            data (Any): Response data from the API.
+        """
         if status == 202:
             self._on_subscribed(channel_login)
             return
@@ -800,6 +941,13 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         self._on_subscribe_other(channel_login, status)
 
     def _on_subscribed(self, channel_login: str) -> None:
+        """Handles successful subscription.
+
+        Logs the successful join message and resets consecutive 401 counter.
+
+        Args:
+            channel_login (str): The channel that was successfully subscribed to.
+        """
         logging.info(f"✅ {self._username} joined {channel_login}")
         self._consecutive_subscribe_401 = 0
 
@@ -832,11 +980,24 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         return False
 
     def _log_subscribe_non_202(self, status: int, channel_login: str) -> None:
+        """Logs a non-202 status from subscription request.
+
+        Args:
+            status (int): HTTP status code.
+            channel_login (str): Channel login being subscribed to.
+        """
         logging.warning(
             f"⚠️ EventSub subscribe non-202 status={status} channel={channel_login}"
         )
 
     def _handle_subscribe_unauthorized(self, channel_login: str) -> None:
+        """Handles unauthorized subscription response.
+
+        Increments consecutive 401 counter and marks token as invalid if threshold reached.
+
+        Args:
+            channel_login (str): Channel login being subscribed to.
+        """
         self._consecutive_subscribe_401 += 1
         logging.warning(
             f"🚫 EventSub subscribe unauthorized channel={channel_login} count={self._consecutive_subscribe_401}"
@@ -860,12 +1021,25 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
                     )
 
     def _on_subscribe_other(self, channel_login: str, status: int) -> None:
+        """Handles other subscription response statuses.
+
+        Resets 401 counter and logs missing scopes for 403 status.
+
+        Args:
+            channel_login (str): Channel login being subscribed to.
+            status (int): HTTP status code.
+        """
         # reset counter on any non-401 failure
         self._consecutive_subscribe_401 = 0
         if status == 403:
             self._log_missing_scopes(channel_login)
 
     def _log_missing_scopes(self, channel_login: str) -> None:
+        """Logs missing OAuth scopes for subscription.
+
+        Args:
+            channel_login (str): Channel login being subscribed to.
+        """
         required = {"user:read:chat", "chat:read"}
         missing = sorted(s for s in required if s not in self._scopes)
         if missing:
@@ -876,6 +1050,10 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             )
 
     async def _verify_subscriptions(self) -> None:
+        """Verifies active subscriptions and resubscribes missing ones.
+
+        Fetches active broadcaster IDs and resubscribes to any missing channels.
+        """
         if not (self._token and self._client_id and self._session_id):
             return
         active = await self._fetch_active_broadcaster_ids()
@@ -888,6 +1066,11 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         await self._resubscribe_missing(missing)
 
     async def _fetch_active_broadcaster_ids(self) -> set[str] | None:
+        """Fetches active broadcaster IDs from EventSub subscriptions.
+
+        Returns:
+            set[str] | None: Set of active broadcaster IDs or None if failed.
+        """
         if not self._can_fetch_broadcaster_ids():
             return None
         data, status = await self._try_fetch_broadcaster_ids()
@@ -901,12 +1084,27 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         return self._extract_broadcaster_ids_from_data(data)
 
     def _can_fetch_broadcaster_ids(self) -> bool:
+        """Checks if broadcaster IDs can be fetched.
+
+        Returns:
+            bool: True if token and client ID are available.
+        """
         return self._token is not None and self._client_id is not None
 
     def _handle_list_unauthorized(self, data: Any) -> None:
+        """Handles unauthorized response from subscription list.
+
+        Args:
+            data (Any): Response data.
+        """
         logging.warning("🚫 EventSub subscription list unauthorized.")
 
     async def _try_fetch_broadcaster_ids(self) -> tuple[Any, int]:
+        """Attempts to fetch broadcaster IDs from EventSub API.
+
+        Returns:
+            tuple[Any, int]: Response data and status code.
+        """
         try:
             # mypy: ensure str, not Optional[str]
             if self._token is None or self._client_id is None:
@@ -923,6 +1121,14 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             return None, -1
 
     def _extract_broadcaster_ids_from_data(self, data: Any) -> set[str]:
+        """Extracts broadcaster IDs from API response data.
+
+        Args:
+            data (Any): API response data.
+
+        Returns:
+            set[str]: Set of broadcaster IDs.
+        """
         rows = data.get("data")
         if not isinstance(rows, list):
             return set()
@@ -934,6 +1140,14 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         return result
 
     def _extract_broadcaster_id(self, entry: Any) -> str | None:
+        """Extracts broadcaster ID from a subscription entry.
+
+        Args:
+            entry (Any): Subscription entry data.
+
+        Returns:
+            str | None: Broadcaster ID or None if not matching.
+        """
         if not isinstance(entry, dict):
             return None
         if entry.get("type") != EVENTSUB_CHAT_MESSAGE:
@@ -946,6 +1160,11 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         return bid if isinstance(bid, str) else None
 
     def _expected_broadcaster_ids(self) -> set[str]:
+        """Gets expected broadcaster IDs for current channels.
+
+        Returns:
+            set[str]: Set of expected broadcaster IDs.
+        """
         return {
             bid for bid in (self._channel_ids.get(c) for c in self._channels) if bid
         }
@@ -984,6 +1203,11 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         return action
 
     async def _resubscribe_missing(self, missing: set[str]) -> None:
+        """Resubscribes to missing channels.
+
+        Args:
+            missing (set[str]): Set of missing broadcaster IDs.
+        """
         for ch, bid in self._channel_ids.items():
             if bid in missing:
                 await self._subscribe_channel_chat(ch)
@@ -992,6 +1216,11 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         )
 
     async def _maybe_verify_subs(self, now: float) -> None:
+        """Conditionally verifies subscriptions based on timing.
+
+        Args:
+            now (float): Current monotonic time.
+        """
         if now < self._next_sub_check:
             return
         try:
@@ -1006,12 +1235,22 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             self._next_sub_check = now + self._audit_interval + self._jitter(0, 120.0)
 
     async def _ensure_socket(self) -> bool:
+        """Ensures WebSocket connection is active.
+
+        Returns:
+            bool: True if socket is active or reconnection successful.
+        """
         if self._ws and not self._ws.closed:
             return True
         logging.info("⚠️ EventSub WebSocket closed detected")
         return await self._reconnect_with_backoff()
 
     async def _receive_one(self) -> aiohttp.WSMessage | None:
+        """Receives one WebSocket message with timeout handling.
+
+        Returns:
+            aiohttp.WSMessage | None: Received message or None on timeout/error.
+        """
         if not self._ws:
             return None
         try:
@@ -1039,6 +1278,10 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
 
     # ---- reconnect helpers moved to class scope to reduce function complexity ----
     async def _reconnect_cleanup(self) -> None:
+        """Cleans up state for reconnection.
+
+        Closes WebSocket, handles pending session ID, and resets counters.
+        """
         await self._safe_close()
         # If Twitch provided a pending reconnect session id keep it so the
         # new connection can attempt to resume that session.
@@ -1053,9 +1296,18 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         self._consecutive_subscribe_401 = 0
 
     async def _perform_handshake(self) -> tuple[bool, dict]:
+        """Performs WebSocket handshake.
+
+        Returns:
+            tuple[bool, dict]: Success flag and handshake details.
+        """
         return await self._open_and_handshake_detailed()
 
     async def _do_subscribe_cycle(self) -> None:
+        """Performs subscription cycle for all channels.
+
+        Resolves channels and subscribes to chat messages.
+        """
         # rebuild channel subs
         await self._batch_resolve_channels(self._channels)
         for ch in self._channels:
@@ -1071,25 +1323,59 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
                 await self._subscribe_channel_chat(ch)
             self._force_full_resubscribe = False
 
+    def _log_handshake_failure_details(self, handshake_details: dict) -> None:
+        """Logs detailed handshake failure information."""
+        try:
+            details = (
+                handshake_details
+                if isinstance(handshake_details, dict)
+                else {"details": str(handshake_details)}
+            )
+            if isinstance(details, dict):
+                details = dict(details)
+                details.pop("request_headers", None)
+                raw = details.get("welcome_raw")
+                if isinstance(raw, bytes | str) and len(raw) > 2048:
+                    details["welcome_raw"] = (
+                        raw if isinstance(raw, str) else raw.decode(errors="ignore")
+                    )[:2048] + "...<truncated>"
+            logging.error(
+                f"🧪 EventSub handshake failure details: {json.dumps(details, default=str)}"
+            )
+        except Exception as log_e:  # noqa: BLE001
+            logging.error(f"🧪 EventSub handshake details logging error: {str(log_e)}")
+
+    def _handle_reconnect_success(self) -> None:
+        """Handles successful reconnect by resetting state."""
+        self._backoff = 1.0
+        now = time.monotonic()
+        self._last_activity = now
+        self._fast_audit_pending = True
+        self._next_sub_check = now + self._jitter(
+            self._fast_audit_min, self._fast_audit_max
+        )
+
+    async def _handle_reconnect_failure(self, attempt: int) -> None:
+        """Handles reconnect failure by logging and applying backoff."""
+        logging.error(
+            f"❌ EventSub reconnect failed attempt={attempt} backoff={round(self._backoff, 2)}"
+        )
+        await asyncio.sleep(
+            self._backoff + self._jitter(0, EVENTSUB_JITTER_FACTOR * self._backoff)
+        )
+        self._backoff = min(self._backoff * 2, self._max_backoff)
+
     async def _reconnect_with_backoff(self) -> bool:
         """Reconnect loop with reduced cognitive complexity by delegating
         cleanup, handshake and subscribe cycles to small helpers.
         """
 
-        # Use class-scoped helpers (_reconnect_cleanup, _perform_handshake,
-        # _do_subscribe_cycle) to keep this function small and testable.
-
         attempt = 0
         while not self._stop_event.is_set():
             attempt += 1
             try:
-                # --- FULL STATE CLEANUP ---
                 await self._reconnect_cleanup()
-
-                # --- RECONNECT DELAY ---
-                await asyncio.sleep(
-                    EVENTSUB_RECONNECT_DELAY_SECONDS
-                )  # 1 second delay before reconnect
+                await asyncio.sleep(EVENTSUB_RECONNECT_DELAY_SECONDS)
 
                 logging.info(
                     "🔄 EventSub reconnect attempt={attempt} ws_url={ws_url} session_id={session_id} channels={channels}".format(
@@ -1100,7 +1386,6 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
                     )
                 )
 
-                # --- HANDSHAKE WITH FULL LOGGING ---
                 handshake_ok, handshake_details = await self._perform_handshake()
                 logging.info(
                     "🤝 EventSub handshake result: attempt={attempt} ws_url={ws_url} session_id={session_id} handshake_ok={handshake_ok}".format(
@@ -1111,59 +1396,19 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
                     )
                 )
                 if not handshake_ok:
-                    # Log sanitized handshake details to diagnose failures without leaking sensitive headers
-                    try:
-                        details = (
-                            handshake_details
-                            if isinstance(handshake_details, dict)
-                            else {"details": str(handshake_details)}
-                        )
-                        if isinstance(details, dict):
-                            details = dict(details)
-                            # Remove any request headers (may contain Authorization)
-                            details.pop("request_headers", None)
-                            raw = details.get("welcome_raw")
-                            if isinstance(raw, bytes | str) and len(raw) > 2048:
-                                details["welcome_raw"] = (
-                                    raw
-                                    if isinstance(raw, str)
-                                    else raw.decode(errors="ignore")
-                                )[:2048] + "...<truncated>"
-                        logging.error(
-                            f"🧪 EventSub handshake failure details: {json.dumps(details, default=str)}"
-                        )
-                    except Exception as log_e:  # noqa: BLE001
-                        logging.error(
-                            f"🧪 EventSub handshake details logging error: {str(log_e)}"
-                        )
-                    # Raise a generic error to continue existing backoff flow
+                    self._log_handshake_failure_details(handshake_details)
                     raise RuntimeError("handshake failed")
 
-                # subscribe / resubscribe work
                 await self._do_subscribe_cycle()
 
                 logging.info(
                     f"✅ EventSub reconnect success attempt={attempt} channels={len(self._channels)}"
                 )
 
-                self._backoff = 1.0
-                now = time.monotonic()
-                self._last_activity = now
-                # schedule a fast audit soon with jitter
-                self._fast_audit_pending = True
-                self._next_sub_check = now + self._jitter(
-                    self._fast_audit_min, self._fast_audit_max
-                )
+                self._handle_reconnect_success()
                 return True
             except Exception:  # noqa: BLE001
-                logging.error(
-                    f"❌ EventSub reconnect failed attempt={attempt} backoff={round(self._backoff, 2)}"
-                )
-                await asyncio.sleep(
-                    self._backoff
-                    + self._jitter(0, EVENTSUB_JITTER_FACTOR * self._backoff)
-                )
-                self._backoff = min(self._backoff * 2, self._max_backoff)
+                await self._handle_reconnect_failure(attempt)
         return False
 
     async def _open_and_handshake_detailed(self):
@@ -1239,14 +1484,12 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
                 if isinstance(challenge_data, dict)
                 else None
             )
+            if isinstance(challenge_data, dict):
+                challenge_type = challenge_data.get("type")
+            else:
+                challenge_type = None
             mtype = (
-                meta.get("message_type")
-                if isinstance(meta, dict)
-                else (
-                    challenge_data.get("type")
-                    if isinstance(challenge_data, dict)
-                    else None
-                )
+                meta.get("message_type") if isinstance(meta, dict) else challenge_type
             )
             payload = (
                 challenge_data.get("payload")
@@ -1327,7 +1570,7 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
 
             # Handle close frames
             if welcome.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING):
-                return await self._handle_close_frame(welcome, handshake_details)
+                return self._handle_close_frame(welcome, handshake_details)
 
             # Handle errors
             if welcome.type == aiohttp.WSMsgType.ERROR:
@@ -1356,7 +1599,7 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             handshake_details["error"] = f"welcome_parse_error: {e}"
             return False, handshake_details
 
-    async def _handle_close_frame(self, welcome, handshake_details):
+    def _handle_close_frame(self, welcome, handshake_details):
         """Handle WebSocket close frames during handshake."""
         handshake_details["error"] = "closed_by_server"
         close_code = getattr(welcome, "data", None)

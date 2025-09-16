@@ -58,7 +58,13 @@ async def main() -> None:
 
 
 def run() -> None:
-    """Synchronous entry point for the application."""
+    """Synchronous entry point for the application.
+
+    Runs the main asynchronous function and handles top-level exceptions.
+
+    Raises:
+        SystemExit: If a critical error occurs during execution.
+    """
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

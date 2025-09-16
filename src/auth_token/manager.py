@@ -139,6 +139,11 @@ class TokenManager:
 
         Performs initial validation and launches the background task for
         periodic token management.
+
+        Raises:
+            aiohttp.ClientError: If network requests fail during validation.
+            ValueError: If token data is invalid.
+            RuntimeError: If background task creation fails.
         """
         if self.running:
             return
@@ -178,6 +183,23 @@ class TokenManager:
                 await self._initial_validate_user(username, info)
 
     async def _initial_validate_user(self, username: str, info: TokenInfo) -> None:
+        """Validate a user's token during initial startup validation.
+
+        Performs remote validation if expiry is known, or skips if unknown.
+        Refreshes proactively if remaining time is below threshold.
+
+        Args:
+            username: Username associated with the token.
+            info: TokenInfo object containing token details.
+
+        Returns:
+            None
+
+        Raises:
+            aiohttp.ClientError: If network request fails.
+            ValueError: If token data is invalid.
+            RuntimeError: If validation process encounters an error.
+        """
         try:
             if info.expiry is None:
                 logging.info(
@@ -378,6 +400,17 @@ class TokenManager:
             return self.tokens.get(username)
 
     async def _get_client(self, client_id: str, client_secret: str) -> TokenClient:
+        """Retrieve or create a TokenClient for the given credentials.
+
+        Uses caching to avoid creating multiple clients for the same credentials.
+
+        Args:
+            client_id: Twitch client ID.
+            client_secret: Twitch client secret.
+
+        Returns:
+            TokenClient instance for the credentials.
+        """
         async with self._client_cache_lock:
             key = (client_id, client_secret)
             cli = self._client_cache.get(key)
@@ -398,6 +431,11 @@ class TokenManager:
 
         Returns:
             Outcome of the ensure fresh operation.
+
+        Raises:
+            aiohttp.ClientError: If network requests fail.
+            ValueError: If token data is invalid.
+            RuntimeError: If refresh process fails.
         """
         async with self._tokens_lock:
             info = self.tokens.get(username)
@@ -415,6 +453,17 @@ class TokenManager:
 
     # --- Internal helpers (extracted to reduce complexity) ---
     def _should_skip_refresh(self, info: TokenInfo, force_refresh: bool) -> bool:
+        """Determine if token refresh should be skipped.
+
+        Skips if not forced and expiry exists with sufficient remaining time.
+
+        Args:
+            info: TokenInfo object containing token details.
+            force_refresh: Whether to force refresh regardless of expiry.
+
+        Returns:
+            True if refresh should be skipped, False otherwise.
+        """
         if force_refresh:
             return False
         remaining = self._remaining_seconds(info)
@@ -431,6 +480,19 @@ class TokenManager:
         username: str,
         force_refresh: bool,
     ) -> tuple[TokenResult, bool]:
+        """Perform token refresh with locking to prevent concurrency issues.
+
+        Ensures only one refresh operation per user at a time.
+
+        Args:
+            client: TokenClient to use for refresh.
+            info: TokenInfo object containing token details.
+            username: Username associated with the token.
+            force_refresh: Whether to force refresh.
+
+        Returns:
+            Tuple of (TokenResult from refresh, whether token actually changed).
+        """
         token_changed = False
         async with info.refresh_lock:
             before_access = info.access_token
@@ -460,6 +522,14 @@ class TokenManager:
         return result, token_changed
 
     def _apply_successful_refresh(self, info: TokenInfo, result: TokenResult) -> None:
+        """Apply the results of a successful token refresh to TokenInfo.
+
+        Updates access token, refresh token, expiry, and state.
+
+        Args:
+            info: TokenInfo object to update.
+            result: TokenResult containing refresh outcome data.
+        """
         if result.access_token is not None:
             info.access_token = result.access_token
         if result.refresh_token:
@@ -477,6 +547,18 @@ class TokenManager:
                 info.original_lifetime = remaining
 
     async def _maybe_fire_update_hook(self, username: str, token_changed: bool) -> None:
+        """Fire registered update hooks if the token has changed.
+
+        Schedules hook coroutines to run asynchronously.
+
+        Args:
+            username: Username for which hooks should be fired.
+            token_changed: Whether the token actually changed.
+
+        Raises:
+            ValueError: If hook scheduling fails.
+            RuntimeError: If task creation fails.
+        """
         if not token_changed:
             return
         async with self._hooks_lock:
@@ -492,6 +574,17 @@ class TokenManager:
                 )
 
     async def _maybe_fire_invalidation_hook(self, username: str) -> None:
+        """Fire registered invalidation hooks for token invalidation.
+
+        Schedules hook coroutines to run asynchronously.
+
+        Args:
+            username: Username for which hooks should be fired.
+
+        Raises:
+            ValueError: If hook scheduling fails.
+            RuntimeError: If task creation fails.
+        """
         async with self._hooks_lock:
             hooks = self._invalidation_hooks.get(username) or []
         for hook in hooks:
@@ -516,12 +609,20 @@ class TokenManager:
             self._hook_tasks.append(task)
 
         def _cb(t: asyncio.Task[T]) -> None:  # noqa: D401
-            asyncio.create_task(self._remove_hook_task(t, category))
+            _ = asyncio.create_task(self._remove_hook_task(t, category))
 
         task.add_done_callback(_cb)
         return task
 
     async def _remove_hook_task(self, t: asyncio.Task[T], category: str) -> None:
+        """Remove a completed hook task from the retained tasks list.
+
+        Logs any exceptions from the task.
+
+        Args:
+            t: The asyncio Task to remove.
+            category: Category of the hook task for logging.
+        """
         async with self._hooks_lock:
             self._hook_tasks.remove(t)
         if t.cancelled():
@@ -548,6 +649,11 @@ class TokenManager:
 
         Returns:
             VALID if token is valid, FAILED otherwise.
+
+        Raises:
+            aiohttp.ClientError: If network request fails.
+            ValueError: If token data is invalid.
+            RuntimeError: If validation process fails.
         """
         async with self._tokens_lock:
             info = self.tokens.get(username)
@@ -570,11 +676,30 @@ class TokenManager:
             return TokenOutcome.FAILED
 
     def _remaining_seconds(self, info: TokenInfo) -> float | None:
+        """Calculate remaining seconds until token expiry.
+
+        Args:
+            info: TokenInfo object containing expiry information.
+
+        Returns:
+            Remaining seconds as float, or None if expiry is unknown.
+        """
         if not info.expiry:
             return None
         return (info.expiry - datetime.now(UTC)).total_seconds()
 
     async def _background_refresh_loop(self) -> None:
+        """Background loop for periodic token validation and refresh.
+
+        Runs continuously while the manager is running, checking all tokens
+        and refreshing as needed.
+
+        Raises:
+            RuntimeError: If background processing fails.
+            OSError: If system-level errors occur.
+            ValueError: If invalid data is encountered.
+            aiohttp.ClientError: If network requests fail.
+        """
         base = TOKEN_MANAGER_BACKGROUND_BASE_SLEEP
         last_loop = time.time()
         while self.running:
@@ -688,6 +813,12 @@ class TokenManager:
             return self._remaining_seconds(info)
 
     def _log_remaining_detail(self, username: str, remaining: float | None) -> None:
+        """Log detailed remaining token validity time for observability.
+
+        Args:
+            username: Username associated with the token.
+            remaining: Remaining seconds until expiry, or None if unknown.
+        """
         # Emit remaining time every cycle for observability (even when no refresh triggered).
         if remaining is None:
             logging.debug(

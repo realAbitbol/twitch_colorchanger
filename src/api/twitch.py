@@ -63,6 +63,11 @@ class TwitchAPI:
 
         Returns:
             tuple[dict[str, Any], int, dict[str, str]]: A tuple containing the JSON response data, HTTP status code, and response headers.
+
+        Raises:
+            aiohttp.ClientError: If network request fails.
+            TimeoutError: If request times out.
+            ValueError: If response parsing fails.
         """
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -109,6 +114,11 @@ class TwitchAPI:
 
         Returns:
             dict[str, Any] | None: Token validation payload if valid, None otherwise.
+
+        Raises:
+            aiohttp.ClientError: If network request fails.
+            TimeoutError: If request times out.
+            ValueError: If response parsing fails.
         """
 
         async def operation():
@@ -143,6 +153,21 @@ class TwitchAPI:
 
         Returns:
             dict[str, str]: Mapping of lowercase login names to user IDs. Unknown logins are omitted.
+
+        Raises:
+            aiohttp.ClientError: If network request fails.
+            TimeoutError: If request times out.
+            ValueError: If response parsing fails.
+
+        Example:
+            >>> api = TwitchAPI(session)
+            >>> users = await api.get_users_by_login(
+            ...     access_token="token",
+            ...     client_id="client_id",
+            ...     logins=["user1", "user2"]
+            ... )
+            >>> print(users)
+            {'user1': '12345', 'user2': '67890'}
         """
         if not logins:
             return {}

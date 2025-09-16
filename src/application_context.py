@@ -42,6 +42,10 @@ class ApplicationContext:
 
         Returns:
             A fully initialized ApplicationContext instance.
+
+        Raises:
+            aiohttp.ClientError: If HTTP session creation fails.
+            ValueError: If token manager initialization fails.
         """
         ctx = cls()
         logging.debug("🧪 Creating application context")
@@ -59,6 +63,9 @@ class ApplicationContext:
 
         This method ensures that the token manager is started if present,
         and marks the context as started. It is idempotent and thread-safe.
+
+        Raises:
+            Exception: If token manager startup fails.
         """
         async with self._lock:
             if self._started:

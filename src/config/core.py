@@ -79,6 +79,11 @@ def update_user_in_config(user_config_dict: dict[str, Any], config_file: str) ->
 
     Returns:
         True if the update was successful, False otherwise.
+
+    Raises:
+        ValueError: If user config is invalid.
+        RuntimeError: If update process fails.
+        OSError: If file operations fail.
     """
     try:
         uc = UserConfig.from_dict(user_config_dict)
@@ -300,6 +305,11 @@ async def setup_missing_tokens(
 
     Returns:
         List of updated UserConfig instances.
+
+    Raises:
+        aiohttp.ClientError: If network requests fail.
+        ValueError: If token provisioning fails.
+        RuntimeError: If token setup process fails.
     """
     import aiohttp
 
