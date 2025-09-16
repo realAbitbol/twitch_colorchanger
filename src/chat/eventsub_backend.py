@@ -194,6 +194,8 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
             self._token_invalid_flag = False
             self._consecutive_subscribe_401 = 0
             logging.info("🔄 EventSub token recovered")
+        # Re-validate scopes after token refresh to catch scope changes
+        asyncio.create_task(self._record_token_scopes())
 
     def _jitter(self, a: float, b: float) -> float:
         """Returns scheduling jitter using a non-crypto source.

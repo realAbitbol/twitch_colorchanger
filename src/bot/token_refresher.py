@@ -131,7 +131,7 @@ class TokenRefresher:
         """
         normalized_channels, was_changed = normalize_channels_list(self.channels)
         if was_changed:
-            logging.info(
+            logging.debug(
                 f"🛠️ Normalized channels old={len(self.channels)} new={len(normalized_channels)} user={self.username}"
             )
             self.channels = normalized_channels

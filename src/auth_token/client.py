@@ -33,6 +33,18 @@ class TokenOutcome(str, Enum):
     FAILED = "failed"
 
 
+class RefreshErrorType(str, Enum):
+    """Enumeration of refresh error types for classification.
+
+    Attributes:
+        RECOVERABLE: Error is transient and retry may succeed.
+        NON_RECOVERABLE: Error indicates permanent failure, no retry.
+    """
+
+    RECOVERABLE = "recoverable"
+    NON_RECOVERABLE = "non_recoverable"
+
+
 @dataclass
 class TokenResult:
     """Result of a token validation or refresh operation.
@@ -42,12 +54,14 @@ class TokenResult:
         access_token: The access token, if available.
         refresh_token: The refresh token, if available.
         expiry: The expiry datetime, if available.
+        error_type: The type of error, if operation failed.
     """
 
     outcome: TokenOutcome
     access_token: str | None
     refresh_token: str | None
     expiry: datetime | None
+    error_type: RefreshErrorType | None = None
 
 
 class TokenClient:
@@ -84,7 +98,9 @@ class TokenClient:
         valid, expiry = await self._validate_remote(username, access_token)
         if valid:
             return TokenResult(TokenOutcome.VALID, access_token, None, expiry)
-        return TokenResult(TokenOutcome.FAILED, None, None, None)
+        return TokenResult(
+            TokenOutcome.FAILED, None, None, None, RefreshErrorType.NON_RECOVERABLE
+        )
 
     async def ensure_fresh(
         self,
@@ -145,7 +161,13 @@ class TokenClient:
 
         # Need refresh token to proceed
         if not refresh_token:
-            return TokenResult(TokenOutcome.FAILED, None, None, expiry)
+            return TokenResult(
+                TokenOutcome.FAILED,
+                None,
+                None,
+                expiry,
+                RefreshErrorType.NON_RECOVERABLE,
+            )
         return await self.refresh(username, refresh_token)
 
     async def refresh(self, username: str, refresh_token: str) -> TokenResult:
@@ -194,8 +216,8 @@ class TokenClient:
                     return TokenResult(
                         TokenOutcome.REFRESHED, new_access, new_refresh, expiry
                     )
-                if resp.status == 401:
-                    raise OAuthError("Unauthorized during token refresh")
+                if resp.status in (400, 401):
+                    raise OAuthError("Invalid refresh token")
                 if resp.status == 429:
                     raise RateLimitError("Rate limited during refresh")
                 raise NetworkError(f"HTTP {resp.status} during token refresh")
@@ -204,23 +226,33 @@ class TokenClient:
         except aiohttp.ClientError as e:
             raise NetworkError(f"Network error during token refresh: {e}") from e
         except ParsingError:
-            return TokenResult(TokenOutcome.FAILED, None, None, None)
+            return TokenResult(
+                TokenOutcome.FAILED, None, None, None, RefreshErrorType.NON_RECOVERABLE
+            )
         except OAuthError:
-            return TokenResult(TokenOutcome.FAILED, None, None, None)
+            return TokenResult(
+                TokenOutcome.FAILED, None, None, None, RefreshErrorType.NON_RECOVERABLE
+            )
         except RateLimitError:
-            return TokenResult(TokenOutcome.FAILED, None, None, None)
+            return TokenResult(
+                TokenOutcome.FAILED, None, None, None, RefreshErrorType.RECOVERABLE
+            )
         except NetworkError as e:
             logging.warning(
                 f"💥 Network error during token refresh attempt 1: {type(e).__name__} user={username} error={str(e)}"
             )
-            return TokenResult(TokenOutcome.FAILED, None, None, None)
+            return TokenResult(
+                TokenOutcome.FAILED, None, None, None, RefreshErrorType.RECOVERABLE
+            )
         except Exception as e:  # noqa: BLE001
             import traceback
 
             logging.error(
                 f"💥 Unexpected token refresh error: {type(e).__name__} user={username} error={str(e)} traceback={traceback.format_exc()}"
             )
-            return TokenResult(TokenOutcome.FAILED, None, None, None)
+            return TokenResult(
+                TokenOutcome.FAILED, None, None, None, RefreshErrorType.RECOVERABLE
+            )
 
     async def _validate_remote(
         self, username: str, access_token: str

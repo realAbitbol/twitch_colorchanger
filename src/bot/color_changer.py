@@ -68,7 +68,7 @@ class ColorChanger:
         pass  # For mock patching compatibility
 
     @property
-    def access_token(self) -> str:
+    def access_token(self) -> str | None:
         return self.bot.access_token
 
     @property
@@ -173,6 +173,8 @@ class ColorChanger:
         Returns:
             Tuple of (response data, status code).
         """
+        if self.access_token is None:
+            return None, 401
         data, status_code, _ = await self.api.request(
             "GET",
             "users",
@@ -309,6 +311,8 @@ class ColorChanger:
         Returns:
             Tuple of (response data, status code).
         """
+        if self.access_token is None:
+            return None, 401
         params = {"user_id": self.user_id}
         data, status_code, _ = await self.api.request(
             "GET",
@@ -361,6 +365,10 @@ class ColorChanger:
         logging.debug(f"Performing color request action={action} user={self.username}")
 
         async def operation(attempt):
+            if self.access_token is None:
+                return ColorRequestResult(
+                    ColorRequestStatus.UNAUTHORIZED, error="No access token"
+                ), False
             data, status_code, _ = await self.api.request(
                 "PUT",
                 CHAT_COLOR_ENDPOINT,

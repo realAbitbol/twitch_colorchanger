@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 import aiohttp
 
 from ..api.twitch import TwitchAPI
+from ..auth_token.provisioner import TokenProvisioner
 from ..config.async_persistence import async_update_user_in_config, queue_user_update
 from ..config.model import normalize_channels_list
 from ..errors.handling import handle_api_error
@@ -28,6 +29,8 @@ class TokenHandler:
             bot: The TwitchColorBot instance this handler belongs to.
         """
         self.bot = bot
+        self._device_flow_lock = asyncio.Lock()
+        self._device_flow_in_progress = False
 
     async def setup_token_manager(self) -> bool:
         """Set up and register with token manager. Returns False on failure."""
@@ -35,6 +38,9 @@ class TokenHandler:
         self.bot.token_manager = self.bot.context.token_manager
         if self.bot.token_manager is None:  # pragma: no cover - defensive
             logging.error(f"❌ No token manager available user={self.bot.username}")
+            return False
+        if self.bot.access_token is None or self.bot.refresh_token is None:
+            logging.error(f"❌ Tokens not available user={self.bot.username}")
             return False
         # Register credentials with the token manager
         await self.bot.token_manager._upsert_token_info(  # noqa: SLF001
@@ -49,6 +55,9 @@ class TokenHandler:
         try:
             await self.bot.token_manager.register_update_hook(
                 self.bot.username, self._persist_token_changes
+            )
+            await self.bot.token_manager.register_invalidation_hook(
+                self.bot.username, self._trigger_device_flow_reauth
             )
         except (ValueError, RuntimeError) as e:
             logging.debug(f"Token hook registration failed: {str(e)}")
@@ -79,6 +88,19 @@ class TokenHandler:
                 await self._persist_token_changes()
             except (OSError, ValueError, RuntimeError) as e:
                 logging.debug(f"Token persistence error: {str(e)}")
+        # Check required scopes on initial load
+        if info.access_token and not await self._validate_required_scopes(
+            info.access_token
+        ):
+            logging.warning(
+                f"🚫 Insufficient scopes detected on initial load user={self.bot.username}, invalidating and triggering re-auth"
+            )
+            self.bot.access_token = None
+            self.bot.refresh_token = None
+            self.bot.token_expiry = None
+            await self._trigger_device_flow_reauth(
+                reason="insufficient scopes on initial load"
+            )
 
     async def log_scopes_if_possible(self) -> None:
         """Log the scopes of the current access token if possible.
@@ -124,7 +146,7 @@ class TokenHandler:
         """
         normalized_channels, was_changed = normalize_channels_list(self.bot.channels)
         if was_changed:
-            logging.info(
+            logging.debug(
                 f"🛠️ Normalized channels old={len(self.bot.channels)} new={len(normalized_channels)} user={self.bot.username}"
             )
             self.bot.channels = normalized_channels
@@ -136,7 +158,7 @@ class TokenHandler:
     async def check_and_refresh_token(self, force: bool = False) -> bool:
         """Check and refresh the access token if needed.
 
-        Ensures the token is fresh and updates the backend if token changed.
+        Ensures the token is fresh, validates required scopes, and updates the backend if token changed.
 
         Args:
             force: Force token refresh even if not expired.
@@ -153,21 +175,149 @@ class TokenHandler:
         try:
             outcome = await tm.ensure_fresh(self.bot.username, force_refresh=force)
             info = await tm.get_info(self.bot.username)
-            if info and info.access_token:
-                if info.access_token != self.bot.access_token:
-                    self.bot.access_token = info.access_token
-                    self.bot.token_expiry = info.expiry
-                    backend_local = self.bot.connection_manager.chat_backend
-                    if backend_local is not None:
-                        try:
-                            backend_local.update_token(info.access_token)
-                        except (AttributeError, ValueError, RuntimeError) as e:
-                            logging.debug(f"Backend token update error: {str(e)}")
-                return outcome.name != "FAILED"
-            return False
+            if not info or not info.access_token:
+                return False
+            # Validate scopes
+            if not await self._validate_required_scopes(info.access_token):
+                logging.warning(
+                    f"🚫 Insufficient scopes detected user={self.bot.username}, triggering re-auth"
+                )
+                await self._trigger_device_flow_reauth(reason="insufficient scopes")
+                return False
+            token_changed = self._update_bot_tokens(info)
+            if token_changed:
+                self._update_backend_token(info.access_token)
+            return outcome.name != "FAILED"
         except (aiohttp.ClientError, ValueError, RuntimeError) as e:
             logging.error(f"Token refresh error: {str(e)}")
             return False
+
+    def _update_bot_tokens(self, info) -> bool:
+        """Update bot's tokens if they have changed.
+
+        Args:
+            info: Token info from token manager.
+
+        Returns:
+            True if any token was updated, False otherwise.
+        """
+        changed = False
+        if info.access_token != self.bot.access_token:
+            self.bot.access_token = info.access_token
+            changed = True
+        if getattr(info, "refresh_token", None) and info.refresh_token != getattr(
+            self.bot, "refresh_token", None
+        ):
+            self.bot.refresh_token = info.refresh_token
+            changed = True
+        if info.expiry != self.bot.token_expiry:
+            self.bot.token_expiry = info.expiry
+            changed = True
+        return changed
+
+    def _update_backend_token(self, access_token: str) -> None:
+        """Update the backend with the new access token.
+
+        Args:
+            access_token: The new access token.
+        """
+        backend_local = self.bot.connection_manager.chat_backend
+        if backend_local is not None:
+            try:
+                backend_local.update_token(access_token)
+            except (AttributeError, ValueError, RuntimeError) as e:
+                logging.debug(f"Backend token update error: {str(e)}")
+
+    async def _validate_required_scopes(self, access_token: str) -> bool:
+        """Validate that the access token has the required scopes.
+
+        Args:
+            access_token: The access token to validate.
+
+        Returns:
+            True if all required scopes are present, False otherwise.
+        """
+        if not self.bot.context.session:
+            return False
+        api = TwitchAPI(self.bot.context.session)
+        required_scopes = {"chat:read", "user:read:chat", "user:manage:chat_color"}
+        try:
+            validation = await api.validate_token(access_token)
+            if not isinstance(validation, dict):
+                return False
+            raw_scopes = validation.get("scopes")
+            if not isinstance(raw_scopes, list):
+                return False
+            current_scopes = {str(s).lower() for s in raw_scopes}
+            return required_scopes.issubset(current_scopes)
+        except (aiohttp.ClientError, ValueError, RuntimeError):
+            return False
+
+    async def _trigger_device_flow_reauth(
+        self, reason: str = "token invalidation"
+    ) -> None:
+        """Trigger device flow re-authentication when tokens are invalidated."""
+        logging.info(
+            f"🔄 Device flow re-authentication triggered for user={self.bot.username} due to {reason}. "
+            "Please re-authorize the application with the required permissions to continue using the bot."
+        )
+        async with self._device_flow_lock:
+            if self._device_flow_in_progress:
+                return
+            self._device_flow_in_progress = True
+            # Pause background refresh during device flow
+            if self.bot.token_manager:
+                await self.bot.token_manager.pause_background_refresh(self.bot.username)
+            try:
+                if not self.bot.context.session:
+                    logging.error(
+                        f"❌ No session available for re-auth user={self.bot.username}"
+                    )
+                    return
+                provisioner = TokenProvisioner(self.bot.context.session)
+                try:
+                    access, refresh, expiry = await provisioner._interactive_authorize(
+                        self.bot.client_id, self.bot.client_secret, self.bot.username
+                    )
+                    if access and refresh:
+                        # Update bot's tokens
+                        self.bot.access_token = access
+                        self.bot.refresh_token = refresh
+                        self.bot.token_expiry = expiry
+                        # Update token manager
+                        if self.bot.token_manager is None:
+                            logging.error(
+                                f"❌ Token manager not available after re-auth user={self.bot.username}"
+                            )
+                            return
+                        await self.bot.token_manager._upsert_token_info(
+                            username=self.bot.username,
+                            access_token=access,
+                            refresh_token=refresh,
+                            client_id=self.bot.client_id,
+                            client_secret=self.bot.client_secret,
+                            expiry=expiry,
+                        )
+                        logging.info(
+                            f"✅ Device flow re-auth successful user={self.bot.username}"
+                        )
+                        # Persist changes
+                        await self._persist_token_changes()
+                        # Resume background refresh
+                        if self.bot.token_manager:
+                            await self.bot.token_manager.resume_background_refresh(
+                                self.bot.username
+                            )
+                    else:
+                        logging.error(
+                            f"❌ Device flow re-auth failed user={self.bot.username}"
+                        )
+                except Exception as e:
+                    logging.error(
+                        f"💥 Device flow re-auth error user={self.bot.username}: {str(e)}"
+                    )
+            finally:
+                self._device_flow_in_progress = False
 
     async def _persist_token_changes(self) -> None:
         """Persist updated token information to configuration."""

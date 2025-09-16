@@ -193,7 +193,7 @@ async def test_poll_success(monkeypatch, caplog):
 
     df = DeviceCodeFlow("cid", "secret")
     df.poll_interval = 0  # speed
-    result = await df.poll_for_tokens("dev-code", expires_in=5)
+    result = await df.poll_for_tokens("dev-code", expires_in=5, user="testuser", user_code="user-code")
     assert result == {"access_token": "at1", "refresh_token": "rt1"}
     assert any("Authorized after" in r.message for r in caplog.records)
 
@@ -216,7 +216,7 @@ async def test_poll_slow_down(monkeypatch, caplog):
     original_sleep = asyncio.sleep
     monkeypatch.setattr("asyncio.sleep", lambda _s: original_sleep(0))
 
-    result = await df.poll_for_tokens("dev-code", expires_in=10)
+    result = await df.poll_for_tokens("dev-code", expires_in=10, user="testuser", user_code="user-code")
     assert result["access_token"] == "at2"  # noqa: S105
     # Interval should have been incremented once (1 -> 2) due to slow_down.
     assert df.poll_interval == 2
@@ -230,7 +230,7 @@ async def test_poll_expired_token(monkeypatch, caplog):
     monkeypatch.setattr("aiohttp.ClientSession", lambda: FakeSession(responses))  # type: ignore[arg-type]
     df = DeviceCodeFlow("cid", "secret")
     df.poll_interval = 0
-    result = await df.poll_for_tokens("dev-code", expires_in=10)
+    result = await df.poll_for_tokens("dev-code", expires_in=10, user="testuser", user_code="user-code")
     # Current implementation returns {} for terminal errors.
     assert result == {}
     assert any("Device code expired after" in r.message for r in caplog.records)
@@ -242,7 +242,7 @@ async def test_poll_access_denied(monkeypatch, caplog):
     responses = [(400, {"message": "access_denied"})]
     monkeypatch.setattr("aiohttp.ClientSession", lambda: FakeSession(responses))  # type: ignore[arg-type]
     df = DeviceCodeFlow("cid", "secret")
-    result = await df.poll_for_tokens("dev-code", expires_in=10)
+    result = await df.poll_for_tokens("dev-code", expires_in=10, user="testuser", user_code="user-code")
     assert result == {}
     assert any("User denied access" in r.message for r in caplog.records)
 
@@ -255,7 +255,7 @@ async def test_poll_timeout(monkeypatch, caplog):
     monkeypatch.setattr("aiohttp.ClientSession", lambda: FakeSession(responses))  # type: ignore[arg-type]
     df = DeviceCodeFlow("cid", "secret")
     df.poll_interval = 0
-    result = await df.poll_for_tokens("dev-code", expires_in=0)
+    result = await df.poll_for_tokens("dev-code", expires_in=0, user="testuser", user_code="user-code")
     assert result is None
     assert any("Timed out after" in r.message for r in caplog.records)
 
@@ -266,7 +266,7 @@ async def test_device_flow_client_init_invalid_client_id():
     flow = DeviceCodeFlow("", "secret")
     # Mock session to test
     with patch("aiohttp.ClientSession.post", side_effect=aiohttp.ClientError):
-        result = await flow.request_device_code()
+        result = await flow.request_device_code("testuser")
         assert result is None
 
 
@@ -275,7 +275,7 @@ async def test_start_device_flow_network_errors(monkeypatch):
     """Test start_device_flow method with network connection errors."""
     flow = DeviceCodeFlow("cid", "secret")
     with patch("aiohttp.ClientSession.post", side_effect=aiohttp.ClientError("Network error")):
-        result = await flow.request_device_code()
+        result = await flow.request_device_code("testuser")
         assert result is None
 
 
@@ -284,7 +284,7 @@ async def test_poll_for_token_timeout(monkeypatch):
     """Test poll_for_token with timeout scenarios and user cancellation."""
     flow = DeviceCodeFlow("cid", "secret")
     monkeypatch.setattr("aiohttp.ClientSession", lambda: FakeSession([]))
-    result = await flow.poll_for_tokens("dev123", expires_in=0)
+    result = await flow.poll_for_tokens("dev123", expires_in=0, user="testuser", user_code="user-code")
     assert result is None
 
 
@@ -305,7 +305,7 @@ async def test_handle_device_code_invalid_response(monkeypatch):
         async def __aexit__(self, *args):  # noqa: D401
             pass
     monkeypatch.setattr("aiohttp.ClientSession", lambda: InvalidSession())
-    result = await flow.request_device_code()
+    result = await flow.request_device_code("testuser")
     assert result is None
 
 
@@ -315,5 +315,5 @@ async def test_refresh_token_expired(monkeypatch):
     flow = DeviceCodeFlow("cid", "secret")
     responses = [(400, {"message": "expired_token"})]
     monkeypatch.setattr("aiohttp.ClientSession", lambda: FakeSession(responses))
-    result = await flow.poll_for_tokens("dev123", expires_in=10)
+    result = await flow.poll_for_tokens("dev123", expires_in=10, user="testuser", user_code="user-code")
     assert result == {}

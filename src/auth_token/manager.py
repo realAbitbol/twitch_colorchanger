@@ -21,7 +21,7 @@ from ..constants import (
     TOKEN_REFRESH_THRESHOLD_SECONDS,
 )
 from ..utils import format_duration
-from .client import TokenClient, TokenOutcome, TokenResult
+from .client import RefreshErrorType, TokenClient, TokenOutcome, TokenResult
 
 T = TypeVar("T")
 
@@ -123,8 +123,14 @@ class TokenManager:
         self._update_hooks: dict[
             str, list[Callable[[], Coroutine[Any, Any, None]]]
         ] = {}
+        # Registered per-user async invalidation hooks (called when tokens are invalidated).
+        self._invalidation_hooks: dict[
+            str, list[Callable[[], Coroutine[Any, Any, None]]]
+        ] = {}
         # Retained background tasks (e.g. persistence hooks) to prevent premature GC.
         self._hook_tasks: list[asyncio.Task[Any]] = []
+        # Paused users for background refresh
+        self._paused_users: set[str] = set()
         # Mark as initialized to avoid repeating work on future constructions.
         self._inst_initialized = True
 
@@ -225,6 +231,27 @@ class TokenManager:
             finally:
                 self.background_task = None
 
+    async def pause_background_refresh(self, username: str) -> None:
+        """Pause background refresh for a specific user.
+
+        Args:
+            username: Username to pause background refresh for.
+        """
+        async with self._tokens_lock:
+            if username in self.tokens:
+                self._paused_users.add(username)
+                logging.debug(f"⏸️ Paused background refresh for user={username}")
+
+    async def resume_background_refresh(self, username: str) -> None:
+        """Resume background refresh for a specific user.
+
+        Args:
+            username: Username to resume background refresh for.
+        """
+        async with self._tokens_lock:
+            self._paused_users.discard(username)
+            logging.debug(f"▶️ Resumed background refresh for user={username}")
+
     async def register_update_hook(
         self, username: str, hook: Callable[[], Coroutine[Any, Any, None]]
     ) -> None:
@@ -237,6 +264,21 @@ class TokenManager:
             lst = self._update_hooks.get(username)
             if lst is None:
                 self._update_hooks[username] = [hook]
+            else:
+                lst.append(hook)
+
+    async def register_invalidation_hook(
+        self, username: str, hook: Callable[[], Coroutine[Any, Any, None]]
+    ) -> None:
+        """Register a coroutine hook invoked when tokens are invalidated.
+
+        Hooks are additive (multiple hooks can be registered per user).
+        Each hook is scheduled fire-and-forget when tokens are invalidated.
+        """
+        async with self._hooks_lock:
+            lst = self._invalidation_hooks.get(username)
+            if lst is None:
+                self._invalidation_hooks[username] = [hook]
             else:
                 lst.append(hook)
 
@@ -407,7 +449,10 @@ class TokenManager:
                     or info.refresh_token != before_refresh
                 )
             elif result.outcome == TokenOutcome.FAILED:
-                info.state = TokenState.EXPIRED
+                if result.error_type == RefreshErrorType.NON_RECOVERABLE:
+                    info.state = TokenState.EXPIRED
+                    # Fire invalidation hook for non-recoverable refresh failures
+                    await self._maybe_fire_invalidation_hook(username)
         # Fire hook if token actually changed. This is the single authoritative
         # location for firing update hooks to avoid double invocation (the
         # ensure_fresh wrapper deliberately does NOT fire the hook).
@@ -444,6 +489,17 @@ class TokenManager:
             except (ValueError, RuntimeError) as e:
                 logging.debug(
                     f"⚠️ Update hook scheduling error user={username} type={type(e).__name__}"
+                )
+
+    async def _maybe_fire_invalidation_hook(self, username: str) -> None:
+        async with self._hooks_lock:
+            hooks = self._invalidation_hooks.get(username) or []
+        for hook in hooks:
+            try:
+                await self._create_retained_task(hook(), category="invalidation_hook")
+            except (ValueError, RuntimeError) as e:
+                logging.debug(
+                    f"⚠️ Invalidation hook scheduling error user={username} type={type(e).__name__}"
                 )
 
     async def _create_retained_task(
@@ -532,6 +588,7 @@ class TokenManager:
                     )
                 async with self._tokens_lock:
                     users = list(self.tokens.items())
+                users = [(u, info) for u, info in users if u not in self._paused_users]
                 for username, info in users:
                     await self._process_single_background(
                         username, info, force_proactive=drifted
@@ -555,7 +612,8 @@ class TokenManager:
         if remaining is None:
             return
         if remaining < 0:
-            info.state = TokenState.EXPIRED
+            async with info.refresh_lock:
+                info.state = TokenState.EXPIRED
             logging.warning(
                 f"⚠️ Unexpected expired state detected user={username} remaining={remaining}"
             )
@@ -653,7 +711,7 @@ class TokenManager:
         )
 
     async def _handle_unknown_expiry(self, username: str) -> None:
-        """Resolve unknown expiry with capped forced refresh attempts (max 3)."""
+        """Resolve unknown expiry with capped forced refresh attempts (max 3) using exponential backoff."""
         outcome = await self.ensure_fresh(username, force_refresh=False)
         async with self._tokens_lock:
             info_ref = self.tokens.get(username)
@@ -663,6 +721,10 @@ class TokenManager:
             async with self._tokens_lock:
                 if info_ref.forced_unknown_attempts < 3:
                     info_ref.forced_unknown_attempts += 1
+            delay = TOKEN_MANAGER_BACKGROUND_BASE_SLEEP * (
+                2 ** (info_ref.forced_unknown_attempts - 1)
+            )
+            await asyncio.sleep(delay)
             forced = await self.ensure_fresh(username, force_refresh=True)
             if forced == TokenOutcome.FAILED:
                 logging.warning(
@@ -672,6 +734,8 @@ class TokenManager:
                 logging.info(
                     f"✅ Forced refresh resolved unknown expiry user={username} attempt={info_ref.forced_unknown_attempts}"
                 )
+                async with self._tokens_lock:
+                    info_ref.forced_unknown_attempts = 0
         else:
             async with self._tokens_lock:
                 if info_ref.forced_unknown_attempts:
