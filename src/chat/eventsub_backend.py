@@ -534,6 +534,9 @@ class EventSubChatBackend:
         """Handle reconnection logic."""
         if self._ws_manager:
             await self._ws_manager.reconnect()
+            # Unsubscribe from old subscriptions before resubscribing with new session
+            if self._sub_manager:
+                await self._sub_manager.unsubscribe_all()
             await self._resubscribe_all_channels()
 
     async def _on_token_invalid(self) -> None:

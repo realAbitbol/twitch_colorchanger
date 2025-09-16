@@ -179,6 +179,7 @@ async def test_listen_normal_message():
     ws_manager.is_connected = True
     msg_processor = MagicMock(spec=MessageProcessor)
     sub_manager = MagicMock()
+    sub_manager.unsubscribe_all = AsyncMock()
 
     # Mock a TEXT message
     msg = MagicMock()
@@ -215,6 +216,7 @@ async def test_listen_reconnect_triggered():
     ws_manager.reconnect = AsyncMock()
 
     sub_manager = MagicMock()
+    sub_manager.unsubscribe_all = AsyncMock()
     sub_manager.verify_subscriptions = AsyncMock(return_value=["some_channel"])  # Non-empty means reconnect needed
 
     backend = EventSubChatBackend(ws_manager=ws_manager, sub_manager=sub_manager)
