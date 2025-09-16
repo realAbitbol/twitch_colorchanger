@@ -18,8 +18,13 @@ class TestCacheManager:
     @pytest.fixture
     async def cache_manager(self):
         """Create a temporary CacheManager for testing."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        def _create_temp():
+            f = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
             temp_path = f.name
+            f.close()
+            return temp_path
+
+        temp_path = await asyncio.to_thread(_create_temp)
 
         manager = CacheManager(temp_path)
 
@@ -34,9 +39,14 @@ class TestCacheManager:
     @pytest.fixture
     async def populated_cache(self):
         """Create a CacheManager with some initial data."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        def _create_temp():
+            f = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
             json.dump({"key1": "value1", "key2": 42}, f)
             temp_path = f.name
+            f.close()
+            return temp_path
+
+        temp_path = await asyncio.to_thread(_create_temp)
 
         manager = CacheManager(temp_path)
 
@@ -49,8 +59,13 @@ class TestCacheManager:
 
     async def test_init_valid_path(self):
         """Test initialization with valid path."""
-        with tempfile.NamedTemporaryFile(delete=False) as f:
+        def _create_temp():
+            f = tempfile.NamedTemporaryFile(delete=False)
             temp_path = f.name
+            f.close()
+            return temp_path
+
+        temp_path = await asyncio.to_thread(_create_temp)
 
         try:
             manager = CacheManager(temp_path)
@@ -59,7 +74,7 @@ class TestCacheManager:
         finally:
             os.unlink(temp_path)
 
-    async def test_init_empty_path_raises(self):
+    def test_init_empty_path_raises(self):
         """Test initialization with empty path raises ValueError."""
         with pytest.raises(ValueError, match="cache_file_path cannot be empty"):
             CacheManager("")
@@ -159,9 +174,14 @@ class TestCacheManager:
 
     async def test_invalid_json_file_recovers_gracefully(self):
         """Test that invalid JSON in file recovers gracefully with empty cache."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        def _create_temp():
+            f = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
             f.write("invalid json content")
             temp_path = f.name
+            f.close()
+            return temp_path
+
+        temp_path = await asyncio.to_thread(_create_temp)
 
         try:
             manager = CacheManager(temp_path)
@@ -210,8 +230,13 @@ class TestCacheManager:
 
     async def test_concurrent_access(self):
         """Test concurrent access to cache."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        def _create_temp():
+            f = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
             temp_path = f.name
+            f.close()
+            return temp_path
+
+        temp_path = await asyncio.to_thread(_create_temp)
 
         try:
             manager = CacheManager(temp_path)
@@ -234,8 +259,13 @@ class TestCacheManager:
 
     async def test_async_context_manager(self):
         """Test async context manager functionality."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        def _create_temp():
+            f = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
             temp_path = f.name
+            f.close()
+            return temp_path
+
+        temp_path = await asyncio.to_thread(_create_temp)
 
         try:
             async with CacheManager(temp_path) as manager:
@@ -249,8 +279,13 @@ class TestCacheManager:
 
     async def test_save_handles_os_error(self, caplog):
         """Test that save handles OSError during file operations."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        def _create_temp():
+            f = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
             temp_path = f.name
+            f.close()
+            return temp_path
+
+        temp_path = await asyncio.to_thread(_create_temp)
 
         try:
             manager = CacheManager(temp_path)
@@ -266,8 +301,13 @@ class TestCacheManager:
 
     async def test_save_handles_file_not_found_error(self, caplog):
         """Test that save handles FileNotFoundError during file operations."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        def _create_temp():
+            f = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
             temp_path = f.name
+            f.close()
+            return temp_path
+
+        temp_path = await asyncio.to_thread(_create_temp)
 
         try:
             manager = CacheManager(temp_path)
@@ -283,8 +323,13 @@ class TestCacheManager:
 
     async def test_save_handles_unexpected_error(self, caplog):
         """Test that save handles unexpected exceptions during file operations."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        def _create_temp():
+            f = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
             temp_path = f.name
+            f.close()
+            return temp_path
+
+        temp_path = await asyncio.to_thread(_create_temp)
 
         try:
             manager = CacheManager(temp_path)
@@ -298,8 +343,13 @@ class TestCacheManager:
 
     async def test_concurrent_saving_with_locking(self):
         """Test concurrent cache operations with proper locking."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        def _create_temp():
+            f = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
             temp_path = f.name
+            f.close()
+            return temp_path
+
+        temp_path = await asyncio.to_thread(_create_temp)
 
         try:
             manager = CacheManager(temp_path)
@@ -322,8 +372,13 @@ class TestCacheManager:
 
     async def test_save_with_lock_timeout_simulation(self, caplog):
         """Test save behavior when file locking encounters issues."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        def _create_temp():
+            f = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
             temp_path = f.name
+            f.close()
+            return temp_path
+
+        temp_path = await asyncio.to_thread(_create_temp)
 
         try:
             manager = CacheManager(temp_path)
