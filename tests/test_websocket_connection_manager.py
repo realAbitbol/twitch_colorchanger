@@ -6,7 +6,10 @@ from unittest.mock import AsyncMock, Mock
 import aiohttp
 import pytest
 
-from src.chat.websocket_connection_manager import WebSocketConnectionManager
+from src.chat.websocket_connection_manager import (
+    WEBSOCKET_NOT_CONNECTED_ERROR,
+    WebSocketConnectionManager,
+)
 from src.errors.eventsub import EventSubConnectionError
 
 
@@ -38,7 +41,7 @@ class TestWebSocketConnectionManager:
             client_id="test_client_id"
         )
 
-    async def test_init(self, mock_session):
+    def test_init(self, mock_session):
         """Test initialization."""
         manager = WebSocketConnectionManager(
             session=mock_session,
@@ -55,13 +58,13 @@ class TestWebSocketConnectionManager:
         assert manager.session_id is None
         assert manager.pending_reconnect_session_id is None
         assert manager.pending_challenge is None
-        assert manager.backoff == 1.0
-        assert manager.max_backoff == 60.0  # EVENTSUB_MAX_BACKOFF_SECONDS
+        assert manager.backoff == pytest.approx(1.0)
+        assert manager.max_backoff == pytest.approx(60.0)  # EVENTSUB_MAX_BACKOFF_SECONDS
         assert isinstance(manager.last_activity, float)
         assert not manager._stop_event.is_set()
         assert not manager._reconnect_requested
 
-    async def test_init_default_url(self, mock_session):
+    def test_init_default_url(self, mock_session):
         """Test initialization with default URL."""
         manager = WebSocketConnectionManager(
             session=mock_session,
@@ -71,17 +74,17 @@ class TestWebSocketConnectionManager:
 
         assert manager.ws_url == "wss://eventsub.wss.twitch.tv/ws"
 
-    async def test_is_connected_none_ws(self, manager):
+    def test_is_connected_none_ws(self, manager):
         """Test is_connected when ws is None."""
         assert not manager.is_connected
 
-    async def test_is_connected_closed_ws(self, manager, mock_ws):
+    def test_is_connected_closed_ws(self, manager, mock_ws):
         """Test is_connected when ws is closed."""
         manager.ws = mock_ws
         mock_ws.closed = True
         assert not manager.is_connected
 
-    async def test_is_connected_open_ws(self, manager, mock_ws):
+    def test_is_connected_open_ws(self, manager, mock_ws):
         """Test is_connected when ws is open."""
         manager.ws = mock_ws
         mock_ws.closed = False
@@ -234,7 +237,7 @@ class TestWebSocketConnectionManager:
         with pytest.raises(EventSubConnectionError) as exc_info:
             await manager.send_json({"test": "data"})
 
-        assert "WebSocket not connected" in str(exc_info.value)
+        assert WEBSOCKET_NOT_CONNECTED_ERROR in str(exc_info.value)
         assert exc_info.value.operation_type == "send"
 
     async def test_send_json_send_failure(self, manager, mock_ws):
@@ -266,7 +269,7 @@ class TestWebSocketConnectionManager:
         with pytest.raises(EventSubConnectionError) as exc_info:
             await manager.receive_message()
 
-        assert "WebSocket not connected" in str(exc_info.value)
+        assert WEBSOCKET_NOT_CONNECTED_ERROR in str(exc_info.value)
         assert exc_info.value.operation_type == "receive"
 
     async def test_receive_message_timeout(self, manager, mock_ws):
@@ -419,17 +422,17 @@ class TestWebSocketConnectionManager:
         assert "No session ID in welcome" in str(exc_info.value)
         assert exc_info.value.operation_type == "welcome"
 
-    async def test_jitter(self, manager, monkeypatch):
+    def test_jitter(self, manager, monkeypatch):
         """Test _jitter method."""
         monkeypatch.setattr('secrets.randbelow', lambda x: 500)  # 0.5 * 1000
 
         result = manager._jitter(1.0, 3.0)
         assert 1.5 <= result <= 3.0
 
-    async def test_jitter_b_le_a(self, manager):
+    def test_jitter_b_le_a(self, manager):
         """Test _jitter when b <= a."""
         result = manager._jitter(2.0, 2.0)
-        assert result == 2.0
+        assert result == pytest.approx(2.0)
 
     async def test_reconnect_with_backoff_success(self, manager, monkeypatch):
         """Test successful reconnect with backoff."""
@@ -445,7 +448,7 @@ class TestWebSocketConnectionManager:
         mock_disconnect.assert_called_once()
         mock_sleep.assert_called_once()
         mock_connect.assert_called_once()
-        assert manager.backoff == 1.0
+        assert manager.backoff == pytest.approx(1.0)
         assert not manager._reconnect_requested
 
     async def test_reconnect_with_backoff_failure_then_success(self, manager, monkeypatch):
@@ -466,7 +469,7 @@ class TestWebSocketConnectionManager:
         assert mock_disconnect.call_count == 2
         assert mock_sleep.call_count == 3  # reconnect_delay, backoff, reconnect_delay
         assert mock_connect.call_count == 2
-        assert manager.backoff == 1.0  # Reset on success
+        assert manager.backoff == pytest.approx(1.0)  # Reset on success
         assert not manager._reconnect_requested
 
     async def test_reconnect_with_backoff_stop_event(self, manager, monkeypatch):

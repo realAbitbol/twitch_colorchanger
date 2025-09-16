@@ -100,10 +100,10 @@ class TestMessageProcessor:
     @pytest.mark.asyncio
     async def test_process_message_async_handlers(self, processor):
         """Test processing with async handlers."""
-        async def async_message_handler(username, channel, message):
+        async def async_message_handler(username, channel, message): #noqa
             pass
 
-        async def async_color_handler(username, channel, message):
+        async def async_color_handler(username, channel, message): #noqa
             pass
 
         processor.message_handler = async_message_handler
@@ -208,7 +208,7 @@ class TestMessageProcessor:
     @pytest.mark.asyncio
     async def test_process_message_handler_exception(self, processor, mock_handlers):
         """Test handling exceptions in message handlers."""
-        message_handler, color_handler = mock_handlers
+        message_handler, _ = mock_handlers
         message_handler.side_effect = Exception("Handler error")
 
         message_data = {
