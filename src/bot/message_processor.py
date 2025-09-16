@@ -47,6 +47,8 @@ class MessageProcessor:
         try:
             if sender.lower() != self.bot.username.lower():
                 return
+            # Log the bot's own messages
+            logging.info(f"💬 #{_channel} {sender}: {message}")
             raw = message.strip()
             msg_lower = raw.lower()
             handled = await self._maybe_handle_toggle(msg_lower)
