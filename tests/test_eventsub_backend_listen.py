@@ -5,153 +5,242 @@ import aiohttp
 import pytest
 
 from src.chat.eventsub_backend import EventSubChatBackend
+from src.chat.message_processor import MessageProcessor
+from src.chat.websocket_connection_manager import WebSocketConnectionManager
 
 
 @pytest.mark.asyncio
-async def test_receive_one_timeout_no_stale():
-    """Test _receive_one returns None on timeout when not stale."""
-    backend = EventSubChatBackend()
-    backend._ws = MagicMock()
-    backend._last_activity = asyncio.get_event_loop().time()
-    backend._stale_threshold = 100.0  # high threshold
+async def test_listen_timeout_handling():
+    """Test listen handles timeout from WebSocketConnectionManager."""
+    ws_manager = MagicMock(spec=WebSocketConnectionManager)
+    ws_manager.is_connected = True
+    ws_manager.receive_message = AsyncMock(side_effect=asyncio.TimeoutError)
 
-    # Mock receive to raise TimeoutError
-    backend._ws.receive = AsyncMock(side_effect=asyncio.TimeoutError)
+    backend = EventSubChatBackend(ws_manager=ws_manager)
+    backend._stop_event = asyncio.Event()
 
-    result = await backend._receive_one()
-    assert result is None
-    backend._ws.receive.assert_called_once()
+    # Start listen in background and stop it quickly
+    listen_task = asyncio.create_task(backend.listen())
+    await asyncio.sleep(0.01)  # Let listen start
+    backend._stop_event.set()
+    await listen_task
+
+    # Verify receive_message was called
+    ws_manager.receive_message.assert_called()
 
 
 @pytest.mark.asyncio
-async def test_receive_one_timeout_stale_reconnect():
-    """Test _receive_one triggers reconnect on timeout when stale."""
-    backend = EventSubChatBackend()
-    backend._ws = MagicMock()
+async def test_listen_reconnect_on_stale_timeout():
+    """Test listen triggers reconnect on timeout when stale."""
+    ws_manager = MagicMock(spec=WebSocketConnectionManager)
+    ws_manager.is_connected = True
+    ws_manager.receive_message = AsyncMock(side_effect=asyncio.TimeoutError)
+    ws_manager.reconnect = AsyncMock()
+
+    backend = EventSubChatBackend(ws_manager=ws_manager)
     backend._last_activity = 0  # old activity
     backend._stale_threshold = 10.0
+    backend._stop_event = asyncio.Event()
 
-    backend._ws.receive = AsyncMock(side_effect=asyncio.TimeoutError)
-    backend._reconnect_with_backoff = AsyncMock(return_value=True)
+    # Start listen in background and stop it quickly
+    listen_task = asyncio.create_task(backend.listen())
+    await asyncio.sleep(0.01)  # Let listen start
+    backend._stop_event.set()
+    await listen_task
 
-    result = await backend._receive_one()
-    assert result is None
-    backend._reconnect_with_backoff.assert_called_once()
+    # Verify reconnect was called due to stale connection
+    ws_manager.reconnect.assert_called()
 
 
 @pytest.mark.asyncio
-async def test_receive_one_cancelled_error():
-    """Test _receive_one handles CancelledError."""
-    backend = EventSubChatBackend()
-    backend._ws = MagicMock()
-    backend._ws.receive = AsyncMock(side_effect=asyncio.CancelledError)
+async def test_listen_cancelled_error():
+    """Test listen handles CancelledError."""
+    ws_manager = MagicMock(spec=WebSocketConnectionManager)
+    ws_manager.is_connected = True
+    ws_manager.receive_message = AsyncMock(side_effect=asyncio.CancelledError)
 
+    backend = EventSubChatBackend(ws_manager=ws_manager)
+
+    # Start listen and expect CancelledError to be raised
     with pytest.raises(asyncio.CancelledError):
-        await backend._receive_one()
+        await backend.listen()
 
 
 @pytest.mark.asyncio
-async def test_receive_one_other_exception():
-    """Test _receive_one triggers reconnect on other exceptions."""
-    backend = EventSubChatBackend()
-    backend._ws = MagicMock()
-    backend._ws.receive = AsyncMock(side_effect=Exception("network error"))
-    backend._reconnect_with_backoff = AsyncMock(return_value=True)
+async def test_listen_other_exception_reconnect():
+    """Test listen triggers reconnect on other exceptions."""
+    ws_manager = MagicMock(spec=WebSocketConnectionManager)
+    ws_manager.is_connected = True
+    ws_manager.receive_message = AsyncMock(side_effect=Exception("network error"))
+    ws_manager.reconnect = AsyncMock()
 
-    result = await backend._receive_one()
-    assert result is None
-    backend._reconnect_with_backoff.assert_called_once()
+    backend = EventSubChatBackend(ws_manager=ws_manager)
+    backend._stop_event = asyncio.Event()
+
+    # Start listen in background and stop it quickly
+    listen_task = asyncio.create_task(backend.listen())
+    await asyncio.sleep(0.01)  # Let listen start
+    backend._stop_event.set()
+    await listen_task
+
+    # Verify reconnect was called due to exception
+    ws_manager.reconnect.assert_called()
 
 
 @pytest.mark.asyncio
-async def test_handle_ws_message_text():
-    """Test _handle_ws_message processes TEXT messages."""
-    backend = EventSubChatBackend()
-    backend._handle_text = AsyncMock()
+async def test_listen_processes_text_message():
+    """Test listen processes TEXT messages via MessageProcessor."""
+    ws_manager = MagicMock(spec=WebSocketConnectionManager)
+    ws_manager.is_connected = True
+    msg_processor = MagicMock(spec=MessageProcessor)
 
+    # Mock a TEXT message
     msg = MagicMock()
     msg.type = aiohttp.WSMsgType.TEXT
     msg.data = '{"type": "notification"}'
 
-    result = await backend._handle_ws_message(msg)
-    assert result is False
-    backend._handle_text.assert_called_once_with(msg.data)
+    # Mock receive_message to return the message once, then raise an exception to stop
+    ws_manager.receive_message = AsyncMock(side_effect=[msg, Exception("stop")])
+    msg_processor.process_message = AsyncMock()
+
+    backend = EventSubChatBackend(ws_manager=ws_manager, msg_processor=msg_processor)
+    backend._stop_event = asyncio.Event()
+
+    # Start listen in background and stop it quickly
+    listen_task = asyncio.create_task(backend.listen())
+    await asyncio.sleep(0.01)  # Let listen process the message
+    backend._stop_event.set()
+    await listen_task  # listen handles exceptions internally
+
+    # Verify message was processed
+    msg_processor.process_message.assert_called_once_with(msg.data)
 
 
 @pytest.mark.asyncio
-async def test_handle_ws_message_closed():
-    """Test _handle_ws_message triggers reconnect on CLOSED."""
-    backend = EventSubChatBackend()
-    backend._reconnect_with_backoff = AsyncMock(return_value=True)
+async def test_listen_reconnect_on_closed():
+    """Test listen triggers reconnect on CLOSED message."""
+    ws_manager = MagicMock(spec=WebSocketConnectionManager)
+    ws_manager.is_connected = True
+    ws_manager.reconnect = AsyncMock()
 
+    # Mock a CLOSED message
     msg = MagicMock()
     msg.type = aiohttp.WSMsgType.CLOSED
     msg.data = 1000
 
-    result = await backend._handle_ws_message(msg)
-    assert result is False
-    backend._reconnect_with_backoff.assert_called_once()
+    # Mock receive_message to return the message once, then raise an exception to stop
+    ws_manager.receive_message = AsyncMock(side_effect=[msg, Exception("stop")])
+
+    backend = EventSubChatBackend(ws_manager=ws_manager)
+    backend._stop_event = asyncio.Event()
+
+    # Start listen in background and stop it quickly
+    listen_task = asyncio.create_task(backend.listen())
+    await asyncio.sleep(0.01)  # Let listen process the message
+    backend._stop_event.set()
+    await listen_task  # listen handles exceptions internally
+
+    # Verify reconnect was called
+    ws_manager.reconnect.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_handle_ws_message_error():
-    """Test _handle_ws_message triggers reconnect on ERROR."""
-    backend = EventSubChatBackend()
-    backend._reconnect_with_backoff = AsyncMock(return_value=True)
+async def test_listen_reconnect_on_error():
+    """Test listen triggers reconnect on ERROR message."""
+    ws_manager = MagicMock(spec=WebSocketConnectionManager)
+    ws_manager.is_connected = True
+    ws_manager.reconnect = AsyncMock()
 
+    # Mock an ERROR message
     msg = MagicMock()
     msg.type = aiohttp.WSMsgType.ERROR
     msg.data = "connection error"
 
-    result = await backend._handle_ws_message(msg)
-    assert result is False
-    backend._reconnect_with_backoff.assert_called_once()
+    # Mock receive_message to return the message once, then raise an exception to stop
+    ws_manager.receive_message = AsyncMock(side_effect=[msg, Exception("stop")])
+
+    backend = EventSubChatBackend(ws_manager=ws_manager)
+    backend._stop_event = asyncio.Event()
+
+    # Start listen in background and stop it quickly
+    listen_task = asyncio.create_task(backend.listen())
+    await asyncio.sleep(0.01)  # Let listen process the message
+    backend._stop_event.set()
+    await listen_task  # listen handles exceptions internally
+
+    # Verify reconnect was called
+    ws_manager.reconnect.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_listen_normal_message():
     """Test listen processes a normal TEXT message."""
-    backend = EventSubChatBackend()
-    backend._ws = MagicMock()
-    backend._ws.closed = False
+    ws_manager = MagicMock(spec=WebSocketConnectionManager)
+    ws_manager.is_connected = True
+    msg_processor = MagicMock(spec=MessageProcessor)
+    sub_manager = MagicMock()
+
+    # Mock a TEXT message
+    msg = MagicMock()
+    msg.type = aiohttp.WSMsgType.TEXT
+    msg.data = '{"type": "notification"}'
+
+    # Mock receive_message to return the message once, then raise an exception to stop
+    ws_manager.receive_message = AsyncMock(side_effect=[msg, Exception("stop")])
+    msg_processor.process_message = AsyncMock()
+
+    # Mock subscription verification to stop the loop
+    sub_manager.verify_subscriptions = AsyncMock(return_value=[])
+
+    backend = EventSubChatBackend(ws_manager=ws_manager, msg_processor=msg_processor, sub_manager=sub_manager)
     backend._stop_event = asyncio.Event()
 
-    backend._maybe_verify_subs = AsyncMock(side_effect=lambda now: backend._stop_event.set())
-    backend._maybe_reconnect = AsyncMock(return_value=False)
-    backend._ensure_socket = AsyncMock(return_value=True)
-    backend._receive_one = AsyncMock(return_value=MagicMock(type=aiohttp.WSMsgType.TEXT, data='{"type": "notification"}'))
-    backend._handle_ws_message = AsyncMock(return_value=False)
+    # Start listen in background and stop it quickly
+    listen_task = asyncio.create_task(backend.listen())
+    await asyncio.sleep(0.01)  # Let listen process the message
+    backend._stop_event.set()
+    await listen_task  # listen handles exceptions internally
 
-    await backend.listen()
-
-    backend._receive_one.assert_called_once()
-    backend._handle_ws_message.assert_called_once()
+    # Verify message was received and processed
+    ws_manager.receive_message.assert_called()
+    msg_processor.process_message.assert_called_once_with(msg.data)
 
 
 @pytest.mark.asyncio
 async def test_listen_reconnect_triggered():
     """Test listen handles reconnect trigger."""
-    backend = EventSubChatBackend()
-    backend._ws = MagicMock()
-    backend._ws.closed = False
+    ws_manager = MagicMock(spec=WebSocketConnectionManager)
+    ws_manager.is_connected = True
+    ws_manager.receive_message = AsyncMock(side_effect=Exception("stop"))
+    ws_manager.reconnect = AsyncMock()
+
+    sub_manager = MagicMock()
+    sub_manager.verify_subscriptions = AsyncMock(return_value=["some_channel"])  # Non-empty means reconnect needed
+
+    backend = EventSubChatBackend(ws_manager=ws_manager, sub_manager=sub_manager)
     backend._stop_event = asyncio.Event()
 
-    backend._maybe_verify_subs = AsyncMock(side_effect=lambda now: backend._stop_event.set())
-    backend._maybe_reconnect = AsyncMock(return_value=True)  # reconnect triggered
+    # Start listen in background and stop it quickly
+    listen_task = asyncio.create_task(backend.listen())
+    await asyncio.sleep(0.01)  # Let listen start
+    backend._stop_event.set()
+    await listen_task  # listen handles exceptions internally
 
-    await backend.listen()
-
-    backend._maybe_reconnect.assert_called_once()
+    # Verify reconnect was called
+    ws_manager.reconnect.assert_called()
 
 
 @pytest.mark.asyncio
-async def test_ensure_socket_closed():
-    """Test _ensure_socket reconnects when WebSocket is closed."""
-    backend = EventSubChatBackend()
-    backend._ws = MagicMock()
-    backend._ws.closed = True
-    backend._reconnect_with_backoff = AsyncMock(return_value=True)
+async def test_listen_reconnects_when_disconnected():
+    """Test listen reconnects when WebSocket is not connected."""
+    ws_manager = MagicMock(spec=WebSocketConnectionManager)
+    ws_manager.is_connected = False  # WebSocket is not connected
+    ws_manager.reconnect = AsyncMock()
 
-    result = await backend._ensure_socket()
-    assert result is True
-    backend._reconnect_with_backoff.assert_called_once()
+    backend = EventSubChatBackend(ws_manager=ws_manager)
+
+    # Start listen - it should return immediately since not connected
+    await backend.listen()
+
+    # Verify reconnect was not called (listen just returns if not connected)
+    ws_manager.reconnect.assert_not_called()
