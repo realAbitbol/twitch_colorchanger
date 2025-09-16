@@ -220,6 +220,7 @@ class EventSubChatBackend:
                 session_id=self._ws_manager.session_id,
                 token=self._token or "",
                 client_id=self._client_id or "",
+                token_manager=self._token_manager,
             )
         else:
             self._sub_manager.update_session_id(self._ws_manager.session_id)
@@ -334,6 +335,8 @@ class EventSubChatBackend:
         if not new_token:
             return
         self._token = new_token
+        if self._sub_manager:
+            self._sub_manager.update_access_token(new_token)
         if self._token_manager:
             _ = asyncio.create_task(self._token_manager.validate_token(new_token))
 

@@ -158,6 +158,9 @@ class TestTokenManager:
     @pytest.mark.asyncio
     async def test_refresh_token_success(self, token_manager, mock_global_token_manager):
         """Test successful token refresh."""
+        # Set initial counter
+        token_manager.consecutive_401_count = 3
+
         # Mock successful refresh
         mock_global_token_manager.ensure_fresh.return_value.name = "SUCCESS"
         mock_global_token_manager.get_info.return_value = MagicMock(
@@ -172,6 +175,7 @@ class TestTokenManager:
             result = await token_manager.refresh_token()
 
             assert result is True
+            assert token_manager.consecutive_401_count == 0  # Should be reset
             mock_global_token_manager.ensure_fresh.assert_called_once_with("testuser", False)
             mock_global_token_manager.get_info.assert_called_once_with("testuser")
             mock_validate.assert_called_once_with("new_token")
