@@ -13,6 +13,26 @@ import time
 from pathlib import Path
 from typing import Any
 
+"""Module for configuration repository management.
+
+This module provides the ConfigRepository class for handling user configuration
+files with features like caching, atomic writes, backup management, and change
+detection via checksums.
+
+Key classes:
+    ConfigRepository: Manages loading, saving, and caching of user configurations.
+
+Key features:
+    - Atomic file writes using temporary files and renames.
+    - Rotating backups (keeps last 3 backups).
+    - Checksum-based change detection to avoid unnecessary writes.
+    - Caching based on file modification time and size.
+
+Note:
+    Configurations are stored in JSON format. The repository supports various
+    JSON structures (list, dict with 'users' key, or single user dict).
+"""
+
 
 class ConfigRepository:
     """Repository for managing user configuration files.

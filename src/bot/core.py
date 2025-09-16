@@ -145,6 +145,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         Initializes token management, establishes chat connection, and begins
         listening for messages. Handles setup failures gracefully by stopping
         early if critical components cannot be initialized.
+
+        Raises:
+            Exception: If token setup or connection initialization fails.
         """
         logging.info(f"▶️ Starting bot user={self.username}")
         async with self._state_lock:

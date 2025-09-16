@@ -6,6 +6,24 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+"""Module for user configuration models and normalization utilities.
+
+This module provides the UserConfig class for representing user settings
+in the Twitch color changer application, along with helper functions for
+normalizing channel lists and user configurations.
+
+Key classes:
+    UserConfig: Pydantic model for user configuration with validation and normalization.
+
+Key functions:
+    normalize_user_list: Normalizes a list of user config dictionaries.
+    normalize_channels_list: Normalizes a list of channel names.
+
+Note:
+    Channel normalization strips leading '#' and converts to lowercase for consistency.
+    Authentication requires either valid access_token or client_id + client_secret.
+"""
+
 
 def _normalize_channels(channels: list[str] | Any) -> tuple[list[str], bool]:
     """Normalize a list of channel names.

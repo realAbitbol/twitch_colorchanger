@@ -185,6 +185,12 @@ async def run_bots(
     Args:
         users_config: List of user configuration dictionaries.
         config_file: Path to configuration file for persistence.
+
+    Raises:
+        asyncio.CancelledError: If operation is cancelled.
+        RuntimeError: If bot startup fails.
+        OSError: If system-level errors occur.
+        ValueError: If configuration is invalid.
     """
     from ..application_context import ApplicationContext  # local import
 

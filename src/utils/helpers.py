@@ -1,5 +1,15 @@
 from __future__ import annotations
 
+"""Helper functions for the Twitch color changer application.
+
+This module contains utility functions for formatting time durations and
+providing startup instructions to users.
+
+Key functions:
+    format_duration: Converts seconds into human-readable time strings.
+    emit_startup_instructions: Prints detailed setup and usage instructions.
+"""
+
 __all__ = ["format_duration", "emit_startup_instructions"]
 
 
