@@ -16,7 +16,7 @@ ARG BUILD_DATE="unknown"
 RUN apk add --no-cache build-base libffi-dev openssl-dev
 
 # Upgrade pip and install build tools
-RUN --mount=type=cache,target=/root/.cache/pip \
+RUN --mount=type=cache,target=/root/.cache/pip,id=pip-tools-${TARGETARCH} \
     pip install --upgrade hatchling pip setuptools wheel
 
 # Copy metadata and source code
@@ -24,7 +24,7 @@ COPY pyproject.toml LICENSE README.md ./
 COPY src/ ./src/
 
 # Build wheels for the project and its dependencies
-RUN --mount=type=cache,target=/root/.cache/pip \
+RUN --mount=type=cache,target=/root/.cache/pip,id=pip-wheels-${TARGETARCH} \
     pip wheel . -w /app/wheels && \
     find /app/wheels -name '*.so' -exec strip --strip-unneeded {} + || true
 

@@ -114,8 +114,8 @@ jobs:
           build-args: |
             VCS_REF=${{ steps.build_meta.outputs.vcs_ref }}
             BUILD_DATE=${{ steps.build_meta.outputs.build_date }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=build-${{ hashFiles('pyproject.toml', 'Dockerfile') }}
+          cache-to: type=gha,mode=max,scope=build-${{ hashFiles('pyproject.toml', 'Dockerfile') }}
           provenance: true
           sbom: true
 
