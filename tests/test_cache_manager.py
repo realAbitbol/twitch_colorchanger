@@ -289,10 +289,10 @@ class TestCacheManager:
         try:
             manager = CacheManager(temp_path)
 
-            with patch("json.dump", side_effect=ValueError("Invalid JSON")):
+            with patch("json.dump", side_effect=ValueError("Invalid JSON")), \
+                 pytest.raises(ValueError, match="Invalid JSON"):
                 # The CacheManager only catches OSError, not ValueError
-                with pytest.raises(ValueError, match="Invalid JSON"):
-                    await manager.set("test", "value")
+                await manager.set("test", "value")
         finally:
             os.unlink(temp_path)
 

@@ -93,6 +93,7 @@ class EventSubChatBackend:
         # Credentials and identity
         self._token: str | None = None
         self._client_id: str | None = None
+        self._client_secret: str | None = None
         self._username: str | None = None
         self._user_id: str | None = None
         self._primary_channel: str | None = None
@@ -132,11 +133,11 @@ class EventSubChatBackend:
         if self._channel_resolver is None:
             self._channel_resolver = ChannelResolver(self._api, self._cache_manager)
 
-        if self._token_manager is None and self._client_id:
+        if self._token_manager is None and self._client_id and self._client_secret:
             self._token_manager = TokenManager(
                 username=self._username or "",
                 client_id=self._client_id,
-                client_secret="",  # Will be set later if needed
+                client_secret=self._client_secret,
                 http_session=self._session,
             )
             self._token_manager.set_invalid_callback(self._on_token_invalid)
@@ -148,13 +149,8 @@ class EventSubChatBackend:
                 client_id=self._client_id,
             )
 
-        if self._sub_manager is None and self._ws_manager:
-            self._sub_manager = SubscriptionManager(
-                api=self._api,
-                session_id=self._ws_manager.session_id or "",
-                token=self._token or "",
-                client_id=self._client_id or "",
-            )
+        # SubscriptionManager will be created after WebSocket connection
+        # when session_id is available
 
         if self._msg_processor is None:
             self._msg_processor = MessageProcessor(
@@ -211,6 +207,7 @@ class EventSubChatBackend:
             self._user_id = user_id
             self._primary_channel = primary_channel.lstrip("#").lower()
             self._client_id = client_id
+            self._client_secret = client_secret
             self._channels = [self._primary_channel]
 
             # Initialize components
@@ -233,7 +230,16 @@ class EventSubChatBackend:
             # Connect WebSocket
             if self._ws_manager:
                 await self._ws_manager.connect()
-                if self._sub_manager:
+
+                # Create SubscriptionManager now that we have a valid session_id
+                if self._sub_manager is None and self._ws_manager.session_id:
+                    self._sub_manager = SubscriptionManager(
+                        api=self._api,
+                        session_id=self._ws_manager.session_id,
+                        token=self._token or "",
+                        client_id=self._client_id or "",
+                    )
+                elif self._sub_manager:
                     self._sub_manager.update_session_id(
                         self._ws_manager.session_id or ""
                     )
