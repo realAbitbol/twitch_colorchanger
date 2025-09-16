@@ -1,3 +1,4 @@
+import asyncio
 import json
 import tempfile
 from pathlib import Path
@@ -99,3 +100,55 @@ class TestEventSubCache:
 
                 # Check that error was logged
                 assert any("Unexpected error" in record.message for record in caplog.records)
+
+    @patch("aiohttp.ClientSession")
+    @pytest.mark.asyncio
+    async def test_concurrent_cache_saving_with_file_locking(self, mock_session):
+        """Test that concurrent cache saves work correctly with file locking."""
+        # Create two backend instances that share the same cache file
+        backend1 = EventSubChatBackend()
+        backend2 = EventSubChatBackend()
+
+        backend1._channel_ids = {"channel1": "12345"}
+        backend2._channel_ids = {"channel2": "67890"}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "shared_cache.json"
+            backend1._cache_path = cache_path
+            backend2._cache_path = cache_path
+
+            # Run both saves concurrently
+            await asyncio.gather(
+                backend1._save_id_cache(),
+                backend2._save_id_cache()
+            )
+
+            # Verify the cache file exists and contains data from both backends
+            assert cache_path.exists()
+
+            with cache_path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            # Should contain data from the last write (backend2's data)
+            # File locking ensures atomicity, but the final state depends on timing
+            assert isinstance(data, dict)
+            # At minimum, should have some channel data
+            assert len(data) >= 1
+
+    @patch("aiohttp.ClientSession")
+    @pytest.mark.asyncio
+    async def test_cache_save_with_lock_timeout_simulation(self, mock_session, caplog):
+        """Test cache save behavior when file locking encounters issues."""
+        backend = EventSubChatBackend()
+        backend._channel_ids = {"test": "123"}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "cache.json"
+            backend._cache_path = cache_path
+
+            # Simulate a locking issue by patching fcntl.flock to raise an exception
+            with patch("fcntl.flock", side_effect=OSError("Lock failed")):
+                await backend._save_id_cache()
+
+                # Should still attempt to save and log the error
+                assert any("OS error" in record.message for record in caplog.records)

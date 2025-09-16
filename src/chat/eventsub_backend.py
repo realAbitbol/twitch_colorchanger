@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import json
 import logging
 import os
@@ -702,11 +703,18 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
     def _sync_save_cache(self):
         try:
             self._cache_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp_path = self._cache_path.with_suffix(".tmp")
-            with tmp_path.open("w", encoding="utf-8") as fh:
-                json.dump(self._channel_ids, fh, separators=(",", ":"))
-                fh.flush()
-            os.replace(tmp_path, self._cache_path)
+
+            # Use file locking to prevent concurrent access
+            with self._cache_path.open("a+") as lock_file:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)  # Exclusive lock
+                try:
+                    tmp_path = self._cache_path.with_suffix(".tmp")
+                    with tmp_path.open("w", encoding="utf-8") as fh:
+                        json.dump(self._channel_ids, fh, separators=(",", ":"))
+                        fh.flush()
+                    os.replace(tmp_path, self._cache_path)
+                finally:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)  # Release lock
         except FileNotFoundError as e:
             logging.error(f"⚠️ EventSub cache save failed: File not found - {str(e)}")
         except PermissionError as e:
