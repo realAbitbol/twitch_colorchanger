@@ -74,7 +74,7 @@ class ConnectionManager:
         current_color = await self.bot._get_current_color()
         if current_color:
             self.bot.last_color = current_color  # type: ignore
-            logging.info(
+            logging.debug(
                 f"🎨 Initialized with current color {current_color} user={self.bot.username}"
             )
 
@@ -121,7 +121,7 @@ class ConnectionManager:
 
         normalized_channels, was_changed = normalize_channels_list(self.bot.channels)
         if was_changed:
-            logging.info(
+            logging.debug(
                 f"🛠️ Normalized channels old={len(self.bot.channels)} new={len(normalized_channels)} user={self.bot.username}"
             )
             self.bot.channels = normalized_channels
@@ -159,6 +159,9 @@ class ConnectionManager:
         """
         from ..chat import EventSubChatBackend
 
+        if self.bot.access_token is None:
+            logging.error(f"❌ Access token not available user={self.bot.username}")
+            return False
         self.chat_backend = EventSubChatBackend(http_session=self.bot.context.session)
         backend = self.chat_backend
         # Route all messages through the message processor

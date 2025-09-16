@@ -26,7 +26,7 @@ async def test_provision_without_access_token():
     with patch.object(provisioner, '_interactive_authorize', new_callable=AsyncMock) as mock_interactive:
         mock_interactive.return_value = ("iat", "irt", None)
         result = await provisioner.provision("cid", "sec", None, "rt", None)
-        mock_interactive.assert_called_once_with("cid", "sec")
+        mock_interactive.assert_called_once_with("cid", "sec", "unknown")
         assert result == ("iat", "irt", None)
 
 
@@ -38,7 +38,7 @@ async def test_provision_without_refresh_token():
     with patch.object(provisioner, '_interactive_authorize', new_callable=AsyncMock) as mock_interactive:
         mock_interactive.return_value = ("iat", "irt", None)
         result = await provisioner.provision("cid", "sec", "at", None, None)
-        mock_interactive.assert_called_once_with("cid", "sec")
+        mock_interactive.assert_called_once_with("cid", "sec", "unknown")
         assert result == ("iat", "irt", None)
 
 
@@ -56,7 +56,7 @@ async def test_interactive_authorize_device_code_success():
         mock_flow.poll_for_tokens = AsyncMock(return_value={
             "access_token": "at", "refresh_token": "rt", "expires_in": 3600
         })
-        result = await provisioner._interactive_authorize("cid", "sec")
+        result = await provisioner._interactive_authorize("cid", "sec", "testuser")
         assert result[0] == "at"
         assert result[1] == "rt"
         assert isinstance(result[2], datetime)
@@ -71,7 +71,7 @@ async def test_interactive_authorize_device_code_failure():
         mock_flow = MagicMock()
         mock_flow_class.return_value = mock_flow
         mock_flow.request_device_code = AsyncMock(return_value=None)
-        result = await provisioner._interactive_authorize("cid", "sec")
+        result = await provisioner._interactive_authorize("cid", "sec", "testuser")
         assert result == (None, None, None)
 
 
@@ -89,7 +89,7 @@ async def test_interactive_authorize_poll_success():
         mock_flow.poll_for_tokens = AsyncMock(return_value={
             "access_token": "at", "refresh_token": "rt", "expires_in": 3600
         })
-        result = await provisioner._interactive_authorize("cid", "sec")
+        result = await provisioner._interactive_authorize("cid", "sec", "testuser")
         assert result[0] == "at"
         assert result[1] == "rt"
         assert isinstance(result[2], datetime)
@@ -107,7 +107,7 @@ async def test_interactive_authorize_poll_failure_timeout():
             "device_code": "dc", "user_code": "uc", "verification_uri": "url", "expires_in": 30
         })
         mock_flow.poll_for_tokens = AsyncMock(return_value=None)
-        result = await provisioner._interactive_authorize("cid", "sec")
+        result = await provisioner._interactive_authorize("cid", "sec", "testuser")
         assert result == (None, None, None)
 
 
@@ -124,7 +124,7 @@ async def test_interactive_authorize_poll_failure_network():
         })
         import aiohttp
         mock_flow.poll_for_tokens = AsyncMock(side_effect=aiohttp.ClientError("Network error"))
-        result = await provisioner._interactive_authorize("cid", "sec")
+        result = await provisioner._interactive_authorize("cid", "sec", "testuser")
         assert result == (None, None, None)
 
 
@@ -140,7 +140,7 @@ async def test_interactive_authorize_poll_failure_other():
             "device_code": "dc", "user_code": "uc", "verification_uri": "url", "expires_in": 30
         })
         mock_flow.poll_for_tokens = AsyncMock(side_effect=Exception("Other error"))
-        result = await provisioner._interactive_authorize("cid", "sec")
+        result = await provisioner._interactive_authorize("cid", "sec", "testuser")
         assert result == (None, None, None)
 
 
@@ -158,7 +158,7 @@ async def test_interactive_authorize_token_processing():
         mock_flow.poll_for_tokens = AsyncMock(return_value={
             "access_token": "at", "refresh_token": "rt", "expires_in": 3600
         })
-        result = await provisioner._interactive_authorize("cid", "sec")
+        result = await provisioner._interactive_authorize("cid", "sec", "testuser")
         assert result[0] == "at"
         assert result[1] == "rt"
         assert isinstance(result[2], datetime)

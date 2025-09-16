@@ -39,8 +39,8 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     Attributes:
         context: Application context providing shared services.
         username: Twitch username for the bot.
-        access_token: Current OAuth access token.
-        refresh_token: OAuth refresh token for token renewal.
+        access_token: Current OAuth access token (None if invalidated).
+        refresh_token: OAuth refresh token for token renewal (None if invalidated).
         client_id: Twitch API client ID.
         client_secret: Twitch API client secret.
         user_id: Twitch user ID.
@@ -57,8 +57,8 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         context: ApplicationContext,
-        token: str,
-        refresh_token: str,
+        token: str | None,
+        refresh_token: str | None,
         client_id: str,
         client_secret: str,
         nick: str,
@@ -74,8 +74,8 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
 
         Args:
             context: Application context with shared services.
-            token: Initial OAuth access token (may include 'oauth:' prefix).
-            refresh_token: OAuth refresh token for renewal.
+            token: Initial OAuth access token (may include 'oauth:' prefix, None if not available).
+            refresh_token: OAuth refresh token for renewal (None if not available).
             client_id: Twitch API client ID.
             client_secret: Twitch API client secret.
             nick: Twitch username.
@@ -91,7 +91,7 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         self.username = nick
         self.access_token = (
             token.replace(self.OAUTH_PREFIX, "")
-            if token.startswith(self.OAUTH_PREFIX)
+            if token and token.startswith(self.OAUTH_PREFIX)
             else token
         )
         self.refresh_token = refresh_token

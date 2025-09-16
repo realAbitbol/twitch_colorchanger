@@ -35,6 +35,7 @@ class TokenProvisioner:
         access_token: str | None,
         refresh_token: str | None,
         expiry: datetime | None,
+        username: str = "unknown",
     ) -> tuple[str | None, str | None, datetime | None]:
         """Provision tokens for a user.
 
@@ -46,37 +47,42 @@ class TokenProvisioner:
             access_token: Existing access token.
             refresh_token: Existing refresh token.
             expiry: Existing expiry datetime.
+            username: Username for logging purposes.
 
         Returns:
             Tuple of (access_token, refresh_token, expiry).
         """
         if access_token and refresh_token:
             return access_token, refresh_token, expiry
-        return await self._interactive_authorize(client_id, client_secret)
+        return await self._interactive_authorize(client_id, client_secret, username)
 
     async def _interactive_authorize(
-        self, client_id: str, client_secret: str
+        self, client_id: str, client_secret: str, username: str
     ) -> tuple[str | None, str | None, datetime | None]:
         """Perform interactive device flow authorization.
 
         Args:
             client_id: Twitch client ID.
             client_secret: Twitch client secret.
+            username: Username for logging purposes.
 
         Returns:
             Tuple of (access_token, refresh_token, expiry) on success, None otherwise.
         """
         flow = DeviceCodeFlow(client_id, client_secret)
         try:
-            device_data = await flow.request_device_code()
+            device_data = await flow.request_device_code(username)
             if not device_data:
                 return None, None, None
             code = device_data["user_code"]
             verify_url = device_data["verification_uri"]
             expires_in = device_data["expires_in"]
-            logging.info(f"Visit {verify_url} and enter code {code}")
+            logging.info(f"Visit {verify_url} and enter code {code} user={username}")
             token_data = await flow.poll_for_tokens(
-                device_data["device_code"], expires_in
+                device_data["device_code"],
+                expires_in,
+                username,
+                user_code=device_data["user_code"],
             )
             if not token_data:
                 return None, None, None
@@ -88,10 +94,12 @@ class TokenProvisioner:
                 # Apply safety buffer to expiry
                 safe = max(lifetime - TOKEN_REFRESH_SAFETY_BUFFER_SECONDS, 0)
                 expiry = datetime.now(UTC) + timedelta(seconds=safe)
-            logging.info(f"Authorized (token lifetime {format_duration(lifetime)})")
+            logging.info(
+                f"Authorized user={username} (token lifetime {format_duration(lifetime)})"
+            )
             return access, refresh, expiry
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
-            logging.error(f"💥 Device authorization error: {str(e)}")
+            logging.error(f"💥 Device authorization error user={username}: {str(e)}")
             return None, None, None

@@ -70,7 +70,8 @@ async def test_check_and_refresh_token_backend_update_failure(token_handler, bot
     bot.connection_manager.chat_backend = MagicMock()
     bot.connection_manager.chat_backend.update_token = MagicMock(side_effect=ValueError("Update failed"))
 
-    with patch("src.bot.token_handler.logging") as mock_logging:
+    with patch.object(token_handler, "_validate_required_scopes", return_value=True), \
+         patch("src.bot.token_handler.logging") as mock_logging:
         result = await token_handler.check_and_refresh_token()
         assert result is True
         mock_logging.debug.assert_called()
@@ -140,6 +141,7 @@ async def test_setup_token_manager_success(token_handler, bot):
     bot.context.token_manager = MagicMock()
     bot.context.token_manager._upsert_token_info = AsyncMock()
     bot.context.token_manager.register_update_hook = AsyncMock()
+    bot.context.token_manager.register_invalidation_hook = AsyncMock()
     result = await token_handler.setup_token_manager()
     assert result is True
     assert bot.token_manager == bot.context.token_manager
@@ -157,7 +159,8 @@ async def test_handle_initial_token_refresh_success(token_handler, bot):
     bot.token_manager.get_info = AsyncMock(return_value=info)
     bot.access_token = "old_token"
     bot.refresh_token = "old_refresh"
-    with patch.object(token_handler, "_persist_token_changes", new_callable=AsyncMock):
+    with patch.object(token_handler, "_persist_token_changes", new_callable=AsyncMock), \
+         patch.object(token_handler, "_validate_required_scopes", return_value=True):
         await token_handler.handle_initial_token_refresh()
         assert bot.access_token == "new_token"
         assert bot.refresh_token == "new_refresh"
@@ -169,6 +172,8 @@ async def test_handle_initial_token_refresh_no_change(token_handler, bot):
     """Test handle_initial_token_refresh with no token changes."""
     bot.token_manager = MagicMock()
     bot.token_manager.ensure_fresh = AsyncMock(return_value=MagicMock(name="SUCCESS"))
+    bot.token_manager.pause_background_refresh = AsyncMock()
+    bot.token_manager.resume_background_refresh = AsyncMock()
     info = MagicMock()
     info.access_token = "same_token"
     info.refresh_token = "same_refresh"
@@ -176,7 +181,8 @@ async def test_handle_initial_token_refresh_no_change(token_handler, bot):
     bot.token_manager.get_info = AsyncMock(return_value=info)
     bot.access_token = "same_token"
     bot.refresh_token = "same_refresh"
-    with patch.object(token_handler, "_persist_token_changes", new_callable=AsyncMock) as mock_persist:
+    with patch.object(token_handler, "_persist_token_changes", new_callable=AsyncMock) as mock_persist, \
+         patch.object(token_handler, "_validate_required_scopes", return_value=True):
         await token_handler.handle_initial_token_refresh()
         mock_persist.assert_not_called()
 
@@ -239,10 +245,11 @@ async def test_check_and_refresh_token_success(token_handler, bot):
     bot.access_token = "old_token"
     bot.connection_manager.chat_backend = MagicMock()
     bot.connection_manager.chat_backend.update_token = MagicMock()
-    result = await token_handler.check_and_refresh_token()
-    assert result is True
-    assert bot.access_token == "new_token"
-    assert bot.token_expiry == "expiry"
+    with patch.object(token_handler, "_validate_required_scopes", return_value=True):
+        result = await token_handler.check_and_refresh_token()
+        assert result is True
+        assert bot.access_token == "new_token"
+        assert bot.token_expiry == "expiry"
 
 
 @pytest.mark.asyncio
@@ -364,3 +371,83 @@ async def test_handle_config_save_error_final_failure(token_handler, bot):
         result = await token_handler._handle_config_save_error(error, 2, 3)
         assert result is True
         mock_logging.error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_validate_required_scopes_success(token_handler, bot):
+    """Test _validate_required_scopes with sufficient scopes."""
+    bot.context.session = MagicMock()
+    api_mock = MagicMock()
+    api_mock.validate_token = AsyncMock(return_value={"scopes": ["chat:read", "user:read:chat", "user:manage:chat_color"]})
+    with patch("src.bot.token_handler.TwitchAPI", return_value=api_mock):
+        result = await token_handler._validate_required_scopes("token")
+        assert result is True
+
+
+@pytest.mark.asyncio
+async def test_validate_required_scopes_insufficient(token_handler, bot):
+    """Test _validate_required_scopes with insufficient scopes."""
+    bot.context.session = MagicMock()
+    api_mock = MagicMock()
+    api_mock.validate_token = AsyncMock(return_value={"scopes": ["chat:read"]})
+    with patch("src.bot.token_handler.TwitchAPI", return_value=api_mock):
+        result = await token_handler._validate_required_scopes("token")
+        assert result is False
+
+
+@pytest.mark.asyncio
+async def test_validate_required_scopes_no_session(token_handler, bot):
+    """Test _validate_required_scopes with no session."""
+    bot.context.session = None
+    result = await token_handler._validate_required_scopes("token")
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_trigger_device_flow_reauth_success(token_handler, bot):
+    """Test _trigger_device_flow_reauth with successful re-auth."""
+    bot.context.session = MagicMock()
+    bot.token_manager = MagicMock()
+    bot.token_manager._upsert_token_info = AsyncMock()
+    bot.token_manager.pause_background_refresh = AsyncMock()
+    bot.token_manager.resume_background_refresh = AsyncMock()
+    provisioner_mock = MagicMock()
+    provisioner_mock._interactive_authorize = AsyncMock(return_value=("new_access", "new_refresh", "expiry"))
+    with patch("src.bot.token_handler.TokenProvisioner", return_value=provisioner_mock), \
+         patch.object(token_handler, "_persist_token_changes", new_callable=AsyncMock) as mock_persist:
+        await token_handler._trigger_device_flow_reauth()
+        assert bot.access_token == "new_access"
+        assert bot.refresh_token == "new_refresh"
+        assert bot.token_expiry == "expiry"
+        mock_persist.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_trigger_device_flow_reauth_failure(token_handler, bot):
+    """Test _trigger_device_flow_reauth with failure."""
+    bot.context.session = MagicMock()
+    provisioner_mock = MagicMock()
+    provisioner_mock._interactive_authorize = AsyncMock(return_value=(None, None, None))
+    with patch("src.bot.token_handler.TokenProvisioner", return_value=provisioner_mock), \
+         patch("src.bot.token_handler.logging") as mock_logging:
+        await token_handler._trigger_device_flow_reauth()
+        mock_logging.error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_check_and_refresh_token_insufficient_scopes(token_handler, bot):
+    """Test check_and_refresh_token with insufficient scopes triggering re-auth."""
+    bot.token_manager = MagicMock()
+    bot.token_manager.ensure_fresh = AsyncMock(return_value=MagicMock(name="SUCCESS"))
+    info = MagicMock()
+    info.access_token = "token"
+    info.expiry = "expiry"
+    bot.token_manager.get_info = AsyncMock(return_value=info)
+    bot.context.session = MagicMock()
+    api_mock = MagicMock()
+    api_mock.validate_token = AsyncMock(return_value={"scopes": ["chat:read"]})
+    with patch("src.bot.token_handler.TwitchAPI", return_value=api_mock), \
+         patch.object(token_handler, "_trigger_device_flow_reauth", new_callable=AsyncMock) as mock_reauth:
+        result = await token_handler.check_and_refresh_token()
+        assert result is False
+        mock_reauth.assert_called_once()

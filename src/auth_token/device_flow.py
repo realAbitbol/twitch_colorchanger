@@ -8,7 +8,6 @@ from typing import Any, cast
 import aiohttp
 
 from ..constants import (
-    DEVICE_FLOW_LOG_INTERVAL_DIVISOR,
     DEVICE_FLOW_POLL_ADJUSTMENT,
     DEVICE_FLOW_POLL_INTERVAL_SECONDS,
 )
@@ -36,8 +35,11 @@ class DeviceCodeFlow:
         self.token_url = "https://id.twitch.tv/oauth2/token"  # nosec B105  # noqa: S105
         self.poll_interval = DEVICE_FLOW_POLL_INTERVAL_SECONDS  # seconds
 
-    async def request_device_code(self) -> dict[str, Any] | None:
+    async def request_device_code(self, user: str) -> dict[str, Any] | None:
         """Request a device code from Twitch for OAuth flow.
+
+        Args:
+            user: Username for logging purposes.
 
         Returns:
             Device code data on success, None on failure.
@@ -54,23 +56,23 @@ class DeviceCodeFlow:
                     if response.status == 200:
                         result = cast(dict[str, Any], await response.json())
                         logging.info(
-                            f"🔑 Device code retrieved successfully client_id={self.client_id} interval={self.poll_interval}"
+                            f"🔑 Device code retrieved successfully user={user} client_id={self.client_id} interval={self.poll_interval}"
                         )
                         return result
                     error_data = cast(dict[str, Any], await response.json())
                     logging.error(
-                        f"💥 Failed to obtain device code (status={response.status}) client_id={self.client_id} error_data={str(error_data)}"
+                        f"💥 Failed to obtain device code user={user} (status={response.status}) client_id={self.client_id} error_data={str(error_data)}"
                     )
                     return None
 
             except Exception as e:
                 logging.error(
-                    f"💥 Exception while requesting device code: {type(e).__name__} {str(e)} client_id={self.client_id}"
+                    f"💥 Exception while requesting device code user={user}: {type(e).__name__} {str(e)} client_id={self.client_id}"
                 )
                 return None
 
     async def poll_for_tokens(
-        self, device_code: str, expires_in: int
+        self, device_code: str, expires_in: int, user: str, user_code: str
     ) -> dict[str, Any] | None:
         """Poll Twitch for token authorization completion.
 
@@ -79,6 +81,7 @@ class DeviceCodeFlow:
         Args:
             device_code: Device code from initial request.
             expires_in: Total seconds before device code expires.
+            user: Username for logging purposes.
 
         Returns:
             Token data on success, None on failure or timeout.
@@ -92,6 +95,7 @@ class DeviceCodeFlow:
 
         start_time = time.time()
         poll_count = 0
+        last_log_elapsed = 0
 
         async with aiohttp.ClientSession() as session:
             while time.time() - start_time < expires_in:
@@ -104,26 +108,32 @@ class DeviceCodeFlow:
 
                         if response.status == 200:
                             logging.info(
-                                f"Authorized after {format_duration(elapsed)} (polls={poll_count}) client_id={self.client_id}"
+                                f"Authorized after {format_duration(elapsed)} user={user} (polls={poll_count}) client_id={self.client_id}"
                             )
                             return result
 
                         if response.status == 400:
                             # Handle specific polling errors (pending, slow_down, etc.)
-                            error_result = self._handle_polling_error(
-                                result, elapsed, poll_count
+                            error_result, last_log_elapsed = self._handle_polling_error(
+                                result,
+                                elapsed,
+                                poll_count,
+                                user,
+                                expires_in,
+                                last_log_elapsed,
+                                user_code,
                             )
                             if error_result is not None:
                                 return error_result
                         else:
                             logging.error(
-                                f"⚠️ Unexpected device token response: status={response.status} result={str(result)}"
+                                f"⚠️ Unexpected device token response user={user}: status={response.status} result={str(result)}"
                             )
                             return None
 
                 except Exception as e:
                     logging.error(
-                        f"💥 Exception polling for tokens: {type(e).__name__} {str(e)} elapsed={elapsed} polls={poll_count}"
+                        f"💥 Exception polling for tokens user={user}: {type(e).__name__} {str(e)} elapsed={elapsed} polls={poll_count}"
                     )
                     return None
 
@@ -131,22 +141,32 @@ class DeviceCodeFlow:
                 await asyncio.sleep(self.poll_interval)
 
         logging.error(
-            f"Timed out after {format_duration(expires_in)} client_id={self.client_id}"
+            f"Timed out after {format_duration(expires_in)} user={user} client_id={self.client_id}"
         )
         return None
 
     def _handle_polling_error(
-        self, result: dict[str, Any], elapsed: int, poll_count: int
-    ) -> dict[str, Any] | None:
+        self,
+        result: dict[str, Any],
+        elapsed: int,
+        poll_count: int,
+        user: str,
+        expires_in: int,
+        last_log_elapsed: int,
+        user_code: str,
+    ) -> tuple[dict[str, Any] | None, int]:
         """Handle specific polling errors from Twitch API.
 
         Args:
             result: Response JSON from polling request.
             elapsed: Seconds elapsed since polling started.
             poll_count: Number of polls performed.
+            user: Username for logging purposes.
+            expires_in: Total seconds before device code expires.
+            last_log_elapsed: Last time a waiting message was logged.
 
         Returns:
-            None to continue polling, empty dict to stop.
+            Tuple of (None to continue polling or dict to stop, updated last_log_elapsed).
         """
         # Twitch API returns errors in 'message' field, not 'error'
         error = result.get("message", result.get("error", "unknown"))
@@ -158,13 +178,13 @@ class DeviceCodeFlow:
 
         if error == "authorization_pending":
             # Still waiting for user authorization; continue polling
-            if (
-                poll_count % DEVICE_FLOW_LOG_INTERVAL_DIVISOR == 0
-            ):  # Show message every 30 seconds
+            if elapsed - last_log_elapsed >= 10:
+                time_left = expires_in - elapsed
                 logging.info(
-                    f"Waiting for authorization {format_duration(elapsed)} elapsed polls={poll_count}"
+                    f"⏰ Waiting for deviceflow authorization for {user}. Please visit : https://www.twitch.tv/activate?device-code={user_code} and enter code {user_code} (time left: {format_duration(time_left)})"
                 )
-            return None  # Continue polling
+                last_log_elapsed = elapsed
+            return None, last_log_elapsed  # Continue polling
 
         if error == "slow_down":
             # Server requests slower polling; adjust interval
@@ -172,26 +192,30 @@ class DeviceCodeFlow:
                 self.poll_interval + 1, DEVICE_FLOW_POLL_ADJUSTMENT
             )
             logging.warning(
-                f"Server requested slower polling interval={self.poll_interval}s elapsed={elapsed} polls={poll_count}"
+                f"Server requested slower polling user={user} interval={self.poll_interval}s elapsed={elapsed} polls={poll_count}"
             )
-            return None  # Continue polling
+            return None, last_log_elapsed  # Continue polling
 
         if error == "expired_token":
             logging.error(
-                f"Device code expired after {format_duration(elapsed)} polls={poll_count}"
+                f"Device code expired after {format_duration(elapsed)} user={user} polls={poll_count}"
             )
-            return {}  # Stop polling
+            return {}, last_log_elapsed  # Stop polling
 
         if error == "access_denied":
-            logging.warning(f"User denied access elapsed={elapsed} polls={poll_count}")
-            return {}  # Stop polling
+            logging.warning(
+                f"User denied access user={user} elapsed={elapsed} polls={poll_count}"
+            )
+            return {}, last_log_elapsed  # Stop polling
 
         # Unknown error; stop polling
         if error_description:
-            logging.error(f"💥 Device flow error: {error} {error_description}")
+            logging.error(
+                f"💥 Device flow error user={user}: {error} {error_description}"
+            )
         else:
-            logging.error(f"💥 Unknown device flow error: {error}")
-        return {}  # Stop polling
+            logging.error(f"💥 Unknown device flow error user={user}: {error}")
+        return {}, last_log_elapsed  # Stop polling
 
     async def get_user_tokens(self, username: str) -> tuple[str, str] | None:
         """Complete the full device code flow to obtain user tokens.
@@ -211,7 +235,7 @@ class DeviceCodeFlow:
         logging.info(f"Authorization required user={username}")
 
         # Step 1: Request device code
-        device_data = await self.request_device_code()
+        device_data = await self.request_device_code(username)
         if not device_data:
             return None
 
@@ -229,7 +253,9 @@ class DeviceCodeFlow:
         )
 
         # Step 3: Poll for authorization
-        token_data = await self.poll_for_tokens(device_code, expires_in)
+        token_data = await self.poll_for_tokens(
+            device_code, expires_in, username, user_code
+        )
         if not token_data:
             return None
         access_token = token_data["access_token"]
