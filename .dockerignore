@@ -1,17 +1,30 @@
-# Git
+# ===========================================
+# Git and Version Control
+# ===========================================
 .git
 .gitignore
 .github/
 
-# Documentation (keep README.md, LICENSE, and functional docs for labels)
-# (No exclusion so they can be used in image labels/build metadata)
+# ===========================================
+# Documentation (keep essential files for build metadata)
+# ===========================================
+# README.md, LICENSE kept for image labels and build metadata
 
-# Configuration & runtime secrets (exclude real config, keep sample)
+# ===========================================
+# Configuration and Secrets
+# ===========================================
+# Exclude real config files and secrets
 twitch_colorchanger.conf
 *.conf.local
+*.conf.bak*
+broadcaster_ids.cache.json
+
+# Keep sample config
 !twitch_colorchanger.conf.sample
 
-# Python
+# ===========================================
+# Python Build and Distribution
+# ===========================================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -34,7 +47,9 @@ wheels/
 *.egg
 MANIFEST
 
-# Virtual environments
+# ===========================================
+# Virtual Environments
+# ===========================================
 .venv/
 venv/
 env/
@@ -45,29 +60,27 @@ ENV/
 .env.test.local
 .env.production.local
 
-# IDEs and editors
+# ===========================================
+# Development Tools and IDEs
+# ===========================================
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# OS files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+# ===========================================
+# Security and Code Quality Tools
+# ===========================================
+.bandit
+.secrets.baseline
+.pre-commit-config.yaml
+.ruff_cache/
+.mypy_cache/
 
-# Logs
-*.log
-logs/
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Testing
+# ===========================================
+# Testing and Coverage
+# ===========================================
 .pytest_cache/
 .coverage
 htmlcov/
@@ -81,28 +94,76 @@ coverage.xml
 .hypothesis/
 tests/
 
-# Source helper scripts not needed in runtime image
-scripts/
-
-# Linting and formatting caches
-.ruff_cache/
-.mypy_cache/
-
-# Package managers
+# ===========================================
+# Package Managers
+# ===========================================
 poetry.lock
 Pipfile.lock
 requirements-dev.txt
 
-# Backup files
+# ===========================================
+# Build and Automation Tools
+# ===========================================
+Makefile
+scripts/
+
+# ===========================================
+# OS Generated Files
+# ===========================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*~
+
+# ===========================================
+# Logs and Temporary Files
+# ===========================================
+*.log
+logs/
+pip-log.txt
+pip-delete-this-directory.txt
 *.bak
 *.backup
 *.tmp
-
-# Runtime files
 *.pid
 *.pid.lock
 *.seed
 
-# Other
+# ===========================================
+# Docker and Container Files
+# ===========================================
+docker-compose.yml
+docker-compose.yml-sample
+
+# ===========================================
+# Startup Scripts (not needed in container)
+# ===========================================
+start_bot.bat
+start_bot.sh
+
+# ===========================================
+# Assets not needed in runtime
+# ===========================================
+logo.webp
+*.webp
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# ===========================================
+# Node.js (if any frontend tools were used)
+# ===========================================
 node_modules/
 npm-debug.log*
+yarn-error.log*
+.yarn/
+
+# ===========================================
+# Miscellaneous
+# ===========================================
+# Add any other files that shouldn't be in the build context
