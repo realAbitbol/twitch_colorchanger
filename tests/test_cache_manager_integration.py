@@ -69,10 +69,10 @@ class TestCacheManagerIntegration:
         backend = EventSubChatBackend(cache_manager=cache_manager)
 
         # Simulate cache save error - the OSError will be raised directly from the mock
-        with patch.object(cache_manager, '_save_data', side_effect=OSError("Disk full")):
+        with patch.object(cache_manager, '_save_data', side_effect=OSError("Disk full")), \
+             pytest.raises(OSError, match="Disk full"):
             # This will raise OSError since we're mocking _save_data directly
-            with pytest.raises(OSError, match="Disk full"):
-                await backend._cache_manager.set("test", "value")
+            await backend._cache_manager.set("test", "value")
 
     async def test_concurrent_cache_access_through_backend(self, cache_manager):
         """Test concurrent cache access through multiple backend operations."""

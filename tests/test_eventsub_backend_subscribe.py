@@ -4,7 +4,6 @@ import pytest
 
 from src.chat.cache_manager import CacheManager
 from src.chat.channel_resolver import ChannelResolver
-from src.chat.eventsub_backend import EventSubChatBackend
 from src.chat.message_processor import MessageProcessor
 from src.chat.subscription_manager import SubscriptionManager
 from src.chat.token_manager import TokenManager
@@ -34,8 +33,6 @@ def mock_components():
 @pytest.mark.asyncio
 async def test_subscribe_channel_chat_success(mock_components):
     """Test successful channel chat subscription through subscription manager."""
-    backend = EventSubChatBackend(**mock_components)
-
     # Mock successful subscription
     mock_components['sub_manager'].subscribe_channel_chat = AsyncMock(return_value=True)
 
