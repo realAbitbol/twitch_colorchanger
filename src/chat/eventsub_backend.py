@@ -125,9 +125,20 @@ class EventSubChatBackend:
     def _initialize_components(self) -> None:
         """Initialize all components if not injected."""
         if self._cache_manager is None:
+            import os
             from pathlib import Path
 
-            cache_path = Path("broadcaster_ids.cache.json").resolve()
+            # Check for environment variable
+            env_cache_path = os.getenv("TWITCH_BROADCASTER_CACHE")
+            if env_cache_path:
+                cache_path = Path(env_cache_path)
+                logging.debug(
+                    f"Using cache path from TWITCH_BROADCASTER_CACHE: {cache_path}"
+                )
+            else:
+                cache_path = Path("broadcaster_ids.cache.json").resolve()
+                logging.debug(f"Using default cache path: {cache_path}")
+
             self._cache_manager = CacheManager(str(cache_path))
 
         if self._channel_resolver is None:
