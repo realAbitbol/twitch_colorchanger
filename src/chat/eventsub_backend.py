@@ -236,6 +236,8 @@ class EventSubChatBackend:
         success = await self._sub_manager.subscribe_channel_chat(
             channel_id, self._user_id or ""
         )
+        if success:
+            logging.info(f"✅ {self._username} joined #{self._primary_channel}")
         return success
 
     def set_token_invalid_callback(self, callback) -> None:
@@ -365,6 +367,7 @@ class EventSubChatBackend:
                     )
                     if success:
                         self._channels.append(channel_l)
+                        logging.info(f"✅ {self._username} joined #{channel_l}")
                         return True
 
             return False

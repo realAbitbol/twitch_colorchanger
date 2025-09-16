@@ -29,6 +29,8 @@ from .protocols import WebSocketConnectionManagerProtocol
 
 EVENTSUB_WS_URL = "wss://eventsub.wss.twitch.tv/ws"
 
+WEBSOCKET_NOT_CONNECTED_ERROR = "WebSocket not connected"
+
 
 class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
     """Manages WebSocket connections for Twitch EventSub.
@@ -166,13 +168,13 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         """
         if not self.is_connected:
             raise EventSubConnectionError(
-                "WebSocket not connected", operation_type="send"
+                WEBSOCKET_NOT_CONNECTED_ERROR, operation_type="send"
             )
 
         try:
             if self.ws is None:
                 raise EventSubConnectionError(
-                    "WebSocket not connected", operation_type="send"
+                    WEBSOCKET_NOT_CONNECTED_ERROR, operation_type="send"
                 )
             await self.ws.send_json(data)
             self.last_activity = time.monotonic()
@@ -192,13 +194,13 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         """
         if not self.is_connected:
             raise EventSubConnectionError(
-                "WebSocket not connected", operation_type="receive"
+                WEBSOCKET_NOT_CONNECTED_ERROR, operation_type="receive"
             )
 
         try:
             if self.ws is None:
                 raise EventSubConnectionError(
-                    "WebSocket not connected", operation_type="receive"
+                    WEBSOCKET_NOT_CONNECTED_ERROR, operation_type="receive"
                 )
             msg = await asyncio.wait_for(
                 self.ws.receive(), timeout=WEBSOCKET_MESSAGE_TIMEOUT_SECONDS

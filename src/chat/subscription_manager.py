@@ -97,7 +97,6 @@ class SubscriptionManager(SubscriptionManagerProtocol):
                     sub_id = self._extract_subscription_id(data)
                     if sub_id:
                         self._active_subscriptions[sub_id] = channel_id
-                        logging.info(f"✅ EventSub subscribed to channel {channel_id}")
                         return True
                     else:
                         logging.warning(
@@ -171,7 +170,7 @@ class SubscriptionManager(SubscriptionManagerProtocol):
             return
 
         errors = []
-        for sub_id in list(self._active_subscriptions.keys()):
+        for sub_id in self._active_subscriptions:
             try:
                 await self._unsubscribe_single(sub_id)
             except Exception as e:
@@ -325,7 +324,7 @@ class SubscriptionManager(SubscriptionManagerProtocol):
             SubscriptionError: If unsubscription fails.
         """
         try:
-            data, status, _ = await self._api.request(
+            _, status, _ = await self._api.request(
                 "DELETE",
                 f"{EVENTSUB_SUBSCRIPTIONS}?id={sub_id}",
                 access_token=self._token,

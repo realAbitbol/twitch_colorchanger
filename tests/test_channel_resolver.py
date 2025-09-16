@@ -30,24 +30,24 @@ class TestChannelResolver:
         """Create a ChannelResolver with mocked dependencies."""
         return ChannelResolver(mock_twitch_api, mock_cache_manager)
 
-    async def test_init_valid_dependencies(self, mock_twitch_api, mock_cache_manager):
+    def test_init_valid_dependencies(self, mock_twitch_api, mock_cache_manager):
         """Test initialization with valid dependencies."""
         resolver = ChannelResolver(mock_twitch_api, mock_cache_manager)
         assert resolver._twitch_api == mock_twitch_api
         assert resolver._cache_manager == mock_cache_manager
         assert resolver._max_concurrent_batches == 3
 
-    async def test_init_custom_concurrency(self, mock_twitch_api, mock_cache_manager):
+    def test_init_custom_concurrency(self, mock_twitch_api, mock_cache_manager):
         """Test initialization with custom concurrency limit."""
         resolver = ChannelResolver(mock_twitch_api, mock_cache_manager, max_concurrent_batches=5)
         assert resolver._max_concurrent_batches == 5
 
-    async def test_init_none_twitch_api_raises(self, mock_cache_manager):
+    def test_init_none_twitch_api_raises(self, mock_cache_manager):
         """Test initialization with None twitch_api raises ValueError."""
         with pytest.raises(ValueError, match="twitch_api cannot be None"):
             ChannelResolver(None, mock_cache_manager)
 
-    async def test_init_none_cache_manager_raises(self, mock_twitch_api):
+    def test_init_none_cache_manager_raises(self, mock_twitch_api):
         """Test initialization with None cache_manager raises ValueError."""
         with pytest.raises(ValueError, match="cache_manager cannot be None"):
             ChannelResolver(mock_twitch_api, None)
