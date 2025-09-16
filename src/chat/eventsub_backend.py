@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 import aiohttp
 
@@ -115,14 +115,14 @@ class EventSubChatBackend:
 
     async def __aenter__(self) -> EventSubChatBackend:
         """Async context manager entry."""
-        await self._initialize_components()
+        self._initialize_components()
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit with cleanup."""
         await self._cleanup_components()
 
-    async def _initialize_components(self) -> None:
+    def _initialize_components(self) -> None:
         """Initialize all components if not injected."""
         if self._cache_manager is None:
             from pathlib import Path
@@ -169,6 +169,75 @@ class EventSubChatBackend:
         if self._session and not self._session.closed:
             await self._session.close()
 
+    def _set_credentials(
+        self,
+        token: str,
+        username: str,
+        primary_channel: str,
+        user_id: str | None,
+        client_id: str | None,
+        client_secret: str | None,
+    ) -> None:
+        """Set connection credentials."""
+        self._token = token
+        self._username = username.lower()
+        self._user_id = user_id
+        self._primary_channel = primary_channel.lstrip("#").lower()
+        self._client_id = client_id
+        self._client_secret = client_secret
+        self._channels = [self._primary_channel]
+
+    async def _validate_token(self, token: str) -> bool:
+        """Validate token and update scopes."""
+        if not self._token_manager:
+            return True
+        if not await self._token_manager.validate_token(token):
+            return False
+        self._scopes = self._token_manager.get_scopes()
+        return True
+
+    async def _resolve_channels(self, token: str, client_id: str) -> dict[str, str]:
+        """Resolve user IDs for channels."""
+        if not self._channel_resolver:
+            return {}
+        user_ids = await self._channel_resolver.resolve_user_ids(
+            [cast(str, self._primary_channel)], token, client_id
+        )
+        return user_ids
+
+    async def _connect_websocket(self) -> None:
+        """Connect WebSocket."""
+        if self._ws_manager:
+            await self._ws_manager.connect()
+
+    def _setup_subscription_manager(self) -> None:
+        """Setup subscription manager after WebSocket connection."""
+        if not self._ws_manager or not self._ws_manager.session_id:
+            return
+        if self._sub_manager is None:
+            self._sub_manager = SubscriptionManager(
+                api=self._api,
+                session_id=self._ws_manager.session_id,
+                token=self._token or "",
+                client_id=self._client_id or "",
+            )
+        else:
+            self._sub_manager.update_session_id(self._ws_manager.session_id)
+
+    async def _subscribe_primary_channel(self, user_ids: dict[str, str]) -> bool:
+        """Subscribe to primary channel."""
+        if not self._sub_manager:
+            return True
+        if self._primary_channel is None:
+            return False
+        channel_id = user_ids.get(self._primary_channel)
+        if not channel_id:
+            return False
+        success = await self._sub_manager.subscribe_channel_chat(
+            channel_id, self._user_id or ""
+        )
+        return success
+
     def set_token_invalid_callback(self, callback) -> None:
         """Sets the callback for token invalidation events.
 
@@ -201,58 +270,23 @@ class EventSubChatBackend:
             bool: True if connection and subscription successful, False otherwise.
         """
         try:
-            # Set credentials
-            self._token = token
-            self._username = username.lower()
-            self._user_id = user_id
-            self._primary_channel = primary_channel.lstrip("#").lower()
-            self._client_id = client_id
-            self._client_secret = client_secret
-            self._channels = [self._primary_channel]
+            self._set_credentials(
+                token, username, primary_channel, user_id, client_id, client_secret
+            )
+            self._initialize_components()
 
-            # Initialize components
-            await self._initialize_components()
+            if not await self._validate_token(token):
+                return False
 
-            # Validate token and scopes
-            if self._token_manager:
-                if not await self._token_manager.validate_token(token):
-                    return False
-                self._scopes = self._token_manager.get_scopes()
+            user_ids = await self._resolve_channels(token, client_id or "")
+            if self._channel_resolver and self._primary_channel not in user_ids:
+                return False
 
-            # Resolve channels
-            if self._channel_resolver:
-                user_ids = await self._channel_resolver.resolve_user_ids(
-                    [self._primary_channel], token, client_id or ""
-                )
-                if self._primary_channel not in user_ids:
-                    return False
+            await self._connect_websocket()
+            self._setup_subscription_manager()
 
-            # Connect WebSocket
-            if self._ws_manager:
-                await self._ws_manager.connect()
-
-                # Create SubscriptionManager now that we have a valid session_id
-                if self._sub_manager is None and self._ws_manager.session_id:
-                    self._sub_manager = SubscriptionManager(
-                        api=self._api,
-                        session_id=self._ws_manager.session_id,
-                        token=self._token or "",
-                        client_id=self._client_id or "",
-                    )
-                elif self._sub_manager:
-                    self._sub_manager.update_session_id(
-                        self._ws_manager.session_id or ""
-                    )
-
-            # Subscribe to primary channel
-            if self._sub_manager:
-                channel_id = user_ids.get(self._primary_channel)
-                if channel_id:
-                    success = await self._sub_manager.subscribe_channel_chat(
-                        channel_id, self._user_id or ""
-                    )
-                    if not success:
-                        return False
+            if not await self._subscribe_primary_channel(user_ids):
+                return False
 
             return True
 
@@ -299,7 +333,7 @@ class EventSubChatBackend:
             return
         self._token = new_token
         if self._token_manager:
-            asyncio.create_task(self._token_manager.validate_token(new_token))
+            _ = asyncio.create_task(self._token_manager.validate_token(new_token))
 
     async def join_channel(self, channel: str) -> bool:
         """Joins a channel and subscribes to its chat messages.
@@ -383,7 +417,7 @@ class EventSubChatBackend:
         """
         return self._channels.copy()
 
-    async def leave_channel(self, channel: str) -> bool:
+    def leave_channel(self, channel: str) -> bool:
         """Leave a channel and unsubscribe from its chat messages.
 
         Args:
@@ -462,25 +496,33 @@ class EventSubChatBackend:
             logging.info(f"Subscription check error: {str(e)}")
         self._next_sub_check = now + EVENTSUB_SUB_CHECK_INTERVAL_SECONDS
 
+    async def _resubscribe_all_channels(self) -> None:
+        """Resubscribe to all channels after reconnection."""
+        if not self._sub_manager or not self._channel_resolver:
+            return
+        for channel in self._channels:
+            try:
+                user_ids = await self._channel_resolver.resolve_user_ids(
+                    [channel], self._token or "", self._client_id or ""
+                )
+                channel_id = user_ids.get(channel)
+                if channel_id:
+                    await self._sub_manager.subscribe_channel_chat(
+                        channel_id, self._user_id or ""
+                    )
+            except Exception as e:
+                logging.warning(f"Failed to resubscribe to {channel}: {e}")
+
     async def _handle_reconnect(self) -> None:
         """Handle reconnection logic."""
         if self._ws_manager:
             await self._ws_manager.reconnect()
-            # Re-subscribe to all channels
-            if self._sub_manager:
-                for channel in self._channels:
-                    # Resolve and subscribe again
-                    if self._channel_resolver:
-                        user_ids = await self._channel_resolver.resolve_user_ids(
-                            [channel], self._token or "", self._client_id or ""
-                        )
-                        channel_id = user_ids.get(channel)
-                        if channel_id:
-                            await self._sub_manager.subscribe_channel_chat(
-                                channel_id, self._user_id or ""
-                            )
+            await self._resubscribe_all_channels()
 
     async def _on_token_invalid(self) -> None:
         """Callback invoked when token is detected as invalid."""
         logging.error(f"Token invalidated for user {self._username}")
-        # Could trigger reconnect or other recovery logic here
+        # Trigger token refresh and reconnect
+        if self._token_manager:
+            await self._token_manager.refresh_token(force_refresh=True)
+        await self._handle_reconnect()

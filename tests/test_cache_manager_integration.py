@@ -18,8 +18,9 @@ class TestCacheManagerIntegration:
     @pytest.fixture
     async def temp_cache_file(self):
         """Create a temporary cache file for testing."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            temp_path = f.name
+        temp_file = await asyncio.to_thread(tempfile.NamedTemporaryFile, mode='w', suffix='.json', delete=False)
+        temp_path = temp_file.name
+        temp_file.close()
 
         yield temp_path
 
@@ -38,17 +39,23 @@ class TestCacheManagerIntegration:
         backend = EventSubChatBackend(cache_manager=cache_manager)
         yield backend
 
-    async def test_backend_initializes_with_cache_manager(self, cache_manager):
+    def test_backend_initializes_with_cache_manager(self, cache_manager):
         """Test that EventSubChatBackend properly initializes with CacheManager."""
-        backend = EventSubChatBackend(cache_manager=cache_manager)
-        assert backend._cache_manager is cache_manager
+        # Mock the HTTP session to avoid needing an event loop
+        with patch('aiohttp.ClientSession') as mock_session:
+            mock_session_instance = mock_session.return_value
+            backend = EventSubChatBackend(cache_manager=cache_manager, http_session=mock_session_instance)
+            assert backend._cache_manager is cache_manager
 
-    async def test_backend_creates_default_cache_manager(self):
+    def test_backend_creates_default_cache_manager(self):
         """Test that EventSubChatBackend creates default CacheManager when none provided."""
-        backend = EventSubChatBackend()
-        await backend._initialize_components()
-        assert backend._cache_manager is not None
-        assert isinstance(backend._cache_manager, CacheManager)
+        # Mock the HTTP session to avoid needing an event loop
+        with patch('aiohttp.ClientSession') as mock_session:
+            mock_session_instance = mock_session.return_value
+            backend = EventSubChatBackend(http_session=mock_session_instance)
+            backend._initialize_components()
+            assert backend._cache_manager is not None
+            assert isinstance(backend._cache_manager, CacheManager)
 
     async def test_cache_persistence_through_backend_lifecycle(self, temp_cache_file):
         """Test that cache data persists through backend initialization and usage."""
@@ -165,7 +172,7 @@ class TestCacheManagerIntegration:
             mock_acquire.assert_called()
             mock_release.assert_called()
 
-    async def test_cache_manager_error_propagation_to_backend(self, cache_manager):
+    def test_cache_manager_error_propagation_to_backend(self):
         """Test that cache errors are properly handled at backend level."""
         # Test with invalid cache file path - ValueError is raised during CacheManager init
         with pytest.raises(ValueError, match="cache_file_path cannot be empty"):
