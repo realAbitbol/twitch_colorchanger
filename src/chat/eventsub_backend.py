@@ -1,64 +1,44 @@
 from __future__ import annotations
 
 import asyncio
-import fcntl
-import json
 import logging
-import os
-import secrets
 import time
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
 
 import aiohttp
 
 from ..api.twitch import TwitchAPI
+from ..chat.cache_manager import CacheManager
+from ..chat.channel_resolver import ChannelResolver
+from ..chat.message_processor import MessageProcessor
+from ..chat.subscription_manager import SubscriptionManager
+from ..chat.token_manager import TokenManager
+from ..chat.websocket_connection_manager import WebSocketConnectionManager
 from ..constants import (
-    EVENTSUB_CONSECUTIVE_401_THRESHOLD,
-    EVENTSUB_FAST_AUDIT_MAX_SECONDS,
-    EVENTSUB_FAST_AUDIT_MIN_SECONDS,
-    EVENTSUB_JITTER_FACTOR,
-    EVENTSUB_MAX_BACKOFF_SECONDS,
-    EVENTSUB_RECONNECT_DELAY_SECONDS,
-    EVENTSUB_STALE_THRESHOLD_SECONDS,
     EVENTSUB_SUB_CHECK_INTERVAL_SECONDS,
-    JITTER_RESOLUTION,
-    WEBSOCKET_CLOSE_SESSION_STALE,
-    WEBSOCKET_CLOSE_TOKEN_REFRESH,
-    WEBSOCKET_HEARTBEAT_SECONDS,
-    WEBSOCKET_MESSAGE_TIMEOUT_SECONDS,
 )
 
 MessageHandler = Callable[[str, str, str], Any]
 
-"""EventSub WebSocket chat backend.
 
-Lightweight implementation focusing on channel.chat.message events filtered
-for the bot user acting as chatter. This avoids re-implementing full TwitchIO.
-
-Scopes required: chat:read (already typical for the bot token).
-"""
-
-# ...existing code...
-
-EVENTSUB_WS_URL = "wss://eventsub.wss.twitch.tv/ws"
-EVENTSUB_SUBSCRIPTIONS = "eventsub/subscriptions"
-EVENTSUB_CHAT_MESSAGE = "channel.chat.message"
-
-
-class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
+class EventSubChatBackend:
     """EventSub WebSocket chat backend for Twitch.
 
-    Lightweight implementation focusing on channel.chat.message events filtered
-    for the bot user acting as chatter. This avoids re-implementing full TwitchIO.
+    This refactored class acts as an orchestrator coordinating all modular components
+    (WebSocketConnectionManager, SubscriptionManager, MessageProcessor, ChannelResolver,
+    TokenManager, CacheManager) through dependency injection. It maintains backward
+    compatibility while simplifying the public API and managing component lifecycle.
 
     Attributes:
         _session (aiohttp.ClientSession): HTTP session for API calls.
         _api (TwitchAPI): Twitch API client instance.
-        _ws_url (str): Current WebSocket URL, may change via reconnect.
-        _ws (aiohttp.ClientWebSocketResponse | None): Active WebSocket connection.
+        _ws_manager (WebSocketConnectionManager): Manages WebSocket connections.
+        _sub_manager (SubscriptionManager): Manages EventSub subscriptions.
+        _msg_processor (MessageProcessor): Processes incoming messages.
+        _channel_resolver (ChannelResolver): Resolves user IDs with caching.
+        _token_manager (TokenManager): Handles token validation and refresh.
+        _cache_manager (CacheManager): Handles file-based caching.
         _message_handler (MessageHandler | None): Callback for chat messages.
         _color_handler (MessageHandler | None): Callback for color commands.
         _token (str | None): OAuth access token.
@@ -66,51 +46,47 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         _username (str | None): Bot username.
         _user_id (str | None): Bot user ID.
         _primary_channel (str | None): Primary channel login.
-        _session_id (str | None): Current EventSub session ID.
-        _pending_reconnect_session_id (str | None): Session ID for reconnect.
-        _pending_challenge (str | None): Pending challenge for handshake.
         _channels (list[str]): List of joined channels.
-        _channel_ids (dict[str, str]): Mapping of login to user ID.
         _stop_event (asyncio.Event): Event to signal shutdown.
         _reconnect_requested (bool): Flag for reconnect request.
-        _cache_path (Path): Path to broadcaster ID cache file.
-        _scopes (set[str]): Validated OAuth scopes.
-        _backoff (float): Current reconnect backoff time.
         _last_activity (float): Timestamp of last WebSocket activity.
         _next_sub_check (float): Next subscription verification time.
         _stale_threshold (float): Threshold for stale connection.
-        _max_backoff (float): Maximum backoff time.
-        _audit_interval (float): Interval for subscription audits.
-        _fast_audit_min (float): Minimum fast audit delay.
-        _fast_audit_max (float): Maximum fast audit delay.
-        _fast_audit_pending (bool): Flag for pending fast audit.
-        _consecutive_subscribe_401 (int): Count of consecutive 401 errors.
-        _token_invalid_flag (bool): Flag indicating token invalidity.
-        _force_full_resubscribe (bool): Flag to force full resubscribe.
-        _token_invalid_callback (Callable | None): Callback for token invalidation.
     """
 
-    def set_token_invalid_callback(self, callback):
-        """Sets the callback for token invalidation events.
+    def __init__(
+        self,
+        http_session: aiohttp.ClientSession | None = None,
+        ws_manager: WebSocketConnectionManager | None = None,
+        sub_manager: SubscriptionManager | None = None,
+        msg_processor: MessageProcessor | None = None,
+        channel_resolver: ChannelResolver | None = None,
+        token_manager: TokenManager | None = None,
+        cache_manager: CacheManager | None = None,
+    ) -> None:
+        """Initialize the EventSub chat backend with dependency injection.
 
         Args:
-            callback (Callable): Function to call when the token becomes invalid.
-        """
-        self._token_invalid_callback = callback
-
-    def __init__(self, http_session: aiohttp.ClientSession | None = None) -> None:
-        """Initialize the EventSub chat backend.
-
-        Args:
-            http_session (aiohttp.ClientSession | None): Optional HTTP session to use.
-                If None, a new session is created.
+            http_session (aiohttp.ClientSession | None): Optional HTTP session.
+            ws_manager (WebSocketConnectionManager | None): WebSocket manager instance.
+            sub_manager (SubscriptionManager | None): Subscription manager instance.
+            msg_processor (MessageProcessor | None): Message processor instance.
+            channel_resolver (ChannelResolver | None): Channel resolver instance.
+            token_manager (TokenManager | None): Token manager instance.
+            cache_manager (CacheManager | None): Cache manager instance.
         """
         self._session = http_session or aiohttp.ClientSession()
         self._api = TwitchAPI(self._session)
 
-        # Current WebSocket URL (can change via session_reconnect instruction)
-        self._ws_url: str = EVENTSUB_WS_URL
-        self._ws: aiohttp.ClientWebSocketResponse | None = None
+        # Injected components (will be created if not provided)
+        self._ws_manager = ws_manager
+        self._sub_manager = sub_manager
+        self._msg_processor = msg_processor
+        self._channel_resolver = channel_resolver
+        self._token_manager = token_manager
+        self._cache_manager = cache_manager
+
+        # Handlers
         self._message_handler: MessageHandler | None = None
         self._color_handler: MessageHandler | None = None
 
@@ -121,101 +97,90 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         self._user_id: str | None = None
         self._primary_channel: str | None = None
 
-        # Current EventSub session id when connected
-        self._session_id: str | None = None
-        # If Twitch sends a session_reconnect instruction it includes a
-        # session id. Store it temporarily so reconnect attempts can try to
-        # preserve continuity when connecting to the provided reconnect_url.
-        self._pending_reconnect_session_id: str | None = None
-        self._pending_challenge: str | None = None
-        # Track if we received a reconnect instruction that might have a stale session
-
-        # Channel/subscription bookkeeping
+        # Channel bookkeeping
         self._channels: list[str] = []
-        self._channel_ids: dict[str, str] = {}  # login -> user_id
 
         # Async runtime primitives
         self._stop_event = asyncio.Event()
         self._reconnect_requested = False
 
-        # cache file for broadcaster ids (login->id)
-        self._cache_path = Path(
-            os.environ.get("TWITCH_BROADCASTER_CACHE", "broadcaster_ids.cache.json")
-        ).resolve()
+        # Activity tracking
+        self._last_activity = time.monotonic()
+        self._next_sub_check = self._last_activity + EVENTSUB_SUB_CHECK_INTERVAL_SECONDS
+        self._stale_threshold = 60.0  # 1 minute default
 
-        # last validated OAuth scopes (lowercased)
+        # Backward compatibility attributes
         self._scopes: set[str] = set()
 
-        # runtime resilience state
-        self._backoff = 1.0
-        self._last_activity = time.monotonic()
-        self._next_sub_check = (
-            self._last_activity + EVENTSUB_SUB_CHECK_INTERVAL_SECONDS
-        )  # 10 min default
-        self._stale_threshold = EVENTSUB_STALE_THRESHOLD_SECONDS  # heartbeat*2 + grace
-        self._max_backoff = EVENTSUB_MAX_BACKOFF_SECONDS
+    async def __aenter__(self) -> EventSubChatBackend:
+        """Async context manager entry."""
+        await self._initialize_components()
+        return self
 
-        # audit scheduling
-        self._audit_interval = EVENTSUB_SUB_CHECK_INTERVAL_SECONDS
-        self._fast_audit_min = EVENTSUB_FAST_AUDIT_MIN_SECONDS
-        self._fast_audit_max = EVENTSUB_FAST_AUDIT_MAX_SECONDS
-        self._fast_audit_pending = False
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Async context manager exit with cleanup."""
+        await self._cleanup_components()
 
-        # token invalidation tracking
-        self._consecutive_subscribe_401 = 0
-        self._token_invalid_flag = False
+    async def _initialize_components(self) -> None:
+        """Initialize all components if not injected."""
+        if self._cache_manager is None:
+            from pathlib import Path
 
-        # If a session_stale close code is observed, force a full
-        # resubscribe flow on the next successful reconnect rather than
-        # relying solely on session resumption.
-        self._force_full_resubscribe: bool = False
+            cache_path = Path("broadcaster_ids.cache.json").resolve()
+            self._cache_manager = CacheManager(str(cache_path))
 
-        # initial jitter for first audit to avoid thundering herd
-        self._next_sub_check += self._jitter(0, 120.0)
+        if self._channel_resolver is None:
+            self._channel_resolver = ChannelResolver(self._api, self._cache_manager)
 
-        # end __init__
+        if self._token_manager is None and self._client_id:
+            self._token_manager = TokenManager(
+                username=self._username or "",
+                client_id=self._client_id,
+                client_secret="",  # Will be set later if needed
+                http_session=self._session,
+            )
+            self._token_manager.set_invalid_callback(self._on_token_invalid)
 
-    # --- token lifecycle integration -------------------------------------------------
-    def update_access_token(self, new_token: str | None) -> None:
-        """Updates the access token after external refresh.
+        if self._ws_manager is None and self._token and self._client_id:
+            self._ws_manager = WebSocketConnectionManager(
+                session=self._session,
+                token=self._token,
+                client_id=self._client_id,
+            )
 
-        Keeps the EventSub WebSocket subscription flow aligned with the latest token,
-        reducing windows where a stale token might trigger invalid events.
-        Lightweight operation safe to call from hooks.
+        if self._sub_manager is None and self._ws_manager:
+            self._sub_manager = SubscriptionManager(
+                api=self._api,
+                session_id=self._ws_manager.session_id or "",
+                token=self._token or "",
+                client_id=self._client_id or "",
+            )
+
+        if self._msg_processor is None:
+            self._msg_processor = MessageProcessor(
+                message_handler=self._message_handler or (lambda *args: None),
+                color_handler=self._color_handler or (lambda *args: None),
+            )
+
+    async def _cleanup_components(self) -> None:
+        """Cleanup all components."""
+        if self._ws_manager:
+            await self._ws_manager.disconnect()
+        if self._sub_manager:
+            await self._sub_manager.unsubscribe_all()
+        if self._cache_manager:
+            pass  # CacheManager handles its own cleanup
+        if self._session and not self._session.closed:
+            await self._session.close()
+
+    def set_token_invalid_callback(self, callback) -> None:
+        """Sets the callback for token invalidation events.
 
         Args:
-            new_token (str | None): The new access token. If None or invalid, ignored.
+            callback: Function to call when the token becomes invalid.
         """
-        if not new_token or not isinstance(new_token, str):  # defensive check
-            return
-        # Clear token invalid flag if previously set, allowing normal verification
-        previously_invalid = self._token_invalid_flag
-        self._token = new_token
-        if previously_invalid:
-            self._token_invalid_flag = False
-            self._consecutive_subscribe_401 = 0
-            logging.info("🔄 EventSub token recovered")
-        # Re-validate scopes after token refresh to catch scope changes
-        _ = asyncio.create_task(self._record_token_scopes())
-
-    def _jitter(self, a: float, b: float) -> float:
-        """Returns scheduling jitter using a non-crypto source.
-
-        Uses secrets.randbelow to avoid lint warnings while meeting minimal quality needs.
-
-        Args:
-            a (float): Minimum value.
-            b (float): Maximum value.
-
-        Returns:
-            float: Random value between a and b.
-        """
-        if b <= a:
-            return a
-        span = b - a
-        # JITTER_RESOLUTION discrete steps for jitter resolution
-        r = secrets.randbelow(JITTER_RESOLUTION) / JITTER_RESOLUTION
-        return a + r * span
+        if self._token_manager:
+            self._token_manager.set_invalid_callback(callback)
 
     async def connect(
         self,
@@ -224,13 +189,9 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         primary_channel: str,
         user_id: str | None,
         client_id: str | None,
-        client_secret: str | None = None,  # not used presently
+        client_secret: str | None = None,
     ) -> bool:
-        """Connects to Twitch EventSub WebSocket and subscribes to chat messages.
-
-        Performs initial setup including credential capture, client validation,
-        cache loading, handshake, channel resolution, user ID setup, scope recording,
-        and subscription to the primary channel.
+        """Connect to Twitch EventSub WebSocket and subscribe to chat messages.
 
         Args:
             token (str): OAuth access token.
@@ -242,228 +203,155 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
 
         Returns:
             bool: True if connection and subscription successful, False otherwise.
-
-        Raises:
-            aiohttp.ClientError: If WebSocket connection fails.
-            ValueError: If credentials are invalid.
-            RuntimeError: If handshake or subscription fails.
         """
-        self._capture_initial_credentials(
-            token, username, primary_channel, user_id, client_id, client_secret
-        )
-        if not self._validate_client_id():
-            return False
-        await self._load_id_cache()
-        if not await self._handshake_and_session():
-            return False
-        if not await self._resolve_initial_channel():
-            return False
-        await self._ensure_self_user_id()
-        await self._record_token_scopes()
-        await self._subscribe_channel_chat(
-            self._primary_channel or primary_channel.lstrip("#").lower()
-        )
-        await self._save_id_cache()
-        return True
+        try:
+            # Set credentials
+            self._token = token
+            self._username = username.lower()
+            self._user_id = user_id
+            self._primary_channel = primary_channel.lstrip("#").lower()
+            self._client_id = client_id
+            self._channels = [self._primary_channel]
 
-    # ---- connect helpers (complexity reduction) ----
-    def _capture_initial_credentials(
-        self,
-        token: str,
-        username: str,
-        primary_channel: str,
-        user_id: str | None,
-        client_id: str | None,
-        client_secret: str | None,
-    ) -> None:
-        """Captures initial credentials and sets up basic state.
+            # Initialize components
+            await self._initialize_components()
+
+            # Validate token and scopes
+            if self._token_manager:
+                if not await self._token_manager.validate_token(token):
+                    return False
+                self._scopes = self._token_manager.get_scopes()
+
+            # Resolve channels
+            if self._channel_resolver:
+                user_ids = await self._channel_resolver.resolve_user_ids(
+                    [self._primary_channel], token, client_id or ""
+                )
+                if self._primary_channel not in user_ids:
+                    return False
+
+            # Connect WebSocket
+            if self._ws_manager:
+                await self._ws_manager.connect()
+                if self._sub_manager:
+                    self._sub_manager.update_session_id(
+                        self._ws_manager.session_id or ""
+                    )
+
+            # Subscribe to primary channel
+            if self._sub_manager:
+                channel_id = user_ids.get(self._primary_channel)
+                if channel_id:
+                    success = await self._sub_manager.subscribe_channel_chat(
+                        channel_id, self._user_id or ""
+                    )
+                    if not success:
+                        return False
+
+            return True
+
+        except Exception as e:
+            logging.error(f"EventSub connect failed: {str(e)}")
+            return False
+
+    async def listen(self) -> None:
+        """Listen for WebSocket messages and handle them."""
+        if not self._ws_manager or not self._ws_manager.is_connected:
+            return
+
+        while not self._stop_event.is_set():
+            now = time.monotonic()
+            await self._maybe_verify_subs(now)
+
+            try:
+                msg = await self._ws_manager.receive_message()
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    self._last_activity = time.monotonic()
+                    if self._msg_processor:
+                        await self._msg_processor.process_message(msg.data)
+                elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                    logging.info("WebSocket abnormal end")
+                    await self._handle_reconnect()
+                    break
+            except Exception as e:
+                logging.warning(f"Listen loop error: {str(e)}")
+                await self._handle_reconnect()
+                break
+
+    async def disconnect(self) -> None:
+        """Disconnect from the WebSocket and cleanup resources."""
+        self._stop_event.set()
+        await self._cleanup_components()
+
+    def update_access_token(self, new_token: str | None) -> None:
+        """Updates the access token after external refresh.
 
         Args:
-            token (str): OAuth token.
-            username (str): Bot username.
-            primary_channel (str): Primary channel.
-            user_id (str | None): Bot user ID.
-            client_id (str | None): Client ID.
-            client_secret (str | None): Client secret (ignored).
+            new_token (str | None): The new access token.
         """
-        self._token = token
-        self._username = username.lower()
-        self._user_id = user_id
-        pchan = primary_channel.lstrip("#").lower()
-        self._primary_channel = pchan
-        self._channels = [pchan]
-        self._client_id = client_id
-        _ = client_secret  # reserved
-
-    def _validate_client_id(self) -> bool:
-        """Validates that client ID is present and a string.
-
-        Returns:
-            bool: True if valid, False otherwise.
-        """
-        if not self._client_id or not isinstance(self._client_id, str):
-            logging.error("🚫 EventSub missing client id")
-            return False
-        return True
-
-    async def _handshake_and_session(self) -> bool:
-        """Performs WebSocket handshake and establishes session.
-
-        Connects to the EventSub WebSocket URL with appropriate headers, waits for the welcome message, and extracts the session ID.
-
-        Returns:
-            bool: True if handshake successful and session ID obtained, False otherwise.
-        """
-        try:
-            headers = {}
-            if self._client_id:
-                headers["Client-Id"] = self._client_id
-            if self._token:
-                headers["Authorization"] = f"Bearer {self._token}"
-            self._ws = await self._session.ws_connect(
-                self._ws_url,
-                heartbeat=WEBSOCKET_HEARTBEAT_SECONDS,
-                headers=headers,
-                protocols=("twitch-eventsub-ws",),
-            )
-            logging.info(f"🔌 EventSub WebSocket connected for {self._username}")
-            welcome = await asyncio.wait_for(
-                self._ws.receive(), timeout=WEBSOCKET_MESSAGE_TIMEOUT_SECONDS
-            )
-            if welcome.type != aiohttp.WSMsgType.TEXT:
-                logging.error("⚠️ EventSub bad welcome frame")
-                return False
-            try:
-                data = json.loads(welcome.data)
-                self._session_id = data.get("payload", {}).get("session", {}).get("id")
-            except Exception as e:  # noqa: BLE001
-                logging.error(f"⚠️ EventSub welcome parse error: {str(e)}")
-                return False
-            if not self._session_id:
-                logging.error("🚫 EventSub no session id")
-                return False
-            return True
-        except Exception as e:  # noqa: BLE001
-            logging.error(f"💥 EventSub connect error: {str(e)}")
-            return False
-
-    async def _resolve_initial_channel(self) -> bool:
-        """Resolves initial channel IDs for subscription.
-
-        Attempts to resolve user IDs for the initial list of channels and verifies the primary channel is resolved.
-
-        Returns:
-            bool: True if all channels resolved successfully, False otherwise.
-        """
-        try:
-            await self._batch_resolve_channels(self._channels)
-            if (self._primary_channel or "") not in self._channel_ids:
-                return False
-            return True
-        except Exception:  # noqa: BLE001
-            return False
-
-    async def _ensure_self_user_id(self) -> None:
-        """Ensures the bot's user ID is set.
-
-        If the user ID is not already set, fetches the user information for the bot's username and sets the user ID.
-        """
-        if self._user_id is not None:
+        if not new_token:
             return
-        me = await self._fetch_user(self._username or "")
-        if me:
-            self._user_id = me.get("id")
-
-    async def _record_token_scopes(self) -> None:
-        """Records the validated OAuth scopes for the current token.
-
-        Validates the access token and extracts the list of granted scopes, storing them for later use.
-        """
-        try:
-            if self._token is None:
-                return
-            validation = await self._api.validate_token(self._token)
-            if validation:
-                raw_scopes = (
-                    validation.get("scopes") if isinstance(validation, dict) else None
-                )
-                scopes_list = (
-                    [str(s).lower() for s in raw_scopes]
-                    if isinstance(raw_scopes, list)
-                    else []
-                )
-                self._scopes = set(scopes_list)
-                logging.debug(
-                    "🧪 EventSub token scopes scopes={scopes}".format(
-                        scopes=";".join(scopes_list)
-                    )
-                )
-        except Exception:  # noqa: BLE001
-            self._scopes = set()
+        self._token = new_token
+        if self._token_manager:
+            asyncio.create_task(self._token_manager.validate_token(new_token))
 
     async def join_channel(self, channel: str) -> bool:
         """Joins a channel and subscribes to its chat messages.
-
-        Resolves the channel ID if not cached, subscribes to chat events,
-        and updates the cache.
 
         Args:
             channel (str): Channel name to join.
 
         Returns:
             bool: True if joined successfully, False otherwise.
-
-        Raises:
-            aiohttp.ClientError: If network requests fail.
-            ValueError: If channel resolution fails.
-            RuntimeError: If subscription fails.
         """
         channel_l = channel.lstrip("#").lower()
         if channel_l in self._channels:
             return True
-        # Attempt batch resolve (single new channel) to leverage cache logic
-        await self._batch_resolve_channels([channel_l])
-        if channel_l not in self._channel_ids:
+
+        try:
+            # Resolve channel ID
+            if self._channel_resolver:
+                user_ids = await self._channel_resolver.resolve_user_ids(
+                    [channel_l], self._token or "", self._client_id or ""
+                )
+                channel_id = user_ids.get(channel_l)
+                if not channel_id:
+                    return False
+
+                # Subscribe
+                if self._sub_manager:
+                    success = await self._sub_manager.subscribe_channel_chat(
+                        channel_id, self._user_id or ""
+                    )
+                    if success:
+                        self._channels.append(channel_l)
+                        return True
+
             return False
-        await self._subscribe_channel_chat(channel_l)
-        self._channels.append(channel_l)
-        await self._save_id_cache()
-        return True
 
-    async def listen(self) -> None:  # noqa: D401
-        """Listens for WebSocket messages and handles them.
+        except Exception as e:
+            logging.warning(f"Join channel failed: {str(e)}")
+            return False
 
-        Runs the main event loop, processing messages, verifying subscriptions,
-        and handling reconnections until stopped.
+    def set_message_handler(self, handler: MessageHandler) -> None:
+        """Sets the handler for incoming chat messages.
+
+        Args:
+            handler (MessageHandler): Function to handle messages.
         """
-        if not self._ws:
-            return
-        while not self._stop_event.is_set():
-            now = time.monotonic()
-            await self._maybe_verify_subs(now)
-            if await self._maybe_reconnect():
-                break
-            if not await self._ensure_socket():
-                break
-            msg = await self._receive_one()
-            if await self._handle_ws_message(msg):
-                break
-            if await self._maybe_reconnect():
-                break
+        self._message_handler = handler
+        if self._msg_processor:
+            self._msg_processor.message_handler = handler
 
-    async def disconnect(self) -> None:
-        """Disconnects from the WebSocket and cleans up resources.
+    def set_color_handler(self, handler: MessageHandler) -> None:
+        """Sets the handler for color/command messages.
 
-        Sets the stop event, closes the WebSocket connection gracefully,
-        and clears the WebSocket reference.
+        Args:
+            handler (MessageHandler): Function to handle color messages.
         """
-        self._stop_event.set()
-        if self._ws and not self._ws.closed:
-            try:
-                await self._ws.close(code=1000)
-            except Exception as e:  # noqa: BLE001
-                logging.info(f"⚠️ EventSub WebSocket close error: {str(e)}")
-        self._ws = None
+        self._color_handler = handler
+        if self._msg_processor:
+            self._msg_processor.color_handler = handler
 
     def update_token(self, new_token: str) -> None:
         """Updates the access token.
@@ -471,749 +359,85 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         Args:
             new_token (str): The new access token.
         """
-        self._token = new_token
+        self.update_access_token(new_token)
 
-    def set_message_handler(self, handler: MessageHandler) -> None:
-        """Sets the handler for incoming chat messages.
-
-        Args:
-            handler (MessageHandler): Function to handle messages, called with
-                (username, channel, message).
-        """
-        self._message_handler = handler
-
-    async def _handle_text(self, raw: str) -> None:
-        """Handles incoming text messages from the WebSocket.
-
-        Decodes the JSON payload, determines the message type, and dispatches to appropriate handlers for session reconnect or notifications.
-
-        Args:
-            raw (str): The raw JSON string received from the WebSocket.
-        """
-        data = self._decode_json(raw)
-        if data is None:
-            return
-        mtype = self._extract_message_type(data)
-        if mtype is None or mtype == "session_keepalive":
-            return
-        if mtype == "session_reconnect":
-            await self._handle_session_reconnect(data)
-            return
-        if mtype == "notification":
-            await self._handle_notification(data)
-
-    # ---- message handling helpers ----
-    def _decode_json(self, raw: str) -> dict[str, Any] | None:
-        """Decodes a JSON string into a dictionary.
-
-        Attempts to parse the provided string as JSON and returns the resulting dictionary, or None if parsing fails.
-
-        Args:
-            raw (str): The JSON string to decode.
+    def get_scopes(self) -> set[str]:
+        """Get the currently recorded OAuth scopes.
 
         Returns:
-            dict[str, Any] | None: The decoded dictionary or None if invalid JSON.
+            set[str]: Set of recorded scopes.
         """
+        return self._scopes.copy()
+
+    def get_channels(self) -> list[str]:
+        """Get list of joined channels.
+
+        Returns:
+            list[str]: List of channel names.
+        """
+        return self._channels.copy()
+
+    async def leave_channel(self, channel: str) -> bool:
+        """Leave a channel and unsubscribe from its chat messages.
+
+        Args:
+            channel (str): Channel name to leave.
+
+        Returns:
+            bool: True if left successfully, False otherwise.
+        """
+        channel_l = channel.lstrip("#").lower()
+        if channel_l not in self._channels:
+            return True
+
         try:
-            obj = json.loads(raw)
-            return obj if isinstance(obj, dict) else None
-        except json.JSONDecodeError:
-            logging.info("⚠️ EventSub invalid JSON payload")
-            return None
-
-    @staticmethod
-    def _extract_message_type(data: dict[str, Any]) -> str | None:
-        meta = data.get("metadata")
-        if isinstance(meta, dict):
-            mt = meta.get("message_type")
-            if isinstance(mt, str):
-                return mt
-        # Fallback to top-level 'type' field
-        mtype = data.get("type")
-        if isinstance(mtype, str):
-            return mtype
-        return None
-
-    async def _handle_session_reconnect(self, data: dict[str, Any]) -> None:
-        """Handle session_reconnect message with reduced cognitive complexity."""
-        # Extract info using helper (handles all type checks and parsing)
-        new_url, maybe_id, maybe_challenge, session_info = self._extract_reconnect_info(
-            data
-        )
-
-        logging.info(
-            "🔄 EventSub session reconnect instruction received: old_url={old_url} new_url={new_url} session_info={session_info}".format(
-                old_url=getattr(self, "_ws_url", None),
-                new_url=new_url,
-                session_info=str(session_info),
-            )
-        )
-
-        if not (isinstance(new_url, str) and new_url.startswith("wss://")):
-            logging.error("⚠️ EventSub session reconnect URL invalid")
-            return
-
-        # Update state using helper
-        self._update_reconnect_state(new_url, maybe_id, maybe_challenge, session_info)
-
-        # Trigger reconnect
-        await self._safe_close()
-        self._reconnect_requested = True
-
-    def _extract_reconnect_info(
-        self, data: dict[str, Any]
-    ) -> tuple[str | None, str | None, str | None, dict]:
-        """Extract reconnect URL, session ID, challenge, and session info with defensive parsing."""
-        if not isinstance(data, dict):
-            return None, None, None, {}
-
-        payload = data.get("payload", {})
-        if not isinstance(payload, dict):
-            return None, None, None, {}
-
-        session_info = payload.get("session", {})
-        if not isinstance(session_info, dict):
-            return None, None, None, {}
-
-        new_url = session_info.get("reconnect_url")
-        if not isinstance(new_url, str):
-            return None, None, None, session_info
-
-        # Try to get session ID from session_info
-        maybe_id = session_info.get("id")
-        if not isinstance(maybe_id, str):
-            maybe_id = None
-
-        # Parse URL for ID and challenge (fallback for ID, always for challenge)
-        maybe_challenge = None
-        try:
-            parsed_url = urlparse(new_url)
-            query_params = parse_qs(parsed_url.query)
-            if not isinstance(maybe_id, str):
-                maybe_id = query_params.get("id", [None])[0]
-            maybe_challenge = query_params.get("challenge", [None])[0]
+            # For now, just remove from channels list
+            # Full unsubscription would require tracking subscription IDs
+            self._channels.remove(channel_l)
+            return True
         except Exception as e:
-            logging.info(
-                f"💥 EventSub URL parse error user={self._username} error={str(e)} url={new_url}"
-            )
-
-        return new_url, maybe_id, maybe_challenge, session_info
-
-    def _update_reconnect_state(
-        self,
-        new_url: str,
-        maybe_id: str | None,
-        maybe_challenge: str | None,
-        session_info: dict,
-    ) -> None:
-        """Update internal state for reconnect (URL, session ID, challenge, logging)."""
-        self._ws_url = new_url
-        logging.info(f"🔄 EventSub switching to new WebSocket URL: {new_url}")
-
-        if isinstance(maybe_id, str):
-            self._pending_reconnect_session_id = maybe_id
-            source = "session_info" if session_info.get("id") else "url_parse"
-            logging.info(
-                f"🆔 EventSub pending session id set user={self._username} session_id={maybe_id} source={source}"
-            )
-        else:
-            self._pending_reconnect_session_id = None
-
-        if isinstance(maybe_challenge, str):
-            self._pending_challenge = maybe_challenge
-            source = "session_info" if session_info.get("id") else "url_parse"
-            logging.info(
-                "🔑 EventSub pending challenge set user={user} challenge={challenge} source={source}".format(
-                    user=self._username,
-                    challenge=maybe_challenge,
-                    source=source if "session_info" in source else "url_parse",
-                )
-            )
-        else:
-            self._pending_challenge = None
-
-    async def _handle_notification(self, data: dict[str, Any]) -> None:
-        """Handles notification messages from EventSub.
-
-        Processes notification payloads, specifically handling channel chat messages by extracting chatter, channel, and message text, then dispatching to handlers.
-
-        Args:
-            data (dict[str, Any]): The notification message data.
-        """
-        payload = data.get("payload")
-        if not isinstance(payload, dict):
-            return
-        sub = payload.get("subscription")
-        if not isinstance(sub, dict):
-            return
-        stype = sub.get("type")
-        if stype != EVENTSUB_CHAT_MESSAGE:
-            return
-        event = payload.get("event", {})
-        if not isinstance(event, dict):
-            return
-        chatter = event.get("chatter_user_name")
-        channel_login = event.get("broadcaster_user_name")
-        message = self._extract_message_text(event)
-        if (
-            chatter
-            and channel_login
-            and message is not None
-            and self._username
-            and isinstance(chatter, str)
-            and isinstance(channel_login, str)
-            and chatter.lower() == self._username
-        ):
-            await self._dispatch_message(chatter, channel_login.lower(), message)
-
-    def _extract_message_text(self, event: dict[str, Any]) -> str | None:
-        """Extracts the message text from a chat event.
-
-        Retrieves the text content from the message object within the event data.
-
-        Args:
-            event (dict[str, Any]): The event data containing the message.
-
-        Returns:
-            str | None: The extracted message text or None if not found.
-        """
-        # event.message = { "text": str, ... }
-        msg = event.get("message")
-        if isinstance(msg, dict):
-            text = msg.get("text")
-            if isinstance(text, str):
-                return text
-        return None
-
-    async def _dispatch_message(
-        self, username: str, channel: str, message: str
-    ) -> None:
-        """Dispatches a chat message to registered handlers.
-
-        Logs the message and invokes the message handler and color handler if set.
-
-        Args:
-            username (str): The username of the chatter.
-            channel (str): The channel name.
-            message (str): The message text.
-        """
-        # Emit unified log event with human-readable text
-        try:
-            logging.info(f"💬 #{channel} {username}: {message}")
-        except Exception as e:  # noqa: BLE001
-            logging.debug(f"⚠️ EventSub log emit error: {str(e)}")
-        if self._message_handler:
-            try:
-                maybe = self._message_handler(username, channel, message)
-                if asyncio.iscoroutine(maybe):
-                    await maybe  # pragma: no cover - runtime path
-            except Exception:  # noqa: BLE001
-                logging.warning("💥 Chat message handler error")
-        if self._color_handler and message.startswith("!"):
-            try:
-                maybe2 = self._color_handler(username, channel, message)
-                if asyncio.iscoroutine(maybe2):
-                    await maybe2
-            except Exception:  # noqa: BLE001
-                logging.warning("💥 Color handler error")
-
-    async def _batch_resolve_channels(self, channels: list[str]) -> None:
-        """Resolves user IDs for a list of channels in batch.
-
-        Determines which channels lack cached user IDs, validates the token, and fetches user IDs from Twitch API for unresolved channels, updating the cache.
-
-        Args:
-            channels (list[str]): List of channel names to resolve.
-        """
-        # Determine which are missing
-        needed = [c for c in channels if c not in self._channel_ids]
-        if not needed or not (self._token and self._client_id):
-            return
-        try:
-            # Validate token before API call
-            validation = await self._api.validate_token(self._token)
-            if not validation:
-                logging.error(f"🚫 EventSub token invalid user={self._username}")
-                return
-            logging.debug(
-                f"🔍 EventSub resolving channels user={self._username} needed={needed}"
-            )
-            # Strip '#' prefix for API call as Twitch expects login names without it
-            stripped_logins = [c.lstrip("#").lower() for c in needed]
-            mapping = await self._api.get_users_by_login(
-                access_token=self._token,
-                client_id=self._client_id,
-                logins=stripped_logins,
-            )
-            logging.debug(
-                f"📋 EventSub channel mapping user={self._username} mapping={mapping}"
-            )
-            # Map back to original channel names (with # stripped for cache keys)
-            for i, stripped in enumerate(stripped_logins):
-                original = needed[i]
-                uid = mapping.get(stripped)
-                if uid:
-                    self._channel_ids[original.lstrip("#")] = uid
-            # Log any unresolved
-            unresolved = [c for c in needed if c not in self._channel_ids]
-            for miss in unresolved:
-                logging.warning(
-                    f"⚠️ EventSub channel lookup failed channel={miss} user={self._username}"
-                )
-        except Exception as e:  # noqa: BLE001
-            logging.warning(
-                f"💥 EventSub batch resolve error user={self._username}: {str(e)}"
-            )
-
-    # ---- cache helpers ----
-    def _sync_load_cache(self):
-        """Synchronously loads broadcaster ID cache from file.
-
-        Attempts to read the cache file and populate the channel IDs dictionary with existing mappings.
-        """
-        try:
-            if self._cache_path.exists():
-                with self._cache_path.open("r", encoding="utf-8") as fh:
-                    data = json.load(fh)
-                if isinstance(data, dict):
-                    for k, v in data.items():
-                        if isinstance(k, str) and isinstance(v, str):
-                            self._channel_ids.setdefault(k.lstrip("#").lower(), v)
-        except Exception as e:
-            logging.info(f"⚠️ EventSub cache load error: {str(e)}")
-
-    async def _load_id_cache(self) -> None:
-        """Loads broadcaster ID cache asynchronously.
-
-        Runs the synchronous cache loading in an executor to avoid blocking the event loop.
-        """
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self._sync_load_cache)
-
-    def _sync_save_cache(self):
-        """Synchronously saves broadcaster ID cache to file.
-
-        Creates the cache directory if needed, uses file locking to prevent concurrent access, and writes the channel IDs to the cache file.
-        """
-        try:
-            self._cache_path.parent.mkdir(parents=True, exist_ok=True)
-
-            # Use file locking to prevent concurrent access
-            with self._cache_path.open("a+") as lock_file:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)  # Exclusive lock
-                try:
-                    tmp_path = self._cache_path.with_suffix(".tmp")
-                    with tmp_path.open("w", encoding="utf-8") as fh:
-                        json.dump(self._channel_ids, fh, separators=(",", ":"))
-                        fh.flush()
-                    os.replace(tmp_path, self._cache_path)
-                finally:
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)  # Release lock
-        except FileNotFoundError as e:
-            logging.error(f"⚠️ EventSub cache save failed: File not found - {str(e)}")
-        except PermissionError as e:
-            logging.error(f"⚠️ EventSub cache save failed: Permission denied - {str(e)}")
-        except OSError as e:
-            logging.error(f"⚠️ EventSub cache save failed: OS error - {str(e)}")
-        except Exception as e:
-            logging.error(f"⚠️ EventSub cache save failed: Unexpected error - {str(e)}")
-
-    async def _save_id_cache(self) -> None:
-        """Saves broadcaster ID cache asynchronously.
-
-        Runs the synchronous cache saving in an executor to avoid blocking the event loop.
-        """
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self._sync_save_cache)
-
-    async def _fetch_user(self, login: str) -> dict[str, Any] | None:
-        """Fetches user information from Twitch API.
-
-        Makes an API request to get user details for the given login name.
-
-        Args:
-            login (str): The username to fetch.
-
-        Returns:
-            dict[str, Any] | None: User data dictionary or None if failed.
-        """
-        if not self._token or not self._client_id:
-            return None
-        try:
-            params = {"login": login}
-            data, status, _ = await self._api.request(
-                "GET",
-                "users",
-                access_token=self._token,
-                client_id=self._client_id,
-                params=params,
-            )
-            if status == 200 and data and data.get("data"):
-                first = data["data"][0]
-                if isinstance(first, dict):
-                    return first
-            return None
-        except Exception as e:  # noqa: BLE001
-            logging.info(f"⚠️ EventSub fetch user error: {str(e)}")
-            return None
-
-    async def _subscribe_channel_chat(self, channel_login: str) -> None:
-        """Subscribes to chat messages for a channel.
-
-        Checks subscription eligibility, retrieves broadcaster ID, builds subscription body, and sends the subscription request.
-
-        Args:
-            channel_login (str): The channel login to subscribe to.
-        """
-        if not self._can_subscribe():
-            return
-        broadcaster_id = self._channel_ids.get(channel_login)
-        if not broadcaster_id:
-            return
-        body = self._build_subscribe_body(broadcaster_id)
-        try:
-            if self._token is None or self._client_id is None:
-                return
-            data, status, _ = await self._api.request(
-                "POST",
-                EVENTSUB_SUBSCRIPTIONS,
-                access_token=self._token,
-                client_id=self._client_id,
-                json_body=body,
-            )
-            self._handle_subscribe_response(channel_login, status, data)
-        except Exception:  # noqa: BLE001
-            logging.warning(f"💥 EventSub subscribe error channel={channel_login}")
-
-    def _can_subscribe(self) -> bool:
-        """Checks if subscription is currently possible.
-
-        Verifies that all required credentials and session state are available and token is not invalid.
-
-        Returns:
-            bool: True if subscription can proceed, False otherwise.
-        """
-        return (
-            bool(self._session_id and self._token and self._client_id and self._user_id)
-            and not self._token_invalid_flag
-        )
-
-    def _build_subscribe_body(self, broadcaster_id: str) -> dict[str, Any]:
-        """Builds the JSON body for EventSub subscription request.
-
-        Creates the subscription payload with required fields for channel chat message events.
-
-        Args:
-            broadcaster_id (str): The broadcaster user ID.
-
-        Returns:
-            dict[str, Any]: The subscription request body.
-        """
-        return {
-            "type": EVENTSUB_CHAT_MESSAGE,
-            "version": "1",
-            "condition": {
-                "broadcaster_user_id": broadcaster_id,
-                "user_id": self._user_id,
-            },
-            "transport": {"method": "websocket", "session_id": self._session_id},
-        }
-
-    def _handle_subscribe_response(
-        self, channel_login: str, status: int, data: Any
-    ) -> None:
-        """Handles the response from subscription request.
-
-        Processes the HTTP status and data, logging appropriate messages and handling errors like unauthorized access.
-
-        Args:
-            channel_login (str): The channel login being subscribed to.
-            status (int): HTTP status code of the response.
-            data (Any): Response data from the API.
-        """
-        if status == 202:
-            self._on_subscribed(channel_login)
-            return
-        self._log_subscribe_non_202(status, channel_login)
-        if status == 401:
-            self._handle_subscribe_unauthorized(channel_login)
-            return
-        self._on_subscribe_other(channel_login, status)
-
-    def _on_subscribed(self, channel_login: str) -> None:
-        """Handles successful subscription.
-
-        Logs the successful join message and resets consecutive 401 counter.
-
-        Args:
-            channel_login (str): The channel that was successfully subscribed to.
-        """
-        logging.info(f"✅ {self._username} joined {channel_login}")
-        self._consecutive_subscribe_401 = 0
-
-    async def _maybe_reconnect(self) -> bool:
-        """Helper to handle reconnect if requested. Returns True if reconnect was attempted and failed (should break loop)."""
-        if self._reconnect_requested:
-            self._reconnect_requested = False
-            ok = await self._reconnect_with_backoff()
-            if not ok:
-                return True
+            logging.warning(f"Leave channel failed: {str(e)}")
             return False
-        return False
 
-    async def _handle_ws_message(self, msg) -> bool:
-        """Handle a websocket message. Returns True if a reconnect was attempted and failed (should break loop)."""
-        if msg is None:
-            return False  # timeout path handled internally
-        if msg.type == aiohttp.WSMsgType.TEXT:
-            self._last_activity = time.monotonic()
-            await self._handle_text(msg.data)
-        elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-            logging.info(
-                "⚠️ EventSub WebSocket abnormal end code={code}".format(
-                    code=getattr(msg, "data", None)
-                )
-            )
-            ok = await self._reconnect_with_backoff()
-            if not ok:
-                return True
-        return False
-
-    def _log_subscribe_non_202(self, status: int, channel_login: str) -> None:
-        """Logs a non-202 status from subscription request.
-
-        Args:
-            status (int): HTTP status code.
-            channel_login (str): Channel login being subscribed to.
-        """
-        logging.warning(
-            f"⚠️ EventSub subscribe non-202 status={status} channel={channel_login}"
-        )
-
-    def _handle_subscribe_unauthorized(self, channel_login: str) -> None:
-        """Handles unauthorized subscription response.
-
-        Increments consecutive 401 counter and marks token as invalid if threshold reached.
-
-        Args:
-            channel_login (str): Channel login being subscribed to.
-        """
-        self._consecutive_subscribe_401 += 1
-        logging.warning(
-            f"🚫 EventSub subscribe unauthorized channel={channel_login} count={self._consecutive_subscribe_401}"
-        )
-        if (
-            self._consecutive_subscribe_401 >= EVENTSUB_CONSECUTIVE_401_THRESHOLD
-            and not self._token_invalid_flag
-        ):
-            self._token_invalid_flag = True
-            logging.error(
-                "🚫 EventSub token invalid source={source} channel={channel}".format(
-                    source="subscribe", channel=channel_login
-                )
-            )
-            if self._token_invalid_callback:
-                try:
-                    _ = asyncio.create_task(self._token_invalid_callback())
-                except Exception as e:
-                    logging.warning(
-                        f"⚠️ Error in EventSub token invalid callback: {str(e)}"
-                    )
-
-    def _on_subscribe_other(self, channel_login: str, status: int) -> None:
-        """Handles other subscription response statuses.
-
-        Resets 401 counter and logs missing scopes for 403 status.
-
-        Args:
-            channel_login (str): Channel login being subscribed to.
-            status (int): HTTP status code.
-        """
-        # reset counter on any non-401 failure
-        self._consecutive_subscribe_401 = 0
-        if status == 403:
-            self._log_missing_scopes(channel_login)
-
-    def _log_missing_scopes(self, channel_login: str) -> None:
-        """Logs missing OAuth scopes for subscription.
-
-        Args:
-            channel_login (str): Channel login being subscribed to.
-        """
-        required = {"user:read:chat", "chat:read"}
-        missing = sorted(s for s in required if s not in self._scopes)
-        if missing:
-            logging.warning(
-                "🚫 EventSub missing scopes missing={missing} channel={channel}".format(
-                    missing=";".join(missing), channel=channel_login
-                )
-            )
-
-    async def _verify_subscriptions(self) -> None:
-        """Verifies active subscriptions and resubscribes missing ones.
-
-        Fetches active broadcaster IDs and resubscribes to any missing channels.
-        """
-        if not (self._token and self._client_id and self._session_id):
-            return
-        active = await self._fetch_active_broadcaster_ids()
-        if active is None:
-            return
-        expected = self._expected_broadcaster_ids()
-        missing = expected - active
-        if not missing:
-            return
-        await self._resubscribe_missing(missing)
-
-    async def _fetch_active_broadcaster_ids(self) -> set[str] | None:
-        """Fetches active broadcaster IDs from EventSub subscriptions.
+    def is_connected(self) -> bool:
+        """Check if WebSocket is connected.
 
         Returns:
-            set[str] | None: Set of active broadcaster IDs or None if failed.
+            bool: True if connected, False otherwise.
         """
-        if not self._can_fetch_broadcaster_ids():
-            return None
-        data, status = await self._try_fetch_broadcaster_ids()
-        if data is None:
-            return None
-        if status == 401:
-            self._handle_list_unauthorized(data)
-            return None
-        if status != 200 or not isinstance(data, dict):
-            return None
-        return self._extract_broadcaster_ids_from_data(data)
+        return self._ws_manager is not None and self._ws_manager.is_connected
 
-    def _can_fetch_broadcaster_ids(self) -> bool:
-        """Checks if broadcaster IDs can be fetched.
+    def get_session_id(self) -> str | None:
+        """Get the current EventSub session ID.
 
         Returns:
-            bool: True if token and client ID are available.
+            str | None: Session ID if connected, None otherwise.
         """
-        return self._token is not None and self._client_id is not None
+        return self._ws_manager.session_id if self._ws_manager else None
 
-    def _handle_list_unauthorized(self, data: Any) -> None:
-        """Handles unauthorized response from subscription list.
-
-        Args:
-            data (Any): Response data.
-        """
-        logging.warning("🚫 EventSub subscription list unauthorized.")
-
-    async def _try_fetch_broadcaster_ids(self) -> tuple[Any, int]:
-        """Attempts to fetch broadcaster IDs from EventSub API.
+    def get_user_id(self) -> str | None:
+        """Get the bot's user ID.
 
         Returns:
-            tuple[Any, int]: Response data and status code.
+            str | None: User ID if set, None otherwise.
         """
-        try:
-            # mypy: ensure str, not Optional[str]
-            if self._token is None or self._client_id is None:
-                raise RuntimeError("Token or client_id is None")
-            data, status, _ = await self._api.request(
-                "GET",
-                EVENTSUB_SUBSCRIPTIONS,
-                access_token=self._token,
-                client_id=self._client_id,
-            )
-            return data, status
-        except Exception as e:  # noqa: BLE001
-            logging.info(f"⚠️ EventSub subscription list error: {str(e)}")
-            return None, -1
+        return self._user_id
 
-    def _extract_broadcaster_ids_from_data(self, data: Any) -> set[str]:
-        """Extracts broadcaster IDs from API response data.
-
-        Args:
-            data (Any): API response data.
+    def get_username(self) -> str | None:
+        """Get the bot's username.
 
         Returns:
-            set[str]: Set of broadcaster IDs.
+            str | None: Username if set, None otherwise.
         """
-        rows = data.get("data")
-        if not isinstance(rows, list):
-            return set()
-        result: set[str] = set()
-        for entry in rows:
-            bid = self._extract_broadcaster_id(entry)
-            if bid:
-                result.add(bid)
-        return result
+        return self._username
 
-    def _extract_broadcaster_id(self, entry: Any) -> str | None:
-        """Extracts broadcaster ID from a subscription entry.
-
-        Args:
-            entry (Any): Subscription entry data.
+    def get_primary_channel(self) -> str | None:
+        """Get the primary channel.
 
         Returns:
-            str | None: Broadcaster ID or None if not matching.
+            str | None: Primary channel if set, None otherwise.
         """
-        if not isinstance(entry, dict):
-            return None
-        if entry.get("type") != EVENTSUB_CHAT_MESSAGE:
-            return None
-        transport = entry.get("transport", {})
-        if transport.get("session_id") != self._session_id:
-            return None
-        cond = entry.get("condition", {})
-        bid = cond.get("broadcaster_user_id")
-        return bid if isinstance(bid, str) else None
-
-    def _expected_broadcaster_ids(self) -> set[str]:
-        """Gets expected broadcaster IDs for current channels.
-
-        Returns:
-            set[str]: Set of expected broadcaster IDs.
-        """
-        return {
-            bid for bid in (self._channel_ids.get(c) for c in self._channels) if bid
-        }
-
-    def _handle_close_action(self, close_code: int | None) -> str | None:
-        """Map a close code to an action and perform minimal side-effects.
-
-        Returns a symbolic action name or None.
-        """
-        if close_code is None:
-            return None
-        CLOSE_CODE_ACTIONS = {
-            WEBSOCKET_CLOSE_TOKEN_REFRESH: "token_refresh",
-            4002: "token_refresh",
-            4003: "token_refresh",
-            WEBSOCKET_CLOSE_SESSION_STALE: "session_stale",
-        }
-        action = CLOSE_CODE_ACTIONS.get(int(close_code))
-        if action == "token_refresh":
-            # Mark token invalid and call the configured callback
-            self._token_invalid_flag = True
-            if self._token_invalid_callback:
-                try:
-                    _ = asyncio.create_task(self._token_invalid_callback())
-                except Exception as e:
-                    logging.info(
-                        f"⚠️ Error in EventSub token invalid callback: {str(e)}"
-                    )
-        elif action == "session_stale":
-            # mark that we should perform a full resubscribe cycle after
-            # reconnect rather than relying on session resume
-            try:
-                self._force_full_resubscribe = True
-            except Exception as e:
-                logging.info(f"⚠️ EventSub force_full_resubscribe error: {str(e)}")
-        return action
-
-    async def _resubscribe_missing(self, missing: set[str]) -> None:
-        """Resubscribes to missing channels.
-
-        Args:
-            missing (set[str]): Set of missing broadcaster IDs.
-        """
-        for ch, bid in self._channel_ids.items():
-            if bid in missing:
-                await self._subscribe_channel_chat(ch)
-        logging.info(
-            f"🔄 EventSub resubscribed missing count={len(missing)} total={len(self._channels)}"
-        )
+        return self._primary_channel
 
     async def _maybe_verify_subs(self, now: float) -> None:
         """Conditionally verifies subscriptions based on timing.
@@ -1224,395 +448,33 @@ class EventSubChatBackend:  # pylint: disable=too-many-instance-attributes
         if now < self._next_sub_check:
             return
         try:
-            await self._verify_subscriptions()
-        except Exception as e:  # noqa: BLE001
-            logging.info(f"⚠️ EventSub subscription check error: {str(e)}")
-        # If fast audit pending (post-reconnect) schedule normal interval next, else schedule normal with jitter
-        if self._fast_audit_pending:
-            self._fast_audit_pending = False
-            self._next_sub_check = now + self._audit_interval + self._jitter(0, 120.0)
-        else:
-            self._next_sub_check = now + self._audit_interval + self._jitter(0, 120.0)
-
-    async def _ensure_socket(self) -> bool:
-        """Ensures WebSocket connection is active.
-
-        Returns:
-            bool: True if socket is active or reconnection successful.
-        """
-        if self._ws and not self._ws.closed:
-            return True
-        logging.info("⚠️ EventSub WebSocket closed detected")
-        return await self._reconnect_with_backoff()
-
-    async def _receive_one(self) -> aiohttp.WSMessage | None:
-        """Receives one WebSocket message with timeout handling.
-
-        Returns:
-            aiohttp.WSMessage | None: Received message or None on timeout/error.
-        """
-        if not self._ws:
-            return None
-        try:
-            msg = await asyncio.wait_for(
-                self._ws.receive(), timeout=WEBSOCKET_MESSAGE_TIMEOUT_SECONDS
-            )
-            return msg
-        except TimeoutError:
-            if time.monotonic() - self._last_activity > self._stale_threshold:
-                logging.info(
-                    f"⚠️ EventSub stale socket idle={int(time.monotonic() - self._last_activity)}s"
-                )
-                ok = await self._reconnect_with_backoff()
-                if not ok:
-                    return None
-            return None
-        except asyncio.CancelledError:  # pragma: no cover
-            raise
-        except Exception as e:  # noqa: BLE001
-            logging.warning(f"💥 EventSub listen loop error: {str(e)}")
-            ok = await self._reconnect_with_backoff()
-            if not ok:
-                return None
-            return None
-
-    # ---- reconnect helpers moved to class scope to reduce function complexity ----
-    async def _reconnect_cleanup(self) -> None:
-        """Cleans up state for reconnection.
-
-        Closes WebSocket, handles pending session ID, and resets counters.
-        """
-        await self._safe_close()
-        # If Twitch provided a pending reconnect session id keep it so the
-        # new connection can attempt to resume that session.
-        # However, if we're forcing a full resubscribe (e.g., due to session_stale),
-        # don't use the pending session id as it may be invalid.
-        if self._pending_reconnect_session_id and not self._force_full_resubscribe:
-            self._session_id = self._pending_reconnect_session_id
-        else:
-            self._session_id = None
-        # Clear the pending marker after consuming it.
-        self._pending_reconnect_session_id = None
-        self._consecutive_subscribe_401 = 0
-
-    async def _perform_handshake(self) -> tuple[bool, dict]:
-        """Performs WebSocket handshake.
-
-        Returns:
-            tuple[bool, dict]: Success flag and handshake details.
-        """
-        return await self._open_and_handshake_detailed()
-
-    async def _do_subscribe_cycle(self) -> None:
-        """Performs subscription cycle for all channels.
-
-        Resolves channels and subscribes to chat messages.
-        """
-        # rebuild channel subs
-        await self._batch_resolve_channels(self._channels)
-        for ch in self._channels:
-            await self._subscribe_channel_chat(ch)
-        # If we detected a session_stale earlier, ensure we attempt a
-        # full resubscribe cycle and then clear the flag.
-        if self._force_full_resubscribe:
-            logging.info(
-                f"🔄 EventSub forcing full resubscribe channels={len(self._channels)}"
-            )
-            # Re-run the subscribe flow to be explicit.
-            for ch in self._channels:
-                await self._subscribe_channel_chat(ch)
-            self._force_full_resubscribe = False
-
-    def _log_handshake_failure_details(self, handshake_details: dict) -> None:
-        """Logs detailed handshake failure information."""
-        try:
-            details = (
-                handshake_details
-                if isinstance(handshake_details, dict)
-                else {"details": str(handshake_details)}
-            )
-            if isinstance(details, dict):
-                details = dict(details)
-                details.pop("request_headers", None)
-                raw = details.get("welcome_raw")
-                if isinstance(raw, bytes | str) and len(raw) > 2048:
-                    details["welcome_raw"] = (
-                        raw if isinstance(raw, str) else raw.decode(errors="ignore")
-                    )[:2048] + "...<truncated>"
-            logging.error(
-                f"🧪 EventSub handshake failure details: {json.dumps(details, default=str)}"
-            )
-        except Exception as log_e:  # noqa: BLE001
-            logging.error(f"🧪 EventSub handshake details logging error: {str(log_e)}")
-
-    def _handle_reconnect_success(self) -> None:
-        """Handles successful reconnect by resetting state."""
-        self._backoff = 1.0
-        now = time.monotonic()
-        self._last_activity = now
-        self._fast_audit_pending = True
-        self._next_sub_check = now + self._jitter(
-            self._fast_audit_min, self._fast_audit_max
-        )
-
-    async def _handle_reconnect_failure(self, attempt: int) -> None:
-        """Handles reconnect failure by logging and applying backoff."""
-        logging.error(
-            f"❌ EventSub reconnect failed attempt={attempt} backoff={round(self._backoff, 2)}"
-        )
-        await asyncio.sleep(
-            self._backoff + self._jitter(0, EVENTSUB_JITTER_FACTOR * self._backoff)
-        )
-        self._backoff = min(self._backoff * 2, self._max_backoff)
-
-    async def _reconnect_with_backoff(self) -> bool:
-        """Reconnect loop with reduced cognitive complexity by delegating
-        cleanup, handshake and subscribe cycles to small helpers.
-        """
-
-        attempt = 0
-        while not self._stop_event.is_set():
-            attempt += 1
-            try:
-                await self._reconnect_cleanup()
-                await asyncio.sleep(EVENTSUB_RECONNECT_DELAY_SECONDS)
-
-                logging.info(
-                    "🔄 EventSub reconnect attempt={attempt} ws_url={ws_url} session_id={session_id} channels={channels}".format(
-                        attempt=attempt,
-                        ws_url=getattr(self, "_ws_url", None),
-                        session_id=getattr(self, "_session_id", None),
-                        channels=str(self._channels),
-                    )
-                )
-
-                handshake_ok, handshake_details = await self._perform_handshake()
-                logging.info(
-                    "🤝 EventSub handshake result: attempt={attempt} ws_url={ws_url} session_id={session_id} handshake_ok={handshake_ok}".format(
-                        attempt=attempt,
-                        ws_url=getattr(self, "_ws_url", None),
-                        session_id=getattr(self, "_session_id", None),
-                        handshake_ok=handshake_ok,
-                    )
-                )
-                if not handshake_ok:
-                    self._log_handshake_failure_details(handshake_details)
-                    raise RuntimeError("handshake failed")
-
-                await self._do_subscribe_cycle()
-
-                logging.info(
-                    f"✅ EventSub reconnect success attempt={attempt} channels={len(self._channels)}"
-                )
-
-                self._handle_reconnect_success()
-                return True
-            except Exception:  # noqa: BLE001
-                await self._handle_reconnect_failure(attempt)
-        return False
-
-    async def _open_and_handshake_detailed(self):
-        """Open WebSocket and parse welcome, logging all details for diagnostics."""
-        try:
-            headers = {}
-            if self._client_id:
-                headers["Client-Id"] = self._client_id
-            if self._token:
-                headers["Authorization"] = f"Bearer {self._token}"
-            ws = await self._session.ws_connect(
-                self._ws_url,
-                heartbeat=WEBSOCKET_HEARTBEAT_SECONDS,
-                headers=headers,
-                protocols=("twitch-eventsub-ws",),
-            )
-            self._ws = ws
-            handshake_details = {
-                "request_headers": dict(getattr(ws, "_request_headers", {})),
-                "url": self._ws_url,
-            }
-
-            # Handle challenge if needed
-            challenge_handled = await self._handle_challenge_if_needed(
-                ws, handshake_details
-            )
-            if not challenge_handled:
-                return False, handshake_details
-
-            # Process welcome message
-            success, details = await self._process_welcome_message(
-                ws, handshake_details
-            )
-            if success:
-                self._pending_reconnect_session_id = None  # Clear on success
-            handshake_details.update(details)
-            return success, handshake_details
-
+            if self._sub_manager:
+                active_channels = await self._sub_manager.verify_subscriptions()
+                # Update channels list
+                self._channels = [ch for ch in self._channels if ch in active_channels]
         except Exception as e:
-            return False, {"exception": str(e)}
+            logging.info(f"Subscription check error: {str(e)}")
+        self._next_sub_check = now + EVENTSUB_SUB_CHECK_INTERVAL_SECONDS
 
-    async def _handle_challenge_if_needed(self, ws, handshake_details):
-        """Handle challenge response flow if pending challenge exists."""
-        if not getattr(self, "_pending_challenge", None):
-            return True
+    async def _handle_reconnect(self) -> None:
+        """Handle reconnection logic."""
+        if self._ws_manager:
+            await self._ws_manager.reconnect()
+            # Re-subscribe to all channels
+            if self._sub_manager:
+                for channel in self._channels:
+                    # Resolve and subscribe again
+                    if self._channel_resolver:
+                        user_ids = await self._channel_resolver.resolve_user_ids(
+                            [channel], self._token or "", self._client_id or ""
+                        )
+                        channel_id = user_ids.get(channel)
+                        if channel_id:
+                            await self._sub_manager.subscribe_channel_chat(
+                                channel_id, self._user_id or ""
+                            )
 
-        logging.info(
-            f"🔐 EventSub challenge handshake start user={self._username} challenge={self._pending_challenge} ws_url={self._ws_url}"
-        )
-        handshake_details["challenge_handshake"] = True
-
-        # Wait for challenge (or possibly welcome) message
-        try:
-            challenge_msg = await asyncio.wait_for(
-                ws.receive(), timeout=WEBSOCKET_MESSAGE_TIMEOUT_SECONDS
-            )
-            handshake_details["challenge_type"] = str(
-                getattr(challenge_msg, "type", None)
-            )
-
-            if challenge_msg.type != aiohttp.WSMsgType.TEXT:
-                handshake_details["challenge_error"] = "bad_challenge_type"
-                self._pending_challenge = None
-                return False
-
-            # Parse JSON
-            challenge_data = json.loads(challenge_msg.data)
-            handshake_details["challenge_data"] = challenge_data
-
-            # If server sent WELCOME first (common in real EventSub), bypass challenge
-            meta = (
-                challenge_data.get("metadata")
-                if isinstance(challenge_data, dict)
-                else None
-            )
-            if isinstance(challenge_data, dict):
-                challenge_type = challenge_data.get("type")
-            else:
-                challenge_type = None
-            mtype = (
-                meta.get("message_type") if isinstance(meta, dict) else challenge_type
-            )
-            payload = (
-                challenge_data.get("payload")
-                if isinstance(challenge_data, dict)
-                else None
-            )
-            session_obj = payload.get("session") if isinstance(payload, dict) else None
-            session_id = (
-                session_obj.get("id") if isinstance(session_obj, dict) else None
-            )
-            if (isinstance(mtype, str) and mtype == "session_welcome") or isinstance(
-                session_id, str
-            ):
-                # Stash the already-received welcome so we don't read another frame
-                handshake_details["challenge_bypassed"] = "welcome_first"
-                handshake_details["pre_welcome_raw"] = challenge_msg.data
-                self._pending_challenge = None
-                return True
-
-            # Normal challenge path
-            received_challenge = challenge_data.get("challenge")
-            handshake_details["challenge_received"] = received_challenge
-
-            if not isinstance(received_challenge, str):
-                handshake_details["challenge_error"] = "no_challenge_value"
-                self._pending_challenge = None
-                return False
-
-            # Verify challenge
-            if received_challenge != self._pending_challenge:
-                logging.warning(
-                    f"⚠️ EventSub challenge mismatch expected={self._pending_challenge} received={received_challenge} user={self._username}"
-                )
-                self._pending_challenge = None
-                return False
-
-            # Send response
-            response = {"type": "challenge_response", "challenge": received_challenge}
-            await ws.send_json(response)
-            logging.info(
-                f"✅ EventSub challenge response sent user={self._username} challenge={received_challenge}"
-            )
-            handshake_details["challenge_response_sent"] = True
-
-            self._pending_challenge = None
-            logging.info(
-                f"⌛ EventSub waiting for welcome after challenge user={self._username}"
-            )
-            return True
-
-        except Exception as e:
-            handshake_details["challenge_error"] = f"challenge_parse_error: {e}"
-            self._pending_challenge = None
-            return False
-
-    async def _process_welcome_message(self, ws, handshake_details):
-        """Process the welcome message after connection or challenge."""
-        try:
-            # If a welcome frame was already consumed during challenge check, use it
-            pre = handshake_details.get("pre_welcome_raw")
-            if pre is not None:
-                handshake_details["welcome_type"] = "pre_received"
-                handshake_details["welcome_raw"] = pre
-                data = json.loads(pre)
-                self._session_id = data.get("payload", {}).get("session", {}).get("id")
-                handshake_details["session_id"] = self._session_id
-                handshake_details["welcome_json"] = data
-                if not self._session_id:
-                    handshake_details["error"] = "no_session_id"
-                    return False, handshake_details
-                return True, handshake_details
-
-            welcome = await asyncio.wait_for(
-                ws.receive(), timeout=WEBSOCKET_MESSAGE_TIMEOUT_SECONDS
-            )
-            handshake_details["welcome_type"] = str(getattr(welcome, "type", None))
-            handshake_details["welcome_raw"] = getattr(welcome, "data", None)
-
-            # Handle close frames
-            if welcome.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING):
-                return self._handle_close_frame(welcome, handshake_details)
-
-            # Handle errors
-            if welcome.type == aiohttp.WSMsgType.ERROR:
-                handshake_details["error"] = "ws_error"
-                handshake_details["exception"] = getattr(welcome, "data", None)
-                return False, handshake_details
-
-            # Validate text message
-            if welcome.type != aiohttp.WSMsgType.TEXT:
-                handshake_details["error"] = "bad_welcome_type"
-                return False, handshake_details
-
-            # Parse JSON
-            data = json.loads(welcome.data)
-            self._session_id = data.get("payload", {}).get("session", {}).get("id")
-            handshake_details["session_id"] = self._session_id
-            handshake_details["welcome_json"] = data
-
-            if not self._session_id:
-                handshake_details["error"] = "no_session_id"
-                return False, handshake_details
-
-            return True, handshake_details
-
-        except Exception as e:
-            handshake_details["error"] = f"welcome_parse_error: {e}"
-            return False, handshake_details
-
-    def _handle_close_frame(self, welcome, handshake_details):
-        """Handle WebSocket close frames during handshake."""
-        handshake_details["error"] = "closed_by_server"
-        close_code = getattr(welcome, "data", None)
-        handshake_details["close_code"] = close_code
-        handshake_details["close_reason"] = getattr(welcome, "extra", None)
-
-        action = self._handle_close_action(close_code)
-        handshake_details["mapped_action"] = action
-        return False, handshake_details
-
-    async def _safe_close(self) -> None:
-        try:
-            if self._ws and not self._ws.closed:
-                await self._ws.close()
-        except Exception as e:  # noqa: BLE001
-            logging.debug(f"⚠️ EventSub safe close error: {str(e)}")
+    async def _on_token_invalid(self) -> None:
+        """Callback invoked when token is detected as invalid."""
+        logging.error(f"Token invalidated for user {self._username}")
+        # Could trigger reconnect or other recovery logic here

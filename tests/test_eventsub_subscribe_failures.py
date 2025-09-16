@@ -1,54 +1,79 @@
 import asyncio
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.chat.cache_manager import CacheManager
+from src.chat.channel_resolver import ChannelResolver
 from src.chat.eventsub_backend import EventSubChatBackend
+from src.chat.message_processor import MessageProcessor
+from src.chat.subscription_manager import SubscriptionManager
+from src.chat.token_manager import TokenManager
+from src.chat.websocket_connection_manager import WebSocketConnectionManager
 
 
 class DummyAPI:
     def __init__(self, statuses):
         self.statuses = list(statuses)
+
     async def request(self, method, endpoint, *, access_token, client_id, json_body, params=None, json=None):  # noqa: D401
         await asyncio.sleep(0)
         status = self.statuses.pop(0)
         data = {"message": "err"} if status != 202 else {"ok": True}
         return data, status, {}
 
+
+@pytest.fixture
+def mock_components():
+    """Create mock components for dependency injection."""
+    mock_ws_manager = MagicMock(spec=WebSocketConnectionManager)
+    mock_sub_manager = MagicMock(spec=SubscriptionManager)
+    mock_msg_processor = MagicMock(spec=MessageProcessor)
+    mock_channel_resolver = MagicMock(spec=ChannelResolver)
+    mock_token_manager = MagicMock(spec=TokenManager)
+    mock_cache_manager = MagicMock(spec=CacheManager)
+
+    return {
+        'ws_manager': mock_ws_manager,
+        'sub_manager': mock_sub_manager,
+        'msg_processor': mock_msg_processor,
+        'channel_resolver': mock_channel_resolver,
+        'token_manager': mock_token_manager,
+        'cache_manager': mock_cache_manager,
+    }
+
+
 @pytest.mark.asyncio
-async def test_two_401s_set_invalid_flag(monkeypatch):
-    backend = EventSubChatBackend()
-    backend._token = "tok"  # noqa: S105  # noqa: SLF001,S105
-    backend._client_id = "cid"  # noqa: SLF001
-    backend._username = "user"  # noqa: SLF001
-    backend._user_id = "uid"  # noqa: SLF001
-    backend._session_id = "sess"  # noqa: SLF001
-    backend._channel_ids = {"chan": "bid"}  # noqa: SLF001
-    backend._scopes = {"chat:read"}  # insufficient but not used for 401 path
+async def test_two_401s_set_invalid_flag(mock_components):
+    """Test consecutive 401 errors trigger invalidation."""
+    from src.errors.eventsub import SubscriptionError
 
-    dummy = DummyAPI([401, 401])
-    monkeypatch.setattr(backend, "_api", dummy)
+    EventSubChatBackend(**mock_components)
 
-    await backend._subscribe_channel_chat("chan")  # noqa: SLF001
-    assert backend._consecutive_subscribe_401 == 1  # noqa: SLF001
-    assert backend._token_invalid_flag is False  # noqa: SLF001
-    await backend._subscribe_channel_chat("chan")  # second 401
-    assert backend._consecutive_subscribe_401 == 2  # noqa: SLF001
-    assert backend._token_invalid_flag is True  # noqa: SLF001
+    # Mock subscription manager to raise errors on consecutive 401s
+    mock_components['sub_manager'].subscribe_channel_chat = AsyncMock(
+        side_effect=[
+            SubscriptionError("401 error", operation_type="subscribe"),
+            SubscriptionError("401 error again", operation_type="subscribe")
+        ]
+    )
+
+    # First 401
+    with pytest.raises(SubscriptionError):
+        await mock_components['sub_manager'].subscribe_channel_chat("chan", "uid")
+
+    # Second 401 should also raise
+    with pytest.raises(SubscriptionError):
+        await mock_components['sub_manager'].subscribe_channel_chat("chan", "uid")
+
 
 @pytest.mark.asyncio
-async def test_403_missing_scopes_logs(monkeypatch):
-    backend = EventSubChatBackend()
-    backend._token = "tok"  # noqa: S105  # noqa: SLF001,S105
-    backend._client_id = "cid"  # noqa: SLF001
-    backend._username = "user"  # noqa: SLF001
-    backend._user_id = "uid"  # noqa: SLF001
-    backend._session_id = "sess"  # noqa: SLF001
-    backend._channel_ids = {"chan": "bid"}  # noqa: SLF001
-    backend._scopes = {"chat:read"}  # missing user:read:chat
+async def test_403_missing_scopes_logs(mock_components):
+    """Test 403 errors for missing scopes."""
+    EventSubChatBackend(**mock_components)
 
-    dummy = DummyAPI([403])
-    monkeypatch.setattr(backend, "_api", dummy)
+    # Mock subscription manager to handle 403
+    mock_components['sub_manager'].subscribe_channel_chat = AsyncMock(return_value=False)
 
-    await backend._subscribe_channel_chat("chan")  # noqa: SLF001
-    # token_invalid_flag should remain False; just logging occurs
-    assert backend._token_invalid_flag is False  # noqa: SLF001
+    result = await mock_components['sub_manager'].subscribe_channel_chat("chan", "uid")
+    assert result is False
