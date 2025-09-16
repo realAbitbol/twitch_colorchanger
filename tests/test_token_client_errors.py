@@ -38,7 +38,7 @@ class FakeSession:
         self.validate_status = validate_status
         self.refresh_status = refresh_status
         self.refresh_payload = refresh_payload or {"access_token": "new", "expires_in": 3600, "refresh_token": "r2"}
-        self.validate_payload = validate_payload or {"expires_in": 3600}
+        self.validate_payload = validate_payload or {"expires_in": 3600, "scopes": ["chat:read", "user:read:chat", "user:manage:chat_color"]}
         self.validate_exception = validate_exception
         self.refresh_exception = refresh_exception
         self.validate_json_exception = validate_json_exception
@@ -221,7 +221,7 @@ async def test_ensure_fresh_no_refresh_token():
 async def test_ensure_fresh_validation_succeeds_skip():
     from datetime import timedelta
     expiry = datetime.now(UTC) + timedelta(seconds=3500)  # expiring soon, triggers validation
-    validate_payload = {"expires_in": 3901}  # safe_expires = 3601, > threshold
+    validate_payload = {"expires_in": 3901, "scopes": ["chat:read", "user:read:chat", "user:manage:chat_color"]}  # safe_expires = 3601, > threshold
     session = FakeSession(validate_status=200, refresh_status=200, validate_payload=validate_payload)
     client = TokenClient("cid", "csec", session)
     res = await client.ensure_fresh("user", "atok", "rtok", expiry, force_refresh=False)
@@ -273,6 +273,39 @@ async def test_refresh_500_error():
 @pytest.mark.asyncio
 async def test_validate_500_error():
     session = FakeSession(validate_status=500, refresh_status=200)
+    client = TokenClient("cid", "csec", session)
+    res = await client.validate("user", "tok")
+    assert res.outcome == TokenOutcome.FAILED
+    assert session.get_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_validate_missing_required_scopes():
+    # Scopes missing chat:read
+    validate_payload = {"expires_in": 3600, "scopes": ["user:read:chat", "user:manage:chat_color"]}
+    session = FakeSession(validate_status=200, refresh_status=200, validate_payload=validate_payload)
+    client = TokenClient("cid", "csec", session)
+    res = await client.validate("user", "tok")
+    assert res.outcome == TokenOutcome.FAILED
+    assert session.get_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_validate_invalid_scopes_format():
+    # Scopes not a list
+    validate_payload = {"expires_in": 3600, "scopes": "invalid"}
+    session = FakeSession(validate_status=200, refresh_status=200, validate_payload=validate_payload)
+    client = TokenClient("cid", "csec", session)
+    res = await client.validate("user", "tok")
+    assert res.outcome == TokenOutcome.FAILED
+    assert session.get_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_validate_no_scopes_key():
+    # No scopes key
+    validate_payload = {"expires_in": 3600}
+    session = FakeSession(validate_status=200, refresh_status=200, validate_payload=validate_payload)
     client = TokenClient("cid", "csec", session)
     res = await client.validate("user", "tok")
     assert res.outcome == TokenOutcome.FAILED

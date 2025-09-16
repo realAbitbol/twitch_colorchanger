@@ -176,6 +176,8 @@ class TokenManager(TokenManagerProtocol):
                 logging.info(
                     f"✅ Token refreshed and validated for user {self.username}"
                 )
+                # Reset 401 counter after successful refresh
+                self.reset_401_counter()
                 return True
             else:
                 logging.warning(

@@ -15,6 +15,9 @@ from .protocols import SubscriptionManagerProtocol
 
 EVENTSUB_SUBSCRIPTIONS = "eventsub/subscriptions"
 EVENTSUB_CHAT_MESSAGE = "channel.chat.message"
+SUBSCRIPTION_VERIFICATION_FAILED_UNAUTHORIZED = (
+    "Subscription verification failed: unauthorized"
+)
 
 
 class SubscriptionManager(SubscriptionManagerProtocol):
@@ -33,7 +36,14 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         _rate_limiter (asyncio.Semaphore): Semaphore for rate limiting concurrent subscriptions.
     """
 
-    def __init__(self, api: TwitchAPI, session_id: str, token: str, client_id: str):
+    def __init__(
+        self,
+        api: TwitchAPI,
+        session_id: str,
+        token: str,
+        client_id: str,
+        token_manager: Any = None,
+    ):
         """Initialize the SubscriptionManager.
 
         Args:
@@ -41,6 +51,7 @@ class SubscriptionManager(SubscriptionManagerProtocol):
             session_id (str): The current EventSub session ID.
             token (str): OAuth access token for API requests.
             client_id (str): Twitch application client ID.
+            token_manager: Optional token manager for refresh on 401.
 
         Raises:
             ValueError: If any required parameter is None or empty.
@@ -58,10 +69,12 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         self._session_id = session_id
         self._token = token
         self._client_id = client_id
+        self._token_manager = token_manager
         self._active_subscriptions: dict[str, str] = {}  # sub_id -> channel_id
         self._rate_limiter = asyncio.Semaphore(
             10
         )  # Limit to 10 concurrent subscriptions
+        self._token_lock = asyncio.Lock()  # Lock for atomic token updates
 
     async def subscribe_channel_chat(self, channel_id: str, user_id: str) -> bool:
         """Subscribe to chat messages for a specific channel.
@@ -84,42 +97,7 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         async with self._rate_limiter:
             try:
                 body = self._build_subscription_body(channel_id, user_id)
-                data, status, _ = await self._api.request(
-                    "POST",
-                    EVENTSUB_SUBSCRIPTIONS,
-                    access_token=self._token,
-                    client_id=self._client_id,
-                    json_body=body,
-                )
-
-                if status == 202:
-                    # Extract subscription ID from response
-                    sub_id = self._extract_subscription_id(data)
-                    if sub_id:
-                        self._active_subscriptions[sub_id] = channel_id
-                        return True
-                    else:
-                        logging.warning(
-                            f"⚠️ EventSub subscription created but no ID returned for channel {channel_id}"
-                        )
-                        return False
-
-                elif status == 401:
-                    raise AuthenticationError(
-                        f"Subscription failed: unauthorized for channel {channel_id}",
-                        operation_type="subscribe",
-                    )
-                elif status == 403:
-                    raise SubscriptionError(
-                        f"Subscription failed: forbidden for channel {channel_id}",
-                        operation_type="subscribe",
-                    )
-                else:
-                    raise SubscriptionError(
-                        f"Subscription failed: HTTP {status} for channel {channel_id}",
-                        operation_type="subscribe",
-                    )
-
+                return await self._handle_subscription_request(body, channel_id)
             except (AuthenticationError, SubscriptionError):
                 raise
             except Exception as e:
@@ -208,6 +186,20 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         self._session_id = new_session_id
         logging.info(f"🔄 EventSub session ID updated to {new_session_id}")
 
+    def update_access_token(self, new_access_token: str) -> None:
+        """Update the access token for API requests.
+
+        Args:
+            new_access_token (str): The new access token.
+
+        Raises:
+            ValueError: If access_token is invalid.
+        """
+        if not new_access_token or not isinstance(new_access_token, str):
+            raise ValueError("Valid access_token required")
+        self._token = new_access_token
+        logging.info("🔄 EventSub access token updated")
+
     async def __aenter__(self) -> "SubscriptionManager":
         """Async context manager entry."""
         return self
@@ -215,6 +207,206 @@ class SubscriptionManager(SubscriptionManagerProtocol):
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit with cleanup."""
         await self.unsubscribe_all()
+
+    async def _handle_subscription_request(
+        self, body: dict[str, Any], channel_id: str
+    ) -> bool:
+        """Handle the subscription API request and process response.
+
+        Args:
+            body (dict[str, Any]): The request body.
+            channel_id (str): The channel ID.
+
+        Returns:
+            bool: True if successful.
+
+        Raises:
+            AuthenticationError: On 401.
+            SubscriptionError: On other errors.
+        """
+        data, status, _ = await self._api.request(
+            "POST",
+            EVENTSUB_SUBSCRIPTIONS,
+            access_token=self._token,
+            client_id=self._client_id,
+            json_body=body,
+        )
+
+        if status == 202:
+            sub_id = self._extract_subscription_id(data)
+            if sub_id:
+                self._active_subscriptions[sub_id] = channel_id
+                return True
+            else:
+                logging.warning(
+                    f"⚠️ EventSub subscription created but no ID returned for channel {channel_id}"
+                )
+                return False
+        elif status == 401:
+            return await self._handle_401_and_retry(body, channel_id)
+        elif status == 403:
+            raise SubscriptionError(
+                f"Subscription failed: forbidden for channel {channel_id}",
+                operation_type="subscribe",
+            )
+        else:
+            raise SubscriptionError(
+                f"Subscription failed: HTTP {status} for channel {channel_id}",
+                operation_type="subscribe",
+            )
+
+    async def _handle_401_and_retry(
+        self, body: dict[str, Any], channel_id: str
+    ) -> bool:
+        """Handle 401 error by refreshing token and retrying.
+
+        Args:
+            body (dict[str, Any]): The request body.
+            channel_id (str): The channel ID.
+
+        Returns:
+            bool: True if successful after retry.
+
+        Raises:
+            AuthenticationError: If refresh fails or still 401.
+            SubscriptionError: On other retry errors.
+        """
+        if not self._token_manager:
+            raise AuthenticationError(
+                f"Subscription failed: unauthorized for channel {channel_id}",
+                operation_type="subscribe",
+            )
+
+        refreshed = await self._token_manager.refresh_token()
+        if not refreshed:
+            await self._token_manager.handle_401_error()
+            raise AuthenticationError(
+                f"Subscription failed: unauthorized for channel {channel_id}",
+                operation_type="subscribe",
+            )
+
+        try:
+            info = await self._token_manager.token_manager.get_info(
+                self._token_manager.username
+            )
+            if not info or not info.access_token:
+                await self._token_manager.handle_401_error()
+                raise AuthenticationError(
+                    f"Subscription failed: unauthorized for channel {channel_id}",
+                    operation_type="subscribe",
+                )
+
+            async with self._token_lock:
+                self._token = info.access_token
+            self._token_manager.reset_401_counter()
+
+            # Retry the request
+            data, status, _ = await self._api.request(
+                "POST",
+                EVENTSUB_SUBSCRIPTIONS,
+                access_token=self._token,
+                client_id=self._client_id,
+                json_body=body,
+            )
+            if status == 202:
+                sub_id = self._extract_subscription_id(data)
+                if sub_id:
+                    self._active_subscriptions[sub_id] = channel_id
+                    return True
+                else:
+                    logging.warning(
+                        f"⚠️ EventSub subscription created after retry but no ID returned for channel {channel_id}"
+                    )
+                    return False
+            elif status == 401:
+                await self._token_manager.handle_401_error()
+                raise AuthenticationError(
+                    f"Subscription failed: unauthorized for channel {channel_id}",
+                    operation_type="subscribe",
+                )
+            else:
+                raise SubscriptionError(
+                    f"Subscription failed after retry: HTTP {status} for channel {channel_id}",
+                    operation_type="subscribe",
+                )
+        except Exception as e:
+            logging.warning(
+                f"⚠️ Token refresh failed during subscription for channel {channel_id}: {str(e)}"
+            )
+            await self._token_manager.handle_401_error()
+            raise AuthenticationError(
+                f"Subscription failed: unauthorized for channel {channel_id}",
+                operation_type="subscribe",
+            ) from e
+
+    async def _handle_401_and_retry_unsubscribe(self, sub_id: str) -> None:
+        """Handle 401 error by refreshing token and retrying unsubscribe.
+
+        Args:
+            sub_id (str): The subscription ID.
+
+        Raises:
+            AuthenticationError: If refresh fails or still 401.
+            SubscriptionError: On other retry errors.
+        """
+        if not self._token_manager:
+            raise AuthenticationError(
+                f"Unsubscribe failed: unauthorized for {sub_id}",
+                operation_type="unsubscribe",
+            )
+
+        refreshed = await self._token_manager.refresh_token()
+        if not refreshed:
+            await self._token_manager.handle_401_error()
+            raise AuthenticationError(
+                f"Unsubscribe failed: unauthorized for {sub_id}",
+                operation_type="unsubscribe",
+            )
+
+        try:
+            info = await self._token_manager.token_manager.get_info(
+                self._token_manager.username
+            )
+            if not info or not info.access_token:
+                await self._token_manager.handle_401_error()
+                raise AuthenticationError(
+                    f"Unsubscribe failed: unauthorized for {sub_id}",
+                    operation_type="unsubscribe",
+                )
+
+            async with self._token_lock:
+                self._token = info.access_token
+            self._token_manager.reset_401_counter()
+
+            # Retry the request
+            _, status, _ = await self._api.request(
+                "DELETE",
+                f"{EVENTSUB_SUBSCRIPTIONS}?id={sub_id}",
+                access_token=self._token,
+                client_id=self._client_id,
+            )
+            if status == 204:
+                logging.debug(f"✅ EventSub unsubscribed from {sub_id} after retry")
+            elif status == 401:
+                await self._token_manager.handle_401_error()
+                raise AuthenticationError(
+                    f"Unsubscribe failed: unauthorized for {sub_id}",
+                    operation_type="unsubscribe",
+                )
+            else:
+                raise SubscriptionError(
+                    f"Unsubscribe failed after retry: HTTP {status} for {sub_id}",
+                    operation_type="unsubscribe",
+                )
+        except Exception as e:
+            logging.warning(
+                f"⚠️ Token refresh failed during unsubscribe for {sub_id}: {str(e)}"
+            )
+            await self._token_manager.handle_401_error()
+            raise AuthenticationError(
+                f"Unsubscribe failed: unauthorized for {sub_id}",
+                operation_type="unsubscribe",
+            ) from e
 
     def _build_subscription_body(self, channel_id: str, user_id: str) -> dict[str, Any]:
         """Build the JSON body for subscription request.
@@ -255,6 +447,110 @@ class SubscriptionManager(SubscriptionManagerProtocol):
                         return sub_id
         return None
 
+    def _extract_active_channel_ids_from_data(self, data: Any) -> list[str]:
+        """Extract active channel IDs from API response data.
+
+        Args:
+            data (Any): The API response data.
+
+        Returns:
+            list[str]: List of active channel IDs.
+        """
+        if not isinstance(data, dict):
+            logging.warning("⚠️ Invalid API response data type for subscriptions")
+            return []
+
+        rows = data.get("data")
+        if not isinstance(rows, list):
+            logging.warning("⚠️ Invalid data structure in subscriptions response")
+            return []
+
+        active_channel_ids = []
+        for entry in rows:
+            if not isinstance(entry, dict):
+                logging.debug("⚠️ Skipping non-dict entry in subscriptions")
+                continue
+
+            if entry.get("type") != EVENTSUB_CHAT_MESSAGE:
+                logging.debug(f"⚠️ Skipping entry with type {entry.get('type')}")
+                continue
+
+            transport = entry.get("transport", {})
+            if (
+                not isinstance(transport, dict)
+                or transport.get("session_id") != self._session_id
+            ):
+                logging.debug("⚠️ Skipping entry with mismatched session_id")
+                continue
+
+            cond = entry.get("condition", {})
+            if not isinstance(cond, dict):
+                logging.debug("⚠️ Skipping entry with invalid condition")
+                continue
+
+            channel_id = cond.get("broadcaster_user_id")
+            if not isinstance(channel_id, str):
+                logging.debug("⚠️ Skipping entry with invalid broadcaster_user_id")
+                continue
+
+            active_channel_ids.append(channel_id)
+
+        return active_channel_ids
+
+    async def _refresh_token_and_retry_get(self) -> tuple[Any, int]:
+        """Refresh token and retry GET request for subscriptions.
+
+        Returns:
+            tuple[Any, int]: The response data and status code.
+
+        Raises:
+            AuthenticationError: If refresh fails.
+        """
+        if not self._token_manager:
+            raise AuthenticationError(
+                SUBSCRIPTION_VERIFICATION_FAILED_UNAUTHORIZED,
+                operation_type="verify",
+            )
+
+        refreshed = await self._token_manager.refresh_token()
+        if not refreshed:
+            await self._token_manager.handle_401_error()
+            raise AuthenticationError(
+                SUBSCRIPTION_VERIFICATION_FAILED_UNAUTHORIZED,
+                operation_type="verify",
+            )
+
+        try:
+            info = await self._token_manager.token_manager.get_info(
+                self._token_manager.username
+            )
+            if not info or not info.access_token:
+                await self._token_manager.handle_401_error()
+                raise AuthenticationError(
+                    SUBSCRIPTION_VERIFICATION_FAILED_UNAUTHORIZED,
+                    operation_type="verify",
+                )
+
+            async with self._token_lock:
+                self._token = info.access_token
+            self._token_manager.reset_401_counter()
+
+            # Retry the request
+            data, status, _ = await self._api.request(
+                "GET",
+                EVENTSUB_SUBSCRIPTIONS,
+                access_token=self._token,
+                client_id=self._client_id,
+            )
+            return data, status
+        except Exception as e:
+            logging.warning(f"⚠️ Token refresh failed during verification: {str(e)}")
+            await self._token_manager.handle_401_error()
+            raise AuthenticationError(
+                SUBSCRIPTION_VERIFICATION_FAILED_UNAUTHORIZED,
+                operation_type="verify",
+            ) from e
+
     async def _fetch_active_channel_ids(self) -> list[str]:
         """Fetch active channel IDs from Twitch API.
 
@@ -274,38 +570,20 @@ class SubscriptionManager(SubscriptionManagerProtocol):
             )
 
             if status == 401:
-                raise AuthenticationError(
-                    "Subscription verification failed: unauthorized",
-                    operation_type="verify",
-                )
-            elif status != 200:
+                data, status = await self._refresh_token_and_retry_get()
+                if status == 401:
+                    raise AuthenticationError(
+                        SUBSCRIPTION_VERIFICATION_FAILED_UNAUTHORIZED,
+                        operation_type="verify",
+                    )
+
+            if status != 200:
                 raise SubscriptionError(
                     f"Subscription verification failed: HTTP {status}",
                     operation_type="verify",
                 )
 
-            if not isinstance(data, dict):
-                return []
-
-            rows = data.get("data")
-            if not isinstance(rows, list):
-                return []
-
-            active_channel_ids = []
-            for entry in rows:
-                if not isinstance(entry, dict):
-                    continue
-                if entry.get("type") != EVENTSUB_CHAT_MESSAGE:
-                    continue
-                transport = entry.get("transport", {})
-                if transport.get("session_id") != self._session_id:
-                    continue
-                cond = entry.get("condition", {})
-                channel_id = cond.get("broadcaster_user_id")
-                if isinstance(channel_id, str):
-                    active_channel_ids.append(channel_id)
-
-            return active_channel_ids
+            return self._extract_active_channel_ids_from_data(data)
 
         except (AuthenticationError, SubscriptionError):
             raise
@@ -333,15 +611,15 @@ class SubscriptionManager(SubscriptionManagerProtocol):
 
             if status == 204:
                 logging.debug(f"✅ EventSub unsubscribed from {sub_id}")
+                return
             elif status == 401:
-                raise AuthenticationError(
-                    f"Unsubscribe failed: unauthorized for {sub_id}",
-                    operation_type="unsubscribe",
-                )
+                await self._handle_401_and_retry_unsubscribe(sub_id)
+                return
             elif status == 404:
                 logging.warning(
                     f"⚠️ EventSub subscription {sub_id} not found (already unsubscribed)"
                 )
+                return
             else:
                 raise SubscriptionError(
                     f"Unsubscribe failed: HTTP {status} for {sub_id}",

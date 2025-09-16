@@ -24,13 +24,26 @@ class TestSubscriptionManager:
         return api
 
     @pytest.fixture
-    def subscription_manager(self, mock_twitch_api):
+    def mock_token_manager(self):
+        """Mock TokenManager."""
+        tm = MagicMock()
+        tm.refresh_token = AsyncMock()
+        tm.reset_401_counter = MagicMock()
+        tm.handle_401_error = AsyncMock()
+        tm.token_manager = MagicMock()
+        tm.token_manager.get_info = AsyncMock()
+        tm.username = "testuser"
+        return tm
+
+    @pytest.fixture
+    def subscription_manager(self, mock_twitch_api, mock_token_manager):
         """Create SubscriptionManager instance with mocked dependencies."""
         return SubscriptionManager(
             api=mock_twitch_api,
             session_id="test_session_id",
             token="test_token",
-            client_id="test_client_id"
+            client_id="test_client_id",
+            token_manager=mock_token_manager
         )
 
     def test_init_valid_params(self, mock_twitch_api):
@@ -350,6 +363,40 @@ class TestSubscriptionManager:
 
         with pytest.raises(SubscriptionError, match="HTTP 429 for channel channel123"):
             await subscription_manager.subscribe_channel_chat("channel123", "user456")
+
+    @pytest.mark.asyncio
+    async def test_subscribe_channel_chat_401_with_refresh_success(self, subscription_manager, mock_twitch_api, mock_token_manager):
+        """Test subscription with 401 error followed by successful token refresh and retry."""
+        # Mock initial 401
+        mock_twitch_api.request.side_effect = [
+            ({"error": "Unauthorized"}, 401, {}),  # First call fails
+            ({"data": [{"id": "sub123"}]}, 202, {})  # Retry succeeds
+        ]
+
+        # Mock token refresh success
+        mock_token_manager.refresh_token.return_value = True
+        mock_token_manager.token_manager.get_info.return_value = MagicMock(access_token="new_token")
+
+        result = await subscription_manager.subscribe_channel_chat("channel123", "user456")
+
+        assert result is True
+        assert "sub123" in subscription_manager._active_subscriptions
+        assert subscription_manager._token == "new_token"  # Token should be updated
+        mock_token_manager.reset_401_counter.assert_called_once()  # Counter should be reset
+        assert mock_twitch_api.request.call_count == 2  # Initial + retry
+
+    @pytest.mark.asyncio
+    async def test_subscribe_channel_chat_401_refresh_fails(self, subscription_manager, mock_twitch_api, mock_token_manager):
+        """Test subscription with 401 error and failed token refresh."""
+        mock_twitch_api.request.return_value = ({"error": "Unauthorized"}, 401, {})
+
+        # Mock token refresh failure
+        mock_token_manager.refresh_token.return_value = False
+
+        with pytest.raises(AuthenticationError, match="unauthorized for channel channel123"):
+            await subscription_manager.subscribe_channel_chat("channel123", "user456")
+
+        mock_token_manager.handle_401_error.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_verify_subscriptions_invalid_data(self, subscription_manager, mock_twitch_api):

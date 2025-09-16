@@ -273,6 +273,25 @@ class TokenClient:
             async with self.session.get(url, headers=headers, timeout=timeout) as resp:
                 if resp.status == 200:
                     data = await resp.json()
+                    # Check required scopes for helix endpoints
+                    required_scopes = {
+                        "chat:read",
+                        "user:read:chat",
+                        "user:manage:chat_color",
+                    }
+                    scopes = data.get("scopes", [])
+                    if not isinstance(scopes, list):
+                        logging.warning(
+                            f"❌ Token validation failed: invalid scopes format user={username}"
+                        )
+                        return False, None
+                    current_scopes = {str(s).lower() for s in scopes}
+                    missing_scopes = required_scopes - current_scopes
+                    if missing_scopes:
+                        logging.warning(
+                            f"❌ Token validation failed: missing required scopes {missing_scopes} user={username}"
+                        )
+                        return False, None
                     expires_in = data.get("expires_in")
                     expiry = None
                     if expires_in:
