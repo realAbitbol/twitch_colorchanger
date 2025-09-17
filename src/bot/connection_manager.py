@@ -168,7 +168,7 @@ class ConnectionManager:
         backend.set_message_handler(self.bot.message_processor.handle_message)
         if hasattr(backend, "set_token_invalid_callback"):
             try:
-                backend.set_token_invalid_callback(
+                await backend.set_token_invalid_callback(
                     self.bot.token_handler.check_and_refresh_token
                 )
             except Exception as e:

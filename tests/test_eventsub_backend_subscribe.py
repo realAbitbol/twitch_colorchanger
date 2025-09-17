@@ -2,11 +2,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.auth_token.manager import TokenManager
 from src.chat.cache_manager import CacheManager
 from src.chat.channel_resolver import ChannelResolver
 from src.chat.message_processor import MessageProcessor
 from src.chat.subscription_manager import SubscriptionManager
-from src.chat.token_manager import TokenManager
 from src.chat.websocket_connection_manager import WebSocketConnectionManager
 
 

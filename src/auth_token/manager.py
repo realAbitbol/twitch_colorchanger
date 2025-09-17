@@ -14,12 +14,17 @@ from typing import Any, TypeVar
 
 import aiohttp
 
+from ..api.twitch import TwitchAPI
 from ..constants import (
+    EVENTSUB_CONSECUTIVE_401_THRESHOLD,
+    REQUIRED_SCOPES,
     TOKEN_MANAGER_BACKGROUND_BASE_SLEEP,
+    TOKEN_MANAGER_CONCURRENT_LIMIT,
     TOKEN_MANAGER_PERIODIC_VALIDATION_INTERVAL,
     TOKEN_MANAGER_VALIDATION_MIN_INTERVAL,
     TOKEN_REFRESH_THRESHOLD_SECONDS,
 )
+from ..errors.eventsub import AuthenticationError
 from ..utils import format_duration
 from .client import RefreshErrorType, TokenClient, TokenOutcome, TokenResult
 
@@ -58,6 +63,9 @@ class TokenInfo:
         last_validation: Timestamp of last validation.
         forced_unknown_attempts: Count of forced refreshes for unknown expiry.
         original_lifetime: Baseline lifetime in seconds when first known.
+        recorded_scopes: Set of validated OAuth scopes.
+        consecutive_401_count: Count of consecutive 401 errors.
+        invalid_callback: Optional callback for token invalidation events.
     """
 
     username: str
@@ -73,6 +81,9 @@ class TokenInfo:
     original_lifetime: int | None = (
         None  # seconds (baseline when token/expiry first known or refreshed)
     )
+    recorded_scopes: set[str] = field(default_factory=set)
+    consecutive_401_count: int = 0
+    invalid_callback: Callable[[], Coroutine[Any, Any, None]] | None = None
 
 
 class TokenManager:
@@ -111,9 +122,11 @@ class TokenManager:
             return
         # Core state
         self.http_session = http_session
+        self.api = TwitchAPI(http_session)
         self.tokens: dict[str, TokenInfo] = {}
         self._tokens_lock = asyncio.Lock()
         self._client_cache_lock = asyncio.Lock()
+        self._token_update_lock = asyncio.Lock()
         self._hooks_lock = asyncio.Lock()
         self.background_task: asyncio.Task[Any] | None = None
         self.running = False
@@ -129,6 +142,8 @@ class TokenManager:
         ] = {}
         # Retained background tasks (e.g. persistence hooks) to prevent premature GC.
         self._hook_tasks: list[asyncio.Task[Any]] = []
+        # Semaphore for rate limiting concurrent background processing
+        self._concurrent_semaphore = asyncio.Semaphore(TOKEN_MANAGER_CONCURRENT_LIMIT)
         # Paused users for background refresh
         self._paused_users: set[str] = set()
         # Mark as initialized to avoid repeating work on future constructions.
@@ -322,16 +337,16 @@ class TokenManager:
         async def _propagate() -> None:  # coroutine required by register_update_hook
             async with self._tokens_lock:
                 info = self.tokens.get(username)
-            if not info or not info.access_token:
-                return
-            try:
-                getattr(backend, propagate_attr)(info.access_token)
-            except (ValueError, RuntimeError, TypeError) as e:
-                logging.warning(
-                    f"⚠️ EventSub token propagation error user={username}: {str(e)}"
-                )
-            # tiny await to satisfy linters that expect async use
-            await asyncio.sleep(0)
+                if not info or not info.access_token:
+                    return
+                try:
+                    getattr(backend, propagate_attr)(info.access_token)
+                except (ValueError, RuntimeError, TypeError) as e:
+                    logging.warning(
+                        f"⚠️ EventSub token propagation error user={username}: {str(e)}"
+                    )
+                # tiny await to satisfy linters that expect async use
+                await asyncio.sleep(0)
 
         await self.register_update_hook(username, _propagate)
 
@@ -381,6 +396,351 @@ class TokenManager:
                 del self.tokens[username]
                 logging.debug(f"🗑️ Removed token entry user={username}")
                 return True
+        return False
+
+    async def set_invalid_callback(
+        self, username: str, callback: Callable[[], Coroutine[Any, Any, None]]
+    ) -> None:
+        """Set the callback for token invalidation events.
+
+        The callback will be invoked when the token is detected as invalid
+        (e.g., after consecutive 401 errors).
+
+        Args:
+            username: Username associated with the token.
+            callback: Async callable to invoke on token invalidation.
+        """
+        async with self._tokens_lock:
+            info = self.tokens.get(username)
+            if info:
+                info.invalid_callback = callback
+
+    async def handle_401_error(self, username: str) -> None:
+        """Handle a 401 Unauthorized error with threshold-based invalidation.
+
+        Increments the consecutive 401 counter and triggers invalidation
+        if the threshold is exceeded.
+
+        Args:
+            username: Username associated with the token.
+
+        Raises:
+            AuthenticationError: If token is invalidated due to threshold.
+        """
+        async with self._tokens_lock:
+            info = self.tokens.get(username)
+            if not info:
+                return
+            info.consecutive_401_count += 1
+        logging.warning(
+            f"🚫 EventSub 401 error for user {username}, count={info.consecutive_401_count}"
+        )
+
+        if info.consecutive_401_count >= EVENTSUB_CONSECUTIVE_401_THRESHOLD:
+            logging.error(
+                f"🚫 Token invalidated for user {username} due to {info.consecutive_401_count} consecutive 401 errors"
+            )
+            # Reset counter
+            info.consecutive_401_count = 0
+            # Trigger invalidation callback
+            if info.invalid_callback:
+                try:
+                    await info.invalid_callback()
+                except Exception as e:
+                    logging.warning(
+                        f"⚠️ Error in token invalid callback for user {username}: {str(e)}"
+                    )
+            # Raise authentication error
+            raise AuthenticationError(
+                f"Token invalidated after {EVENTSUB_CONSECUTIVE_401_THRESHOLD} consecutive 401 errors",
+                user_id=username,
+                operation_type="handle_401",
+            )
+
+    async def handle_401_and_refresh(self, username: str) -> str | None:
+        """Handle 401 error by refreshing token and returning new token.
+
+        Args:
+            username: Username associated with the token.
+
+        Returns:
+            The new access token if refresh successful, None otherwise.
+        """
+        try:
+            refreshed = await self.refresh_token(username)
+            if refreshed:
+                info = await self.get_info(username)
+                if info and info.access_token:
+                    await self.reset_401_counter(username)
+                    return info.access_token
+            return None
+        except Exception as e:
+            logging.error(f"401 refresh failed for user {username}: {e}")
+            return None
+
+    async def get_scopes(self, username: str) -> set[str]:
+        """Get the currently recorded OAuth scopes.
+
+        Args:
+            username: Username associated with the token.
+
+        Returns:
+            Set of recorded scopes.
+        """
+        async with self._tokens_lock:
+            info = self.tokens.get(username)
+        return info.recorded_scopes.copy() if info else set()
+
+    async def check_scopes(
+        self, username: str, required_scopes: set[str] | frozenset[str]
+    ) -> bool:
+        """Check if token has required scopes.
+
+        Args:
+            username: Username associated with the token.
+            required_scopes: Set of scopes that are required.
+
+        Returns:
+            True if token has all required scopes, False otherwise.
+        """
+        current_scopes = await self.get_scopes(username)
+        return required_scopes.issubset(current_scopes)
+
+    # Backward compatibility methods
+    async def validate_token(
+        self, username_or_token: str, access_token: str = ""
+    ) -> bool:
+        if access_token == "":
+            # Backward compatibility: username_or_token is access_token
+            access_token = username_or_token
+            # For backward compatibility, try to find a user with this token
+            async with self._tokens_lock:
+                for username, info in self.tokens.items():
+                    if info.access_token == access_token:
+                        return await self._validate_token_impl(username, access_token)
+            return False
+        else:
+            # Normal case: username_or_token is username
+            username = username_or_token
+            return await self._validate_token_impl(username, access_token)
+
+    async def handle_401_error_legacy(self, username: str | None = None) -> None:
+        """Handle 401 error (backward compatibility method).
+
+        Args:
+            username: Username associated with the token (optional for backward compatibility).
+        """
+        if username is None:
+            # For backward compatibility, try to find a user with 401 errors
+            async with self._tokens_lock:
+                for user, info in self.tokens.items():
+                    if info.consecutive_401_count > 0:
+                        username = user
+                        break
+        if username:
+            await self._handle_401_error(username)
+
+    async def get_scopes_legacy(self, username: str | None = None) -> set[str]:
+        """Get scopes (backward compatibility method).
+
+        Args:
+            username: Username associated with the token (optional for backward compatibility).
+
+        Returns:
+            Set of recorded scopes.
+        """
+        if username is None:
+            # For backward compatibility, return scopes from first user
+            async with self._tokens_lock:
+                for info in self.tokens.values():
+                    return info.recorded_scopes.copy()
+        if username:
+            return await self._get_scopes(username)
+        return set()
+
+    async def reset_401_counter_legacy(self, username: str | None = None) -> None:
+        """Reset 401 counter (backward compatibility method).
+
+        Args:
+            username: Username associated with the token (optional for backward compatibility).
+        """
+        if username is None:
+            # For backward compatibility, reset all counters
+            async with self._tokens_lock:
+                for info in self.tokens.values():
+                    if info.consecutive_401_count > 0:
+                        info.consecutive_401_count = 0
+        elif username:
+            await self._reset_401_counter(username)
+
+    async def ensure_valid_token_legacy(
+        self, username: str | None = None
+    ) -> str | None:
+        """Ensure token is valid (backward compatibility method).
+
+        Args:
+            username: Username associated with the token (optional for backward compatibility).
+
+        Returns:
+            Valid access token or None.
+        """
+        if username is None:
+            # For backward compatibility, try first user
+            async with self._tokens_lock:
+                for user in self.tokens:
+                    username = user
+                    break
+        if username:
+            return await self._ensure_valid_token(username)
+        return None
+
+    async def set_invalid_callback_legacy(
+        self,
+        callback: Callable[[], Coroutine[Any, Any, None]],
+        username: str | None = None,
+    ) -> None:
+        """Set invalid callback (backward compatibility method).
+
+        Args:
+            callback: Callback function.
+            username: Username associated with the token (optional for backward compatibility).
+        """
+        if username is None:
+            # For backward compatibility, set for first user
+            async with self._tokens_lock:
+                for user in self.tokens:
+                    username = user
+                    break
+        if username:
+            await self._set_invalid_callback(username, callback)
+
+    # Private methods renamed to avoid conflicts
+    async def _get_scopes(self, username: str) -> set[str]:
+        """Get the currently recorded OAuth scopes.
+
+        Args:
+            username: Username associated with the token.
+
+        Returns:
+            Set of recorded scopes.
+        """
+        async with self._tokens_lock:
+            info = self.tokens.get(username)
+        return info.recorded_scopes.copy() if info else set()
+
+    async def _handle_401_error(self, username: str) -> None:
+        """Handle a 401 Unauthorized error with threshold-based invalidation.
+
+        Args:
+            username: Username associated with the token.
+
+        Raises:
+            AuthenticationError: If token is invalidated due to threshold.
+        """
+        async with self._tokens_lock:
+            info = self.tokens.get(username)
+            if not info:
+                return
+            info.consecutive_401_count += 1
+        logging.warning(
+            f"🚫 EventSub 401 error for user {username}, count={info.consecutive_401_count}"
+        )
+
+        if info.consecutive_401_count >= EVENTSUB_CONSECUTIVE_401_THRESHOLD:
+            logging.error(
+                f"🚫 Token invalidated for user {username} due to {info.consecutive_401_count} consecutive 401 errors"
+            )
+            # Reset counter
+            info.consecutive_401_count = 0
+            # Trigger invalidation callback
+            if info.invalid_callback:
+                try:
+                    await info.invalid_callback()
+                except Exception as e:
+                    logging.warning(
+                        f"⚠️ Error in token invalid callback for user {username}: {str(e)}"
+                    )
+            # Raise authentication error
+            raise AuthenticationError(
+                f"Token invalidated after {EVENTSUB_CONSECUTIVE_401_THRESHOLD} consecutive 401 errors",
+                user_id=username,
+                operation_type="handle_401",
+            )
+
+    async def _reset_401_counter(self, username: str) -> None:
+        """Reset the consecutive 401 error counter.
+
+        Args:
+            username: Username associated with the token.
+        """
+        async with self._tokens_lock:
+            info = self.tokens.get(username)
+            if info and info.consecutive_401_count > 0:
+                logging.debug(f"🔄 Reset 401 counter for user {username}")
+                info.consecutive_401_count = 0
+
+    async def _ensure_valid_token(self, username: str) -> str | None:
+        """Ensure the token is valid and return it.
+
+        Args:
+            username: Username associated with the token.
+
+        Returns:
+            The valid access token, or None if validation/refresh fails.
+        """
+        if not await self.is_token_valid(username):
+            # Try refresh
+            if not await self.refresh_token(username):
+                return None
+
+            # Re-check after refresh
+            if not await self.is_token_valid(username):
+                return None
+
+        # Get the token
+        info = await self.get_info(username)
+        return info.access_token if info else None
+
+    async def _set_invalid_callback(
+        self, username: str, callback: Callable[[], Coroutine[Any, Any, None]]
+    ) -> None:
+        """Set the callback for token invalidation events.
+
+        Args:
+            username: Username associated with the token.
+            callback: Async callable to invoke on token invalidation.
+        """
+        async with self._tokens_lock:
+            info = self.tokens.get(username)
+            if info:
+                info.invalid_callback = callback
+
+    async def is_token_valid(self, username: str) -> bool:
+        """Check if the current token is valid and has required scopes.
+
+        Performs validation and scope checking.
+
+        Args:
+            username: Username associated with the token.
+
+        Returns:
+            True if token is valid and has required scopes, False otherwise.
+        """
+        try:
+            info = await self.get_info(username)
+            if not info or not info.access_token:
+                return False
+
+            # Validate token and record scopes
+            if not await self.validate_token(username, info.access_token):
+                return False
+
+            # Check scopes
+            return await self.check_scopes(username, REQUIRED_SCOPES)
+
+        except Exception as e:
+            logging.debug(f"⚠️ Token validity check error for user {username}: {str(e)}")
+            return False
         return False
 
     async def prune(self, active_usernames: set[str]) -> int:
@@ -473,6 +833,44 @@ class TokenManager:
             and remaining > TOKEN_REFRESH_THRESHOLD_SECONDS
         )
 
+    async def reset_401_counter(self, username: str) -> None:
+        """Reset the consecutive 401 error counter.
+
+        Should be called when a successful operation occurs.
+
+        Args:
+            username: Username associated with the token.
+        """
+        async with self._tokens_lock:
+            info = self.tokens.get(username)
+            if info and info.consecutive_401_count > 0:
+                logging.debug(f"🔄 Reset 401 counter for user {username}")
+                info.consecutive_401_count = 0
+
+    async def ensure_valid_token(self, username: str) -> str | None:
+        """Ensure the token is valid and return it.
+
+        Performs validation, refresh if needed, and scope checking.
+
+        Args:
+            username: Username associated with the token.
+
+        Returns:
+            The valid access token, or None if validation/refresh fails.
+        """
+        if not await self.is_token_valid(username):
+            # Try refresh
+            if not await self.refresh_token(username):
+                return None
+
+            # Re-check after refresh
+            if not await self.is_token_valid(username):
+                return None
+
+        # Get the token
+        info = await self.get_info(username)
+        return info.access_token if info else None
+
     async def _refresh_with_lock(
         self,
         client: TokenClient,
@@ -494,7 +892,7 @@ class TokenManager:
             Tuple of (TokenResult from refresh, whether token actually changed).
         """
         token_changed = False
-        async with info.refresh_lock:
+        async with self._token_update_lock, info.refresh_lock:
             before_access = info.access_token
             before_refresh = info.refresh_token
             result = await client.ensure_fresh(
@@ -675,6 +1073,66 @@ class TokenManager:
                 return TokenOutcome.VALID
             return TokenOutcome.FAILED
 
+    # EventSub-specific methods for consolidated token management
+    async def _validate_token_impl(self, username: str, access_token: str) -> bool:
+        """Validate token and record scopes for EventSub operations.
+
+        Args:
+            username: Username associated with the token.
+            access_token: Access token to validate.
+
+        Returns:
+            True if token is valid and scopes recorded, False otherwise.
+        """
+        if not access_token:
+            return False
+
+        try:
+            # Get token info
+            async with self._tokens_lock:
+                info = self.tokens.get(username)
+            if not info:
+                return False
+
+            # Use Twitch API to validate and get scopes
+            validation = await self.api.validate_token(access_token)
+
+            if not isinstance(validation, dict):
+                return False
+
+            raw_scopes = validation.get("scopes")
+            if not isinstance(raw_scopes, list):
+                return False
+
+            # Record scopes in lowercase for consistent comparison
+            recorded_scopes = {str(scope).lower() for scope in raw_scopes}
+
+            # Update token info with scopes
+            async with self._tokens_lock:
+                if info in self.tokens.values():  # Ensure info is still valid
+                    # Store scopes in token info for later retrieval
+                    if not hasattr(info, "recorded_scopes"):
+                        info.recorded_scopes = set()
+                    info.recorded_scopes.update(recorded_scopes)
+
+            return True
+
+        except Exception:
+            return False
+
+    async def refresh_token(self, username: str, force_refresh: bool = False) -> bool:
+        """Refresh token for EventSub operations.
+
+        Args:
+            username: Username to refresh token for.
+            force_refresh: Force refresh regardless of expiry.
+
+        Returns:
+            True if refresh successful, False otherwise.
+        """
+        outcome = await self.ensure_fresh(username, force_refresh)
+        return outcome.name != "FAILED"
+
     def _remaining_seconds(self, info: TokenInfo) -> float | None:
         """Calculate remaining seconds until token expiry.
 
@@ -714,9 +1172,25 @@ class TokenManager:
                 async with self._tokens_lock:
                     users = list(self.tokens.items())
                 users = [(u, info) for u, info in users if u not in self._paused_users]
-                for username, info in users:
-                    await self._process_single_background(
-                        username, info, force_proactive=drifted
+
+                async def _limited_process(
+                    username: str, info: TokenInfo, force_proactive: bool
+                ) -> None:
+                    async with self._concurrent_semaphore:
+                        await self._process_single_background(
+                            username, info, force_proactive=force_proactive
+                        )
+
+                if users:
+                    start_time = time.time()
+                    tasks = [
+                        _limited_process(username, info, drifted)
+                        for username, info in users
+                    ]
+                    await asyncio.gather(*tasks)
+                    elapsed = time.time() - start_time
+                    logging.info(
+                        f"🔄 Background refresh processed {len(users)} users concurrently in {elapsed:.2f}s"
                     )
                 last_loop = now
                 await asyncio.sleep(base * _jitter_rng.uniform(0.5, 1.5))
@@ -852,21 +1326,21 @@ class TokenManager:
             async with self._tokens_lock:
                 if info_ref.forced_unknown_attempts < 3:
                     info_ref.forced_unknown_attempts += 1
-            delay = TOKEN_MANAGER_BACKGROUND_BASE_SLEEP * (
-                2 ** (info_ref.forced_unknown_attempts - 1)
-            )
-            await asyncio.sleep(delay)
-            forced = await self.ensure_fresh(username, force_refresh=True)
-            if forced == TokenOutcome.FAILED:
-                logging.warning(
-                    f"⚠️ Forced refresh attempt failed resolving unknown expiry user={username} attempt={info_ref.forced_unknown_attempts}"
-                )
-            else:
-                logging.info(
-                    f"✅ Forced refresh resolved unknown expiry user={username} attempt={info_ref.forced_unknown_attempts}"
-                )
-                async with self._tokens_lock:
-                    info_ref.forced_unknown_attempts = 0
+                    delay = TOKEN_MANAGER_BACKGROUND_BASE_SLEEP * (
+                        2 ** (info_ref.forced_unknown_attempts - 1)
+                    )
+                    await asyncio.sleep(delay)
+                    forced = await self.ensure_fresh(username, force_refresh=True)
+                    if forced == TokenOutcome.FAILED:
+                        logging.warning(
+                            f"⚠️ Forced refresh attempt failed resolving unknown expiry user={username} attempt={info_ref.forced_unknown_attempts}"
+                        )
+                    else:
+                        logging.info(
+                            f"✅ Forced refresh resolved unknown expiry user={username} attempt={info_ref.forced_unknown_attempts}"
+                        )
+                    async with self._tokens_lock:
+                        info_ref.forced_unknown_attempts = 0
         else:
             async with self._tokens_lock:
                 if info_ref.forced_unknown_attempts:

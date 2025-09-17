@@ -161,6 +161,14 @@ WEBSOCKET_CLOSE_SESSION_STALE = _get_env_int(
 EVENTSUB_CONSECUTIVE_401_THRESHOLD = _get_env_int(
     "EVENTSUB_CONSECUTIVE_401_THRESHOLD", 2
 )  # Consecutive 401 threshold
+# Required OAuth scopes for EventSub chat operations
+REQUIRED_SCOPES = frozenset({"chat:read", "user:read:chat", "user:manage:chat_color"})
+EVENTSUB_STABILITY_WINDOW_SECONDS = _get_env_int(
+    "EVENTSUB_STABILITY_WINDOW_SECONDS", 300
+)  # Stability window for adaptive verification timing (5 minutes)
+EVENTSUB_MESSAGE_THRESHOLD = _get_env_int(
+    "EVENTSUB_MESSAGE_THRESHOLD", 10
+)  # Message threshold for adaptive verification timing
 EVENTSUB_RECONNECT_DELAY_SECONDS = _get_env_int(
     "EVENTSUB_RECONNECT_DELAY_SECONDS", 1
 )  # Reconnect delay
@@ -213,6 +221,9 @@ TOKEN_MEDIUM_THRESHOLD_SECONDS = _get_env_int(
 TOKEN_HIGH_THRESHOLD_MULTIPLIER = _get_env_int(
     "TOKEN_HIGH_THRESHOLD_MULTIPLIER", 2
 )  # High token threshold multiplier
+TOKEN_MANAGER_CONCURRENT_LIMIT = _get_env_int(
+    "TOKEN_MANAGER_CONCURRENT_LIMIT", 5
+)  # Max concurrent users in background refresh
 
 # Bot/core constants
 LISTENER_TASK_TIMEOUT_SECONDS = _get_env_int(

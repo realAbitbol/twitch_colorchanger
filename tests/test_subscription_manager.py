@@ -27,7 +27,7 @@ class TestSubscriptionManager:
     def mock_token_manager(self):
         """Mock TokenManager."""
         tm = MagicMock()
-        tm.refresh_token = AsyncMock()
+        tm.handle_401_and_refresh = AsyncMock()
         tm.reset_401_counter = MagicMock()
         tm.handle_401_error = AsyncMock()
         tm.token_manager = MagicMock()
@@ -374,15 +374,13 @@ class TestSubscriptionManager:
         ]
 
         # Mock token refresh success
-        mock_token_manager.refresh_token.return_value = True
-        mock_token_manager.token_manager.get_info.return_value = MagicMock(access_token="new_token")
+        mock_token_manager.handle_401_and_refresh.return_value = "new_token"
 
         result = await subscription_manager.subscribe_channel_chat("channel123", "user456")
 
         assert result is True
         assert "sub123" in subscription_manager._active_subscriptions
         assert subscription_manager._token == "new_token"  # Token should be updated
-        mock_token_manager.reset_401_counter.assert_called_once()  # Counter should be reset
         assert mock_twitch_api.request.call_count == 2  # Initial + retry
 
     @pytest.mark.asyncio
@@ -391,7 +389,7 @@ class TestSubscriptionManager:
         mock_twitch_api.request.return_value = ({"error": "Unauthorized"}, 401, {})
 
         # Mock token refresh failure
-        mock_token_manager.refresh_token.return_value = False
+        mock_token_manager.handle_401_and_refresh.return_value = None
 
         with pytest.raises(AuthenticationError, match="unauthorized for channel channel123"):
             await subscription_manager.subscribe_channel_chat("channel123", "user456")

@@ -272,3 +272,73 @@ async def test_handle_config_save_error_final_failure(token_refresher):
     error = RuntimeError("Save failed")
     result = await token_refresher._handle_config_save_error(error, 2, 3)
     assert result is True
+
+
+@pytest.mark.asyncio
+async def test_handle_config_save_error_permanent_file_not_found(token_refresher):
+    """Test _handle_config_save_error with permanent FileNotFoundError."""
+    error = FileNotFoundError("File not found")
+    result = await token_refresher._handle_config_save_error(error, 0, 3)
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_handle_config_save_error_permanent_permission_denied(token_refresher):
+    """Test _handle_config_save_error with permanent PermissionError."""
+    error = PermissionError("Permission denied")
+    result = await token_refresher._handle_config_save_error(error, 0, 3)
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_handle_config_save_error_exponential_backoff(token_refresher):
+    """Test _handle_config_save_error with exponential backoff."""
+    error = RuntimeError("Save failed")
+    with patch("asyncio.sleep") as mock_sleep:
+        result = await token_refresher._handle_config_save_error(error, 0, 3)
+        assert result is False
+        mock_sleep.assert_called_once_with(0.1 * (2 ** 0))
+
+
+@pytest.mark.asyncio
+async def test_handle_config_save_error_circuit_breaker_open(token_refresher):
+    """Test _handle_config_save_error with circuit breaker open."""
+    token_refresher._circuit_breaker_open = True
+    token_refresher._config_save_last_failure = 0  # Expired
+    error = RuntimeError("Save failed")
+    result = await token_refresher._handle_config_save_error(error, 0, 3)
+    assert result is False  # Should reset and retry
+
+
+@pytest.mark.asyncio
+async def test_handle_config_save_error_circuit_breaker_timeout(token_refresher):
+    """Test _handle_config_save_error with circuit breaker timeout."""
+    import time
+    token_refresher._circuit_breaker_open = True
+    token_refresher._config_save_last_failure = time.time() - 70  # Expired
+    error = RuntimeError("Save failed")
+    result = await token_refresher._handle_config_save_error(error, 0, 3)
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_handle_config_save_error_circuit_breaker_triggered(token_refresher):
+    """Test _handle_config_save_error triggering circuit breaker."""
+    error = RuntimeError("Save failed")
+    token_refresher._config_save_failures = 4  # One below threshold
+    result = await token_refresher._handle_config_save_error(error, 0, 3)
+    assert result is True
+    assert token_refresher._circuit_breaker_open is True
+
+
+@pytest.mark.asyncio
+async def test_attempt_config_save_resets_state_on_success(token_refresher):
+    """Test that _attempt_config_save resets state on success."""
+    token_refresher.config_file = "test.json"
+    token_refresher._config_save_failures = 2
+    token_refresher._circuit_breaker_open = True
+    with patch("src.bot.token_refresher.async_update_user_in_config", return_value=True):
+        result = await token_refresher._attempt_config_save({}, 0, 3)
+        assert result is True
+        assert token_refresher._config_save_failures == 0
+        assert token_refresher._circuit_breaker_open is False

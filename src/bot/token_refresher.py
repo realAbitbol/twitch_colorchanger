@@ -34,6 +34,11 @@ class TokenRefresher:
     config_file: str | None
     use_random_colors: bool
     token_manager: Any  # Set in _setup_token_manager
+    _config_save_failures: int = 0
+    _config_save_last_failure: float = 0
+    _circuit_breaker_open: bool = False
+    _circuit_breaker_timeout: float = 60.0
+    _circuit_breaker_threshold: int = 5
     """Mixin class for handling token refresh and configuration persistence."""
 
     async def _setup_token_manager(self) -> bool:
@@ -239,6 +244,12 @@ class TokenRefresher:
             "enabled": getattr(self, "enabled", True),
         }
 
+    def _reset_config_save_state(self) -> None:
+        """Reset config save error state on successful save."""
+        self._config_save_failures = 0
+        self._circuit_breaker_open = False
+        self._config_save_last_failure = 0
+
     async def _attempt_config_save(
         self, user_config: dict[str, Any], attempt: int, max_retries: int
     ) -> bool:
@@ -259,6 +270,7 @@ class TokenRefresher:
             success = await async_update_user_in_config(user_config, config_file)
             if success:
                 logging.debug(f"💾 Token changes saved user={self.username}")
+                self._reset_config_save_state()
                 return True
             # Fall through to generic handling below to trigger retries
             raise RuntimeError("update_user_in_config returned False")
@@ -276,7 +288,7 @@ class TokenRefresher:
     async def _handle_config_save_error(
         self, error: Exception, attempt: int, max_retries: int
     ) -> bool:
-        """Handle config save errors with retry logic.
+        """Handle config save errors with permanent/transient detection, exponential backoff, and circuit breaker.
 
         Args:
             error: The exception that occurred.
@@ -286,9 +298,45 @@ class TokenRefresher:
         Returns:
             True if should stop retrying, False to retry.
         """
+        import time
+
+        # Permanent errors: don't retry
+        if isinstance(error, FileNotFoundError | PermissionError):
+            logging.error(f"Permanent config save error: {str(error)}")
+            return True
+
+        # Circuit breaker check
+        if self._circuit_breaker_open:
+            if (
+                time.time() - self._config_save_last_failure
+                < self._circuit_breaker_timeout
+            ):
+                logging.warning("Circuit breaker open, skipping config save")
+                return True
+            else:
+                # Reset circuit breaker
+                self._circuit_breaker_open = False
+                self._config_save_failures = 0
+
+        # Increment failure count
+        self._config_save_failures += 1
+
+        # Open circuit breaker if threshold reached
+        if self._config_save_failures >= self._circuit_breaker_threshold:
+            self._circuit_breaker_open = True
+            self._config_save_last_failure = time.time()
+            logging.error(
+                f"Circuit breaker opened after {self._config_save_failures} failures"
+            )
+            return True
+
+        # Retry with exponential backoff
         if attempt < max_retries - 1:
-            logging.warning(f"Config save retry {attempt + 1}: {str(error)}")
-            await asyncio.sleep(0.1 * (attempt + 1))
+            delay = 0.1 * (2**attempt)
+            logging.warning(
+                f"Config save retry {attempt + 1} in {delay:.2f}s: {str(error)}"
+            )
+            await asyncio.sleep(delay)
             return False
         else:
             logging.error(

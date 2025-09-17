@@ -54,6 +54,7 @@ async def test_invalidation_hook_called_on_refresh_failure(monkeypatch):
     tm._tokens_lock = asyncio.Lock()
     tm._hooks_lock = asyncio.Lock()
     tm._client_cache_lock = asyncio.Lock()
+    tm._token_update_lock = asyncio.Lock()
 
     # Mock client
     mock_client = MagicMock()

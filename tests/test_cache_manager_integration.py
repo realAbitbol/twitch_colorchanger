@@ -47,13 +47,14 @@ class TestCacheManagerIntegration:
             backend = EventSubChatBackend(cache_manager=cache_manager, http_session=mock_session_instance)
             assert backend._cache_manager is cache_manager
 
-    def test_backend_creates_default_cache_manager(self):
+    @pytest.mark.asyncio
+    async def test_backend_creates_default_cache_manager(self):
         """Test that EventSubChatBackend creates default CacheManager when none provided."""
         # Mock the HTTP session to avoid needing an event loop
         with patch('aiohttp.ClientSession') as mock_session:
             mock_session_instance = mock_session.return_value
             backend = EventSubChatBackend(http_session=mock_session_instance)
-            backend._initialize_components()
+            await backend._initialize_components()
             assert backend._cache_manager is not None
             assert isinstance(backend._cache_manager, CacheManager)
 

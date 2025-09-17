@@ -1,6 +1,7 @@
 """Tests for src/chat/eventsub_backend.py."""
 
-from unittest.mock import AsyncMock, MagicMock
+import time
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -9,7 +10,6 @@ from src.chat.channel_resolver import ChannelResolver
 from src.chat.eventsub_backend import EventSubChatBackend
 from src.chat.message_processor import MessageProcessor
 from src.chat.subscription_manager import SubscriptionManager
-from src.chat.token_manager import TokenManager
 from src.chat.websocket_connection_manager import WebSocketConnectionManager
 
 
@@ -20,7 +20,7 @@ def mock_components():
     mock_sub_manager = MagicMock(spec=SubscriptionManager)
     mock_msg_processor = MagicMock(spec=MessageProcessor)
     mock_channel_resolver = MagicMock(spec=ChannelResolver)
-    mock_token_manager = MagicMock(spec=TokenManager)
+    mock_token_manager = MagicMock()
     mock_cache_manager = MagicMock(spec=CacheManager)
 
     return {
@@ -138,13 +138,14 @@ async def test_subscribe_channel_chat_unauthorized(mock_components):
 async def test_handle_close_action_token_refresh(mock_components):
     """Test token refresh handling through token manager."""
     backend = EventSubChatBackend(**mock_components)
+    backend._username = "testuser"  # Set username for callback registration
 
     # Mock token manager callback
-    callback_mock = MagicMock()
-    mock_components['token_manager'].set_invalid_callback = MagicMock()
+    callback_mock = AsyncMock()
+    mock_components['token_manager'].set_invalid_callback = AsyncMock()
 
-    backend.set_token_invalid_callback(callback_mock)
-    mock_components['token_manager'].set_invalid_callback.assert_called_once_with(callback_mock)
+    await backend.set_token_invalid_callback(callback_mock)
+    mock_components['token_manager'].set_invalid_callback.assert_called_once_with("testuser", callback_mock)
 
 
 @pytest.mark.asyncio
@@ -447,3 +448,164 @@ async def test_update_token(mock_components):
     backend.update_access_token("new_token")
     # Token update now handled through token manager
     assert backend is not None
+
+
+@pytest.mark.asyncio
+async def test_update_all_components_success(mock_components):
+    """Test _update_all_components with all components present."""
+    backend = EventSubChatBackend(**mock_components)
+    backend._username = "testuser"  # Set username for token validation
+
+    # Mock components
+    mock_components['ws_manager'].update_token = MagicMock()
+    mock_components['sub_manager'].update_access_token = MagicMock()
+    mock_components['token_manager'].validate_token = AsyncMock()
+
+    await backend._update_all_components("new_token")
+
+    # Verify all components were updated
+    mock_components['ws_manager'].update_token.assert_called_once_with("new_token")
+    mock_components['sub_manager'].update_access_token.assert_called_once_with("new_token")
+    mock_components['token_manager'].validate_token.assert_called_once_with("new_token")
+    assert backend._token == "new_token"
+
+
+@pytest.mark.asyncio
+async def test_update_all_components_partial_components(mock_components):
+    """Test _update_all_components with some components missing."""
+    backend = EventSubChatBackend(**mock_components)
+    backend._username = "testuser"  # Set username for token validation
+
+    # Remove some components
+    backend._ws_manager = None
+    backend._sub_manager = None
+
+    # Mock token manager
+    mock_components['token_manager'].validate_token = AsyncMock()
+
+    await backend._update_all_components("new_token")
+
+    # Only token manager should be called
+    mock_components['token_manager'].validate_token.assert_called_once_with("new_token")
+    assert backend._token == "new_token"
+
+
+@pytest.mark.asyncio
+async def test_update_all_components_ws_no_update_method(mock_components):
+    """Test _update_all_components when WebSocket manager has no update_token method."""
+    backend = EventSubChatBackend(**mock_components)
+    backend._username = "testuser"  # Set username for token validation
+
+    # Remove update_token method
+    del mock_components['ws_manager'].update_token
+
+    # Mock other components
+    mock_components['sub_manager'].update_access_token = MagicMock()
+    mock_components['token_manager'].validate_token = AsyncMock()
+
+    await backend._update_all_components("new_token")
+
+    # Should not call update_token on ws_manager
+    mock_components['sub_manager'].update_access_token.assert_called_once_with("new_token")
+    mock_components['token_manager'].validate_token.assert_called_once_with("new_token")
+
+
+@pytest.mark.asyncio
+async def test_update_all_components_with_exceptions(mock_components):
+    """Test _update_all_components handles exceptions gracefully."""
+    backend = EventSubChatBackend(**mock_components)
+    backend._username = "testuser"  # Set username for token validation
+
+    # Mock components to raise exceptions
+    mock_components['ws_manager'].update_token = MagicMock(side_effect=ValueError("WS error"))
+    mock_components['sub_manager'].update_access_token = MagicMock(side_effect=RuntimeError("Sub error"))
+    mock_components['token_manager'].validate_token = AsyncMock(side_effect=Exception("Token error"))
+
+    # Should not raise exceptions
+    await backend._update_all_components("new_token")
+
+    # All should have been called despite exceptions
+    mock_components['ws_manager'].update_token.assert_called_once_with("new_token")
+    mock_components['sub_manager'].update_access_token.assert_called_once_with("new_token")
+    mock_components['token_manager'].validate_token.assert_called_once_with("new_token")
+    assert backend._token == "new_token"
+
+
+@pytest.mark.asyncio
+async def test_handle_reconnect_verifies_subscriptions(mock_components):
+    """Test _handle_reconnect verifies subscriptions before resubscribing."""
+    backend = EventSubChatBackend(**mock_components)
+
+    mock_components['ws_manager'].reconnect = AsyncMock()
+    mock_components['sub_manager'].verify_subscriptions = AsyncMock(return_value=['channel1'])
+
+    await backend._handle_reconnect()
+
+    mock_components['ws_manager'].reconnect.assert_called_once()
+    mock_components['sub_manager'].verify_subscriptions.assert_called_once()
+    # Should not call _resubscribe_all_channels since active channels exist
+
+
+@pytest.mark.asyncio
+async def test_handle_reconnect_no_active_subscriptions(mock_components):
+    """Test _handle_reconnect resubscribes when no active subscriptions."""
+    backend = EventSubChatBackend(**mock_components)
+
+    mock_components['ws_manager'].reconnect = AsyncMock()
+    mock_components['sub_manager'].verify_subscriptions = AsyncMock(return_value=[])
+
+    with patch.object(backend, '_resubscribe_all_channels', new_callable=AsyncMock) as mock_resub:
+        await backend._handle_reconnect()
+        mock_resub.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_maybe_verify_subs_fixed_interval(mock_components):
+    """Test _maybe_verify_subs uses fixed interval."""
+    backend = EventSubChatBackend(**mock_components)
+
+    # Set up for check being due
+    backend._next_sub_check = time.monotonic() - 1  # Due for check
+
+    mock_components['sub_manager'].verify_subscriptions = AsyncMock(return_value=['channel1'])
+
+    await backend._maybe_verify_subs(time.monotonic())
+
+    mock_components['sub_manager'].verify_subscriptions.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_maybe_verify_subs_uses_fixed_interval_constant(mock_components):
+    """Test _maybe_verify_subs uses fixed interval from constant."""
+    backend = EventSubChatBackend(**mock_components)
+
+    # Set up for check being due
+    backend._next_sub_check = time.monotonic() - 1  # Due for check
+
+    mock_components['sub_manager'].verify_subscriptions = AsyncMock(return_value=['channel1'])
+
+    await backend._maybe_verify_subs(time.monotonic())
+
+    mock_components['sub_manager'].verify_subscriptions.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_maybe_verify_subs_schedules_next_check(mock_components):
+    """Test that _maybe_verify_subs schedules the next check with fixed interval."""
+    backend = EventSubChatBackend(**mock_components)
+
+    # Set up for check being due
+    current_time = time.monotonic()
+    backend._next_sub_check = current_time - 1  # Due for check
+
+    mock_components['sub_manager'].verify_subscriptions = AsyncMock(return_value=['channel1'])
+
+    await backend._maybe_verify_subs(current_time)
+
+    # Should have called verify_subscriptions since check was due
+    mock_components['sub_manager'].verify_subscriptions.assert_called_once()
+
+    # Next check should be scheduled with fixed interval
+    from src.constants import EVENTSUB_SUB_CHECK_INTERVAL_SECONDS
+    expected_next_check = current_time + EVENTSUB_SUB_CHECK_INTERVAL_SECONDS
+    assert abs(backend._next_sub_check - expected_next_check) < 0.01  # Small tolerance for timing

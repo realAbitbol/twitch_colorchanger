@@ -9,11 +9,11 @@ from typing import Any, cast
 import aiohttp
 
 from ..api.twitch import TwitchAPI
+from ..auth_token.manager import TokenManager
 from ..chat.cache_manager import CacheManager
 from ..chat.channel_resolver import ChannelResolver
 from ..chat.message_processor import MessageProcessor
 from ..chat.subscription_manager import SubscriptionManager
-from ..chat.token_manager import TokenManager
 from ..chat.websocket_connection_manager import WebSocketConnectionManager
 from ..constants import (
     EVENTSUB_SUB_CHECK_INTERVAL_SECONDS,
@@ -115,14 +115,14 @@ class EventSubChatBackend:
 
     async def __aenter__(self) -> EventSubChatBackend:
         """Async context manager entry."""
-        self._initialize_components()
+        await self._initialize_components()
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit with cleanup."""
         await self._cleanup_components()
 
-    def _initialize_components(self) -> None:
+    async def _initialize_components(self) -> None:
         """Initialize all components if not injected."""
         if self._cache_manager is None:
             import os
@@ -144,14 +144,12 @@ class EventSubChatBackend:
         if self._channel_resolver is None:
             self._channel_resolver = ChannelResolver(self._api, self._cache_manager)
 
-        if self._token_manager is None and self._client_id and self._client_secret:
-            self._token_manager = TokenManager(
-                username=self._username or "",
-                client_id=self._client_id,
-                client_secret=self._client_secret,
-                http_session=self._session,
-            )
-            self._token_manager.set_invalid_callback(self._on_token_invalid)
+        if self._token_manager is None:
+            self._token_manager = TokenManager(self._session)
+            if self._username:
+                await self._token_manager.set_invalid_callback(
+                    self._username, self._on_token_invalid
+                )
 
         if self._ws_manager is None and self._token and self._client_id:
             self._ws_manager = WebSocketConnectionManager(
@@ -200,11 +198,11 @@ class EventSubChatBackend:
 
     async def _validate_token(self, token: str) -> bool:
         """Validate token and update scopes."""
-        if not self._token_manager:
+        if not self._token_manager or not self._username:
             return True
         if not await self._token_manager.validate_token(token):
             return False
-        self._scopes = self._token_manager.get_scopes()
+        self._scopes = await self._token_manager._get_scopes(self._username)
         return True
 
     async def _resolve_channels(self, token: str, client_id: str) -> dict[str, str]:
@@ -231,6 +229,7 @@ class EventSubChatBackend:
                 session_id=self._ws_manager.session_id,
                 token=self._token or "",
                 client_id=self._client_id or "",
+                username=self._username or "",
                 token_manager=self._token_manager,
             )
         else:
@@ -252,14 +251,14 @@ class EventSubChatBackend:
             logging.info(f"✅ {self._username} joined #{self._primary_channel}")
         return success
 
-    def set_token_invalid_callback(self, callback) -> None:
+    async def set_token_invalid_callback(self, callback) -> None:
         """Sets the callback for token invalidation events.
 
         Args:
             callback: Function to call when the token becomes invalid.
         """
-        if self._token_manager:
-            self._token_manager.set_invalid_callback(callback)
+        if self._token_manager and self._username:
+            await self._token_manager.set_invalid_callback(self._username, callback)
 
     async def connect(
         self,
@@ -287,7 +286,7 @@ class EventSubChatBackend:
             self._set_credentials(
                 token, username, primary_channel, user_id, client_id, client_secret
             )
-            self._initialize_components()
+            await self._initialize_components()
 
             if not await self._validate_token(token):
                 return False
@@ -345,11 +344,36 @@ class EventSubChatBackend:
         """
         if not new_token:
             return
+        asyncio.create_task(self._update_all_components(new_token))
+
+    async def _update_all_components(self, new_token: str) -> None:
+        """Update token in all dependent components within the same async context.
+
+        Args:
+            new_token (str): The new access token.
+        """
         self._token = new_token
+
+        # Update WebSocket manager
+        if self._ws_manager and hasattr(self._ws_manager, "update_token"):
+            try:
+                self._ws_manager.update_token(new_token)
+            except Exception as e:
+                logging.warning(f"WebSocket token update error: {str(e)}")
+
+        # Update subscription manager
         if self._sub_manager:
-            self._sub_manager.update_access_token(new_token)
-        if self._token_manager:
-            _ = asyncio.create_task(self._token_manager.validate_token(new_token))
+            try:
+                self._sub_manager.update_access_token(new_token)
+            except Exception as e:
+                logging.warning(f"Subscription manager token update error: {str(e)}")
+
+        # Update token manager
+        if self._token_manager and self._username:
+            try:
+                await self._token_manager.validate_token(new_token)
+            except Exception as e:
+                logging.warning(f"Token manager validation error: {str(e)}")
 
     async def join_channel(self, channel: str) -> bool:
         """Joins a channel and subscribes to its chat messages.
@@ -497,13 +521,14 @@ class EventSubChatBackend:
         return self._primary_channel
 
     async def _maybe_verify_subs(self, now: float) -> None:
-        """Conditionally verifies subscriptions based on timing.
+        """Conditionally verifies subscriptions based on adaptive timing.
 
         Args:
             now (float): Current monotonic time.
         """
         if now < self._next_sub_check:
             return
+
         try:
             if self._sub_manager:
                 active_channels = await self._sub_manager.verify_subscriptions()
@@ -511,6 +536,8 @@ class EventSubChatBackend:
                 self._channels = [ch for ch in self._channels if ch in active_channels]
         except Exception as e:
             logging.info(f"Subscription check error: {str(e)}")
+
+        # Schedule next check with fixed interval
         self._next_sub_check = now + EVENTSUB_SUB_CHECK_INTERVAL_SECONDS
 
     async def _resubscribe_all_channels(self) -> None:
@@ -534,15 +561,33 @@ class EventSubChatBackend:
         """Handle reconnection logic."""
         if self._ws_manager:
             await self._ws_manager.reconnect()
-            # Unsubscribe from old subscriptions before resubscribing with new session
             if self._sub_manager:
-                await self._sub_manager.unsubscribe_all()
-            await self._resubscribe_all_channels()
+                # Verify current subscriptions to prevent duplicate subscriptions
+                try:
+                    active_channels = await self._sub_manager.verify_subscriptions()
+                    if not active_channels:
+                        # No active subscriptions, resubscribe all channels
+                        await self._resubscribe_all_channels()
+                    else:
+                        # Update channels list with active subscriptions
+                        self._channels = [
+                            ch for ch in self._channels if ch in active_channels
+                        ]
+                        logging.info(
+                            f"Reconnected with {len(active_channels)} active subscriptions"
+                        )
+                except Exception as e:
+                    logging.warning(
+                        f"Subscription verification failed during reconnect: {e}"
+                    )
+                    # Fallback: unsubscribe and resubscribe
+                    await self._sub_manager.unsubscribe_all()
+                    await self._resubscribe_all_channels()
 
     async def _on_token_invalid(self) -> None:
         """Callback invoked when token is detected as invalid."""
         logging.error(f"Token invalidated for user {self._username}")
         # Trigger token refresh and reconnect
-        if self._token_manager:
-            await self._token_manager.refresh_token(force_refresh=True)
+        if self._token_manager and self._username:
+            await self._token_manager.refresh_token(self._username, force_refresh=True)
         await self._handle_reconnect()

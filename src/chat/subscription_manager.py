@@ -42,6 +42,7 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         session_id: str,
         token: str,
         client_id: str,
+        username: str | None = None,
         token_manager: Any = None,
     ):
         """Initialize the SubscriptionManager.
@@ -51,6 +52,7 @@ class SubscriptionManager(SubscriptionManagerProtocol):
             session_id (str): The current EventSub session ID.
             token (str): OAuth access token for API requests.
             client_id (str): Twitch application client ID.
+            username (str): Username associated with the token.
             token_manager: Optional token manager for refresh on 401.
 
         Raises:
@@ -64,11 +66,14 @@ class SubscriptionManager(SubscriptionManagerProtocol):
             raise ValueError("Valid token required")
         if not client_id or not isinstance(client_id, str):
             raise ValueError("Valid client_id required")
+        if username is not None and (not isinstance(username, str) or not username):
+            raise ValueError("Valid username required")
 
         self._api = api
         self._session_id = session_id
         self._token = token
         self._client_id = client_id
+        self._username = username
         self._token_manager = token_manager
         self._active_subscriptions: dict[str, str] = {}  # sub_id -> channel_id
         self._rate_limiter = asyncio.Semaphore(
@@ -277,28 +282,17 @@ class SubscriptionManager(SubscriptionManagerProtocol):
                 operation_type="subscribe",
             )
 
-        refreshed = await self._token_manager.refresh_token()
-        if not refreshed:
-            await self._token_manager.handle_401_error()
+        new_token = await self._token_manager.handle_401_and_refresh(self._username)
+        if not new_token:
+            await self._token_manager.handle_401_error(self._username)
             raise AuthenticationError(
                 f"Subscription failed: unauthorized for channel {channel_id}",
                 operation_type="subscribe",
             )
 
         try:
-            info = await self._token_manager.token_manager.get_info(
-                self._token_manager.username
-            )
-            if not info or not info.access_token:
-                await self._token_manager.handle_401_error()
-                raise AuthenticationError(
-                    f"Subscription failed: unauthorized for channel {channel_id}",
-                    operation_type="subscribe",
-                )
-
             async with self._token_lock:
-                self._token = info.access_token
-            self._token_manager.reset_401_counter()
+                self._token = new_token
 
             # Retry the request
             data, status, _ = await self._api.request(
@@ -355,28 +349,17 @@ class SubscriptionManager(SubscriptionManagerProtocol):
                 operation_type="unsubscribe",
             )
 
-        refreshed = await self._token_manager.refresh_token()
-        if not refreshed:
-            await self._token_manager.handle_401_error()
+        new_token = await self._token_manager.handle_401_and_refresh(self._username)
+        if not new_token:
+            await self._token_manager.handle_401_error(self._username)
             raise AuthenticationError(
                 f"Unsubscribe failed: unauthorized for {sub_id}",
                 operation_type="unsubscribe",
             )
 
         try:
-            info = await self._token_manager.token_manager.get_info(
-                self._token_manager.username
-            )
-            if not info or not info.access_token:
-                await self._token_manager.handle_401_error()
-                raise AuthenticationError(
-                    f"Unsubscribe failed: unauthorized for {sub_id}",
-                    operation_type="unsubscribe",
-                )
-
             async with self._token_lock:
-                self._token = info.access_token
-            self._token_manager.reset_401_counter()
+                self._token = new_token
 
             # Retry the request
             _, status, _ = await self._api.request(
@@ -512,28 +495,17 @@ class SubscriptionManager(SubscriptionManagerProtocol):
                 operation_type="verify",
             )
 
-        refreshed = await self._token_manager.refresh_token()
-        if not refreshed:
-            await self._token_manager.handle_401_error()
+        new_token = await self._token_manager.handle_401_and_refresh(self._username)
+        if not new_token:
+            await self._token_manager.handle_401_error(self._username)
             raise AuthenticationError(
                 SUBSCRIPTION_VERIFICATION_FAILED_UNAUTHORIZED,
                 operation_type="verify",
             )
 
         try:
-            info = await self._token_manager.token_manager.get_info(
-                self._token_manager.username
-            )
-            if not info or not info.access_token:
-                await self._token_manager.handle_401_error()
-                raise AuthenticationError(
-                    SUBSCRIPTION_VERIFICATION_FAILED_UNAUTHORIZED,
-                    operation_type="verify",
-                )
-
             async with self._token_lock:
-                self._token = info.access_token
-            self._token_manager.reset_401_counter()
+                self._token = new_token
 
             # Retry the request
             data, status, _ = await self._api.request(
