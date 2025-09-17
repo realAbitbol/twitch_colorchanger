@@ -308,6 +308,21 @@ class EventSubChatBackend:
             logging.error(f"EventSub connect failed: {str(e)}")
             return False
 
+    async def _handle_message(self, msg: aiohttp.WSMessage) -> bool:
+        """Handle a single WebSocket message.
+
+        Returns True if processing should continue, False to break the loop.
+        """
+        if msg.type == aiohttp.WSMsgType.TEXT:
+            self._last_activity = time.monotonic()
+            if self._msg_processor:
+                await self._msg_processor.process_message(msg.data)
+            return True
+        elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+            logging.info("WebSocket abnormal end")
+            return await self._handle_reconnect()
+        return True
+
     async def listen(self) -> None:
         """Listen for WebSocket messages and handle them."""
         if not self._ws_manager or not self._ws_manager.is_connected:
@@ -319,18 +334,12 @@ class EventSubChatBackend:
 
             try:
                 msg = await self._ws_manager.receive_message()
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    self._last_activity = time.monotonic()
-                    if self._msg_processor:
-                        await self._msg_processor.process_message(msg.data)
-                elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-                    logging.info("WebSocket abnormal end")
-                    await self._handle_reconnect()
+                if not await self._handle_message(msg):
                     break
             except Exception as e:
                 logging.warning(f"Listen loop error: {str(e)}")
-                await self._handle_reconnect()
-                break
+                if not await self._handle_reconnect():
+                    break
 
     async def disconnect(self) -> None:
         """Disconnect from the WebSocket and cleanup resources."""
@@ -530,14 +539,23 @@ class EventSubChatBackend:
             except Exception as e:
                 logging.warning(f"Failed to resubscribe to {channel}: {e}")
 
-    async def _handle_reconnect(self) -> None:
-        """Handle reconnection logic."""
+    async def _handle_reconnect(self) -> bool:
+        """Handle reconnection logic.
+
+        Returns:
+            bool: True if reconnection successful, False otherwise.
+        """
         if self._ws_manager:
-            await self._ws_manager.reconnect()
-            # Unsubscribe from old subscriptions before resubscribing with new session
-            if self._sub_manager:
-                await self._sub_manager.unsubscribe_all()
-            await self._resubscribe_all_channels()
+            success = await self._ws_manager.reconnect()
+            if success:
+                # Unsubscribe from old subscriptions before resubscribing with new session
+                if self._sub_manager:
+                    await self._sub_manager.unsubscribe_all()
+                await self._resubscribe_all_channels()
+                return True
+            else:
+                return False
+        return False
 
     async def _on_token_invalid(self) -> None:
         """Callback invoked when token is detected as invalid."""

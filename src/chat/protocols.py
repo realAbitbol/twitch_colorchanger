@@ -37,8 +37,12 @@ class WebSocketConnectionManagerProtocol(Protocol):
         """Receive a WebSocket message."""
         ...
 
-    async def reconnect(self) -> None:
-        """Request reconnection with backoff."""
+    async def reconnect(self) -> bool:
+        """Request reconnection with backoff.
+
+        Returns:
+            bool: True if reconnected successfully, False if abandoned.
+        """
         ...
 
     async def __aenter__(self) -> WebSocketConnectionManagerProtocol:
