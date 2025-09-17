@@ -59,7 +59,7 @@ class TestWebSocketConnectionManager:
         assert manager.pending_reconnect_session_id is None
         assert manager.pending_challenge is None
         assert manager.backoff == pytest.approx(1.0)
-        assert manager.max_backoff == pytest.approx(60.0)  # EVENTSUB_MAX_BACKOFF_SECONDS
+        assert manager.max_backoff == pytest.approx(30.0)  # EVENTSUB_MAX_BACKOFF_SECONDS
         assert isinstance(manager.last_activity, float)
         assert not manager._stop_event.is_set()
         assert not manager._reconnect_requested

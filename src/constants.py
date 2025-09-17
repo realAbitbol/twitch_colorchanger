@@ -121,13 +121,13 @@ OPERATION_MAX_ATTEMPTS = _get_env_int(
     "OPERATION_MAX_ATTEMPTS", 3
 )  # Max attempts for specific operations
 RECONNECT_MAX_ATTEMPTS = _get_env_int(
-    "RECONNECT_MAX_ATTEMPTS", 5
+    "RECONNECT_MAX_ATTEMPTS", 10
 )  # Maximum reconnection attempts
 INITIAL_BACKOFF_SECONDS = _get_env_int(
     "INITIAL_BACKOFF_SECONDS", 1
 )  # Initial backoff time in seconds
 MAX_BACKOFF_SECONDS = _get_env_int(
-    "MAX_BACKOFF_SECONDS", 60
+    "MAX_BACKOFF_SECONDS", 30
 )  # Maximum backoff time in seconds
 
 # EventSub/WebSocket constants
@@ -141,7 +141,7 @@ EVENTSUB_STALE_THRESHOLD_SECONDS = _get_env_int(
     "EVENTSUB_STALE_THRESHOLD_SECONDS", 70
 )  # Stale connection threshold
 EVENTSUB_MAX_BACKOFF_SECONDS = _get_env_int(
-    "EVENTSUB_MAX_BACKOFF_SECONDS", 60
+    "EVENTSUB_MAX_BACKOFF_SECONDS", 30
 )  # Maximum EventSub backoff
 EVENTSUB_FAST_AUDIT_MIN_SECONDS = _get_env_int(
     "EVENTSUB_FAST_AUDIT_MIN_SECONDS", 60
