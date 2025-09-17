@@ -218,13 +218,16 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
                 f"WebSocket receive failed: {str(e)}", operation_type="receive"
             ) from e
 
-    async def reconnect(self) -> None:
+    async def reconnect(self) -> bool:
         """Request reconnection with backoff.
 
         Sets the reconnect flag and handles reconnection logic.
+
+        Returns:
+            bool: True if reconnected successfully, False if abandoned.
         """
         self._reconnect_requested = True
-        await self._reconnect_with_backoff()
+        return await self._reconnect_with_backoff()
 
     async def _handle_challenge(self) -> None:
         """Handle challenge/response handshake.
@@ -326,11 +329,14 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         r = secrets.randbelow(1000) / 1000.0
         return a + r * span
 
-    async def _reconnect_with_backoff(self) -> None:
+    async def _reconnect_with_backoff(self) -> bool:
         """Reconnect with exponential backoff.
 
         Attempts reconnection with increasing backoff times until successful
         or stop event is set.
+
+        Returns:
+            bool: True if reconnected successfully, False if abandoned.
         """
         attempt = 0
         while not self._stop_event.is_set():
@@ -351,7 +357,7 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
                 self.backoff = 1.0
                 self._reconnect_requested = False
                 logging.info(f"✅ Reconnect successful on attempt {attempt}")
-                return
+                return True
 
             except Exception as e:
                 logging.error(f"❌ Reconnect failed attempt {attempt}: {str(e)}")
@@ -364,3 +370,4 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
                 self.backoff = min(self.backoff * 2, self.max_backoff)
 
         logging.error("❌ Reconnect abandoned")
+        return False

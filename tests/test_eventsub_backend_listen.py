@@ -15,6 +15,7 @@ async def test_listen_timeout_handling():
     ws_manager = MagicMock(spec=WebSocketConnectionManager)
     ws_manager.is_connected = True
     ws_manager.receive_message = AsyncMock(side_effect=asyncio.TimeoutError)
+    ws_manager.reconnect = AsyncMock(return_value=False)
 
     backend = EventSubChatBackend(ws_manager=ws_manager)
     backend._stop_event = asyncio.Event()
@@ -35,7 +36,7 @@ async def test_listen_reconnect_on_stale_timeout():
     ws_manager = MagicMock(spec=WebSocketConnectionManager)
     ws_manager.is_connected = True
     ws_manager.receive_message = AsyncMock(side_effect=asyncio.TimeoutError)
-    ws_manager.reconnect = AsyncMock()
+    ws_manager.reconnect = AsyncMock(return_value=False)
 
     backend = EventSubChatBackend(ws_manager=ws_manager)
     backend._last_activity = 0  # old activity
@@ -72,7 +73,7 @@ async def test_listen_other_exception_reconnect():
     ws_manager = MagicMock(spec=WebSocketConnectionManager)
     ws_manager.is_connected = True
     ws_manager.receive_message = AsyncMock(side_effect=Exception("network error"))
-    ws_manager.reconnect = AsyncMock()
+    ws_manager.reconnect = AsyncMock(return_value=False)
 
     backend = EventSubChatBackend(ws_manager=ws_manager)
     backend._stop_event = asyncio.Event()
@@ -92,6 +93,7 @@ async def test_listen_processes_text_message():
     """Test listen processes TEXT messages via MessageProcessor."""
     ws_manager = MagicMock(spec=WebSocketConnectionManager)
     ws_manager.is_connected = True
+    ws_manager.reconnect = AsyncMock(return_value=False)
     msg_processor = MagicMock(spec=MessageProcessor)
 
     # Mock a TEXT message
@@ -121,7 +123,7 @@ async def test_listen_reconnect_on_closed():
     """Test listen triggers reconnect on CLOSED message."""
     ws_manager = MagicMock(spec=WebSocketConnectionManager)
     ws_manager.is_connected = True
-    ws_manager.reconnect = AsyncMock()
+    ws_manager.reconnect = AsyncMock(return_value=False)
 
     # Mock a CLOSED message
     msg = MagicMock()
@@ -149,7 +151,7 @@ async def test_listen_reconnect_on_error():
     """Test listen triggers reconnect on ERROR message."""
     ws_manager = MagicMock(spec=WebSocketConnectionManager)
     ws_manager.is_connected = True
-    ws_manager.reconnect = AsyncMock()
+    ws_manager.reconnect = AsyncMock(return_value=False)
 
     # Mock an ERROR message
     msg = MagicMock()
@@ -177,6 +179,7 @@ async def test_listen_normal_message():
     """Test listen processes a normal TEXT message."""
     ws_manager = MagicMock(spec=WebSocketConnectionManager)
     ws_manager.is_connected = True
+    ws_manager.reconnect = AsyncMock(return_value=False)
     msg_processor = MagicMock(spec=MessageProcessor)
     sub_manager = MagicMock()
     sub_manager.unsubscribe_all = AsyncMock()
@@ -213,7 +216,7 @@ async def test_listen_reconnect_triggered():
     ws_manager = MagicMock(spec=WebSocketConnectionManager)
     ws_manager.is_connected = True
     ws_manager.receive_message = AsyncMock(side_effect=Exception("stop"))
-    ws_manager.reconnect = AsyncMock()
+    ws_manager.reconnect = AsyncMock(return_value=False)
 
     sub_manager = MagicMock()
     sub_manager.unsubscribe_all = AsyncMock()
