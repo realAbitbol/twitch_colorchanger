@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -18,6 +19,7 @@ from ..chat.websocket_connection_manager import WebSocketConnectionManager
 from ..constants import (
     EVENTSUB_SUB_CHECK_INTERVAL_SECONDS,
 )
+from ..utils.retry import retry_async
 
 MessageHandler = Callable[[str, str, str], Any]
 
@@ -315,6 +317,14 @@ class EventSubChatBackend:
         """
         if msg.type == aiohttp.WSMsgType.TEXT:
             self._last_activity = time.monotonic()
+            try:
+                data = json.loads(msg.data)
+                msg_type = data.get("type")
+                if msg_type == "session_reconnect":
+                    await self._handle_session_reconnect(data)
+                    return True
+            except json.JSONDecodeError:
+                logging.warning(f"Failed to parse WebSocket message: {msg.data}")
             if self._msg_processor:
                 await self._msg_processor.process_message(msg.data)
             return True
@@ -522,10 +532,11 @@ class EventSubChatBackend:
             logging.info(f"Subscription check error: {str(e)}")
         self._next_sub_check = now + EVENTSUB_SUB_CHECK_INTERVAL_SECONDS
 
-    async def _resubscribe_all_channels(self) -> None:
-        """Resubscribe to all channels after reconnection."""
+    async def _resubscribe_all_channels(self) -> bool:
+        """Resubscribe to all channels after reconnection with retry logic."""
         if not self._sub_manager or not self._channel_resolver:
-            return
+            return True
+        all_success = True
         for channel in self._channels:
             try:
                 user_ids = await self._channel_resolver.resolve_user_ids(
@@ -533,11 +544,76 @@ class EventSubChatBackend:
                 )
                 channel_id = user_ids.get(channel)
                 if channel_id:
-                    await self._sub_manager.subscribe_channel_chat(
-                        channel_id, self._user_id or ""
+                    # Retry subscription with exponential backoff
+                    result = await self._subscribe_channel_with_retry(
+                        channel_id, channel
                     )
+                    if result is None:
+                        logging.error(
+                            f"Failed to resubscribe to {channel} after all retry attempts"
+                        )
+                        all_success = False
+                    elif not result:
+                        logging.warning(
+                            f"Subscription failed for {channel} even after retries"
+                        )
+                        all_success = False
+                else:
+                    logging.warning(f"Could not resolve channel_id for {channel}")
+                    all_success = False
             except Exception as e:
-                logging.warning(f"Failed to resubscribe to {channel}: {e}")
+                logging.warning(f"Failed to resolve or resubscribe to {channel}: {e}")
+                all_success = False
+        return all_success
+
+    async def _subscribe_channel_with_retry(
+        self, channel_id: str, channel: str
+    ) -> bool | None:
+        """Subscribe to a channel with retry logic."""
+        if not self._sub_manager:
+            return None
+        sub_manager = self._sub_manager
+
+        async def subscribe_operation(attempt: int) -> tuple[bool | None, bool]:
+            try:
+                success = await sub_manager.subscribe_channel_chat(
+                    channel_id, self._user_id or ""
+                )
+                return success, not success  # success: don't retry, failure: retry
+            except Exception as e:
+                logging.warning(
+                    f"Failed to resubscribe to {channel} (attempt {attempt}): {e}"
+                )
+                return False, True  # retry on exception
+
+        return await retry_async(subscribe_operation, max_attempts=5)
+
+    async def _handle_session_reconnect(self, data: dict[str, Any]) -> None:
+        """Handle session reconnect message from Twitch.
+
+        Updates the WebSocket URL and initiates reconnection.
+
+        Args:
+            data: The session_reconnect message data.
+        """
+        try:
+            reconnect_url = (
+                data.get("payload", {}).get("session", {}).get("reconnect_url")
+            )
+            if not reconnect_url:
+                logging.error("Session reconnect message missing reconnect_url")
+                return
+
+            if self._ws_manager:
+                self._ws_manager.update_url(reconnect_url)
+                logging.info(
+                    f"Updated WebSocket URL to {reconnect_url}, initiating reconnect"
+                )
+                await self._handle_reconnect()
+            else:
+                logging.error("No WebSocket manager available for session reconnect")
+        except Exception as e:
+            logging.error(f"Failed to handle session reconnect: {str(e)}")
 
     async def _handle_reconnect(self) -> bool:
         """Handle reconnection logic.
@@ -545,17 +621,48 @@ class EventSubChatBackend:
         Returns:
             bool: True if reconnection successful, False otherwise.
         """
-        if self._ws_manager:
+        if not self._ws_manager:
+            return False
+
+        old_session_id = getattr(self._ws_manager, "session_id", None)
+        logging.debug(f"Reconnect: old WS session_id={old_session_id}")
+
+        try:
             success = await self._ws_manager.reconnect()
-            if success:
-                # Unsubscribe from old subscriptions before resubscribing with new session
-                if self._sub_manager:
-                    await self._sub_manager.unsubscribe_all()
-                await self._resubscribe_all_channels()
-                return True
-            else:
+        except Exception as e:
+            logging.error(f"Reconnect failed: {e}")
+            return False
+
+        if not success:
+            return False
+
+        new_session_id = getattr(self._ws_manager, "session_id", None)
+        logging.debug(f"Reconnect successful: new WS session_id={new_session_id}")
+
+        if self._sub_manager and new_session_id:
+            try:
+                self._sub_manager.update_session_id(new_session_id)
+            except Exception as e:
+                logging.error(f"Failed to update session_id: {e}")
                 return False
-        return False
+
+        if self._sub_manager:
+            try:
+                await self._sub_manager.unsubscribe_all()
+            except Exception as e:
+                logging.error(f"Failed to unsubscribe all: {e}")
+                return False
+
+        try:
+            resub_success = await self._resubscribe_all_channels()
+        except Exception as e:
+            logging.error(f"Failed to resubscribe all channels: {e}")
+            return False
+
+        if not resub_success:
+            return False
+
+        return True
 
     async def _on_token_invalid(self) -> None:
         """Callback invoked when token is detected as invalid."""

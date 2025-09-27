@@ -7,6 +7,7 @@ import aiohttp
 import pytest
 
 from src.chat.websocket_connection_manager import (
+    ConnectionState,
     WEBSOCKET_NOT_CONNECTED_ERROR,
     WebSocketConnectionManager,
 )
@@ -63,6 +64,8 @@ class TestWebSocketConnectionManager:
         assert isinstance(manager.last_activity, float)
         assert not manager._stop_event.is_set()
         assert not manager._reconnect_requested
+        assert manager.connection_state == ConnectionState.DISCONNECTED
+        assert manager.last_sequence is None
 
     def test_init_default_url(self, mock_session):
         """Test initialization with default URL."""
@@ -505,3 +508,21 @@ class TestWebSocketConnectionManager:
 
         assert exc_info.value == original_error
         assert exc_info.value == original_error
+
+    def test_update_url_new_url(self, manager):
+        """Test update_url with a new URL."""
+        manager.ws_url = "wss://old.url"
+        manager.update_url("wss://new.url")
+        assert manager.ws_url == "wss://new.url"
+
+    def test_update_url_same_url(self, manager):
+        """Test update_url with the same URL."""
+        manager.ws_url = "wss://same.url"
+        manager.update_url("wss://same.url")
+        assert manager.ws_url == "wss://same.url"
+
+    def test_update_url_empty_url(self, manager):
+        """Test update_url with empty URL."""
+        manager.ws_url = "wss://old.url"
+        manager.update_url("")
+        assert manager.ws_url == "wss://old.url"  # Should not update to empty

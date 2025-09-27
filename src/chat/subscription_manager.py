@@ -97,6 +97,9 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         async with self._rate_limiter:
             try:
                 body = self._build_subscription_body(channel_id, user_id)
+                logging.debug(
+                    f"📡 Subscribing to channel {channel_id} with session_id {self._session_id}, payload: {body}"
+                )
                 return await self._handle_subscription_request(body, channel_id)
             except (AuthenticationError, SubscriptionError):
                 raise
@@ -243,13 +246,22 @@ class SubscriptionManager(SubscriptionManagerProtocol):
                 )
                 return False
         elif status == 401:
+            logging.error(
+                f"Subscription failed: unauthorized for channel {channel_id}, response: {data}"
+            )
             return await self._handle_401_and_retry(body, channel_id)
         elif status == 403:
+            logging.error(
+                f"Subscription failed: forbidden for channel {channel_id}, response: {data}"
+            )
             raise SubscriptionError(
                 f"Subscription failed: forbidden for channel {channel_id}",
                 operation_type="subscribe",
             )
         else:
+            logging.error(
+                f"Subscription failed: HTTP {status} for channel {channel_id}, response: {data}"
+            )
             raise SubscriptionError(
                 f"Subscription failed: HTTP {status} for channel {channel_id}",
                 operation_type="subscribe",
@@ -319,12 +331,18 @@ class SubscriptionManager(SubscriptionManagerProtocol):
                     )
                     return False
             elif status == 401:
+                logging.error(
+                    f"Subscription failed after retry: unauthorized for channel {channel_id}, response: {data}"
+                )
                 await self._token_manager.handle_401_error()
                 raise AuthenticationError(
                     f"Subscription failed: unauthorized for channel {channel_id}",
                     operation_type="subscribe",
                 )
             else:
+                logging.error(
+                    f"Subscription failed after retry: HTTP {status} for channel {channel_id}, response: {data}"
+                )
                 raise SubscriptionError(
                     f"Subscription failed after retry: HTTP {status} for channel {channel_id}",
                     operation_type="subscribe",

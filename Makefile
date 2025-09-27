@@ -130,7 +130,7 @@ validate-config:
 
 # Testing
 test:
-	.venv/bin/python -m pytest --no-cov
+	.venv/bin/python -m pytest --no-cov --timeout 30
 
 coverage:
 	.venv/bin/python -m pytest

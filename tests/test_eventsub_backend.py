@@ -1,7 +1,9 @@
 """Tests for src/chat/eventsub_backend.py."""
 
+import json
 from unittest.mock import AsyncMock, MagicMock
 
+import aiohttp
 import pytest
 
 from src.chat.cache_manager import CacheManager
@@ -447,3 +449,105 @@ async def test_update_token(mock_components):
     backend.update_access_token("new_token")
     # Token update now handled through token manager
     assert backend is not None
+
+
+@pytest.mark.asyncio
+async def test_handle_session_reconnect_success(mock_components):
+    """Test successful session reconnect handling."""
+    backend = EventSubChatBackend(**mock_components)
+
+    # Mock WebSocket manager
+    mock_components['ws_manager'].update_url = MagicMock()
+    mock_components['ws_manager'].reconnect = AsyncMock(return_value=True)
+
+    # Mock _handle_reconnect
+    backend._handle_reconnect = AsyncMock()
+
+    data = {
+        "payload": {
+            "session": {
+                "reconnect_url": "wss://new.url"
+            }
+        }
+    }
+
+    await backend._handle_session_reconnect(data)
+
+    mock_components['ws_manager'].update_url.assert_called_once_with("wss://new.url")
+    backend._handle_reconnect.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_session_reconnect_missing_url(mock_components):
+    """Test session reconnect with missing URL."""
+    backend = EventSubChatBackend(**mock_components)
+
+    data = {"payload": {"session": {}}}
+
+    await backend._handle_session_reconnect(data)
+
+    # Should not call update_url or reconnect
+    mock_components['ws_manager'].update_url.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_session_reconnect_no_ws_manager(mock_components):
+    """Test session reconnect with no WebSocket manager."""
+    backend = EventSubChatBackend(**mock_components)
+    backend._ws_manager = None
+
+    data = {
+        "payload": {
+            "session": {
+                "reconnect_url": "wss://new.url"
+            }
+        }
+    }
+
+    await backend._handle_session_reconnect(data)
+
+    # Should not raise, just log error
+
+
+@pytest.mark.asyncio
+async def test_handle_message_session_reconnect(mock_components):
+    """Test message handling for session_reconnect type."""
+    backend = EventSubChatBackend(**mock_components)
+
+    # Mock _handle_session_reconnect
+    backend._handle_session_reconnect = AsyncMock()
+
+    # Mock message
+    msg = MagicMock()
+    msg.type = aiohttp.WSMsgType.TEXT
+    msg.data = json.dumps({
+        "type": "session_reconnect",
+        "payload": {
+            "session": {
+                "reconnect_url": "wss://new.url"
+            }
+        }
+    })
+
+    result = await backend._handle_message(msg)
+
+    assert result is True
+    backend._handle_session_reconnect.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_message_invalid_json(mock_components):
+    """Test message handling with invalid JSON."""
+    backend = EventSubChatBackend(**mock_components)
+
+    # Mock message processor
+    mock_components['msg_processor'].process_message = AsyncMock()
+
+    msg = MagicMock()
+    msg.type = aiohttp.WSMsgType.TEXT
+    msg.data = "invalid json"
+
+    result = await backend._handle_message(msg)
+
+    assert result is True
+    mock_components['msg_processor'].process_message.assert_called_once_with("invalid json")

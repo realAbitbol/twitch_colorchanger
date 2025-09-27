@@ -13,6 +13,7 @@ import json
 import logging
 import secrets
 import time
+from enum import Enum
 from typing import Any
 
 import aiohttp
@@ -32,6 +33,15 @@ EVENTSUB_WS_URL = "wss://eventsub.wss.twitch.tv/ws"
 WEBSOCKET_NOT_CONNECTED_ERROR = "WebSocket not connected"
 
 
+class ConnectionState(Enum):
+    """Enumeration of WebSocket connection states."""
+
+    DISCONNECTED = "disconnected"
+    CONNECTING = "connecting"
+    CONNECTED = "connected"
+    RECONNECTING = "reconnecting"
+
+
 class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
     """Manages WebSocket connections for Twitch EventSub.
 
@@ -48,6 +58,8 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         session_id (str | None): Current EventSub session ID.
         pending_reconnect_session_id (str | None): Session ID for reconnect.
         pending_challenge (str | None): Pending challenge for handshake.
+        connection_state (ConnectionState): Current connection state.
+        last_sequence (int | None): Last received message sequence number.
         backoff (float): Current reconnect backoff time.
         max_backoff (float): Maximum backoff time.
         last_activity (float): Timestamp of last WebSocket activity.
@@ -78,6 +90,8 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         self.session_id: str | None = None
         self.pending_reconnect_session_id: str | None = None
         self.pending_challenge: str | None = None
+        self.connection_state = ConnectionState.DISCONNECTED
+        self.last_sequence: int | None = None
         self.backoff = 1.0
         self.max_backoff = EVENTSUB_MAX_BACKOFF_SECONDS
         self.last_activity = time.monotonic()
@@ -111,6 +125,7 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         Raises:
             EventSubConnectionError: If connection or handshake fails.
         """
+        self.connection_state = ConnectionState.CONNECTING
         try:
             headers = {
                 "Client-Id": self.client_id,
@@ -131,16 +146,28 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
             # Process welcome message
             await self._process_welcome()
 
+            self.connection_state = ConnectionState.CONNECTED
             logging.info(
                 f"✅ WebSocket handshake complete, session_id: {self.session_id}"
             )
 
         except Exception as e:
+            self.connection_state = ConnectionState.DISCONNECTED
             if isinstance(e, EventSubConnectionError):
                 raise
             raise EventSubConnectionError(
                 f"WebSocket connection failed: {str(e)}", operation_type="connect"
             ) from e
+
+    def update_url(self, new_url: str) -> None:
+        """Update the WebSocket URL for reconnection.
+
+        Args:
+            new_url (str): The new WebSocket URL to use.
+        """
+        if new_url and new_url != self.ws_url:
+            logging.info(f"🔄 Updating WebSocket URL from {self.ws_url} to {new_url}")
+            self.ws_url = new_url
 
     async def disconnect(self) -> None:
         """Disconnect from WebSocket and cleanup resources.
@@ -148,6 +175,7 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         Closes the WebSocket connection gracefully and clears state.
         """
         self._stop_event.set()
+        self.connection_state = ConnectionState.DISCONNECTED
         if self.ws and not self.ws.closed:
             try:
                 await self.ws.close(code=1000)
@@ -156,6 +184,7 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
                 logging.warning(f"⚠️ WebSocket close error: {str(e)}")
         self.ws = None
         self.session_id = None
+        self.last_sequence = None
 
     async def send_json(self, data: dict[str, Any]) -> None:
         """Send JSON data over WebSocket.
@@ -227,6 +256,7 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
             bool: True if reconnected successfully, False if abandoned.
         """
         self._reconnect_requested = True
+        self.connection_state = ConnectionState.RECONNECTING
         return await self._reconnect_with_backoff()
 
     async def _handle_challenge(self) -> None:
@@ -356,6 +386,7 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
                 # Reset backoff on success
                 self.backoff = 1.0
                 self._reconnect_requested = False
+                self.connection_state = ConnectionState.CONNECTED
                 logging.info(f"✅ Reconnect successful on attempt {attempt}")
                 return True
 
