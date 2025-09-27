@@ -4,6 +4,7 @@ This module provides comprehensive tests for the TokenManager class used in Even
 Tests cover token validation, scope management, refresh operations, and error handling.
 """
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -406,6 +407,117 @@ class TestTokenManager:
             result = await token_manager.ensure_valid_token()
 
             assert result is None
+
+    @pytest.mark.asyncio
+    async def test_debug_log_sanitization_no_scope_values_exposed(self, token_manager, mock_twitch_api, caplog):
+        """Test that debug logs don't expose actual OAuth scope values.
+
+        Security verification test to ensure sensitive OAuth scope values
+        are not leaked in debug logs. Only scope count should be shown.
+        """
+        # Use pytest's caplog fixture to capture log output
+        with caplog.at_level(logging.DEBUG, logger='src.chat.token_manager'):
+            # Test with various sensitive scope combinations
+            test_cases = [
+                ["chat:read", "user:read:chat", "user:manage:chat_color"],
+                ["user:read:email", "user:read:subscriptions", "chat:edit"],
+                ["channel:read:subscriptions", "user:manage:whispers", "chat:read"],
+                ["moderation:read", "channel:moderate", "chat:read", "user:read:chat"],
+                ["channel:read:redemptions", "user:read:follows", "chat:read"]
+            ]
+
+            for scopes in test_cases:
+                # Clear previous log records
+                caplog.clear()
+
+                # Mock successful validation with sensitive scopes
+                mock_twitch_api.validate_token.return_value = {"scopes": scopes}
+
+                # Validate token - this should trigger the debug log
+                result = await token_manager.validate_token("test_token")
+
+                # Verify validation succeeded
+                assert result is True
+                assert len(token_manager.recorded_scopes) == len(scopes)
+
+                # Find the debug log record
+                debug_log_record = None
+                for record in caplog.records:
+                    if record.levelno == logging.DEBUG and "Token scopes recorded" in record.getMessage():
+                        debug_log_record = record
+                        break
+
+                # Verify debug log was created
+                assert debug_log_record is not None, "Debug log for token scopes not found"
+
+                log_message = debug_log_record.getMessage()
+
+                # Verify debug log only shows count, not actual values
+                assert "🧪 Token scopes recorded for user testuser:" in log_message
+                assert f"{len(scopes)} scopes" in log_message
+
+                # Critical security check: ensure no actual scope values are in the log
+                for scope in scopes:
+                    assert scope not in log_message, f"Security violation: scope '{scope}' found in debug log"
+
+                # Verify the log format is correct (only count, no values)
+                expected_pattern = f"🧪 Token scopes recorded for user testuser: {len(scopes)} scopes"
+                assert expected_pattern in log_message
+
+    @pytest.mark.asyncio
+    async def test_debug_log_sanitization_empty_scopes(self, token_manager, mock_twitch_api, caplog):
+        """Test debug log sanitization with empty scopes list."""
+        with caplog.at_level(logging.DEBUG, logger='src.chat.token_manager'):
+            # Test with empty scopes
+            mock_twitch_api.validate_token.return_value = {"scopes": []}
+
+            result = await token_manager.validate_token("test_token")
+
+            assert result is True
+            assert len(token_manager.recorded_scopes) == 0
+
+            # Find the debug log record
+            debug_log_record = None
+            for record in caplog.records:
+                if record.levelno == logging.DEBUG and "Token scopes recorded" in record.getMessage():
+                    debug_log_record = record
+                    break
+
+            assert debug_log_record is not None, "Debug log for token scopes not found"
+            log_message = debug_log_record.getMessage()
+            assert "🧪 Token scopes recorded for user testuser: 0 scopes" in log_message
+
+    @pytest.mark.asyncio
+    async def test_debug_log_sanitization_mixed_case_scopes(self, token_manager, mock_twitch_api, caplog):
+        """Test debug log sanitization with mixed case scope values."""
+        with caplog.at_level(logging.DEBUG, logger='src.chat.token_manager'):
+            # Test with mixed case scopes (should be normalized to lowercase)
+            mixed_case_scopes = ["CHAT:READ", "User:Read:Chat", "USER:MANAGE:CHAT_COLOR"]
+            mock_twitch_api.validate_token.return_value = {"scopes": mixed_case_scopes}
+
+            result = await token_manager.validate_token("test_token")
+
+            assert result is True
+            assert token_manager.recorded_scopes == {"chat:read", "user:read:chat", "user:manage:chat_color"}
+
+            # Find the debug log record
+            debug_log_record = None
+            for record in caplog.records:
+                if record.levelno == logging.DEBUG and "Token scopes recorded" in record.getMessage():
+                    debug_log_record = record
+                    break
+
+            assert debug_log_record is not None, "Debug log for token scopes not found"
+            log_message = debug_log_record.getMessage()
+
+            # Verify no original case values are in the log
+            for scope in mixed_case_scopes:
+                assert scope not in log_message, f"Security violation: mixed case scope '{scope}' found in debug log"
+            for normalized_scope in token_manager.recorded_scopes:
+                assert normalized_scope not in log_message, f"Security violation: normalized scope '{normalized_scope}' found in debug log"
+
+            # Only count should be shown
+            assert "🧪 Token scopes recorded for user testuser: 3 scopes" in log_message
 
     @pytest.mark.asyncio
     async def test_ensure_valid_token_no_token_after_refresh(self, token_manager):

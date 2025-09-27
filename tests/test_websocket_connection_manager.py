@@ -12,6 +12,7 @@ from src.chat.websocket_connection_manager import (
     WebSocketConnectionManager,
 )
 from src.errors.eventsub import EventSubConnectionError
+from src.utils.circuit_breaker import CircuitBreakerState
 
 
 class TestWebSocketConnectionManager:
@@ -445,6 +446,8 @@ class TestWebSocketConnectionManager:
         monkeypatch.setattr(manager, 'disconnect', mock_disconnect)
         monkeypatch.setattr(manager, 'connect', mock_connect)
         monkeypatch.setattr('asyncio.sleep', mock_sleep)
+        # Mock circuit breaker state to not interfere with test
+        monkeypatch.setattr(manager.circuit_breaker, 'state', CircuitBreakerState.CLOSED)
 
         await manager._reconnect_with_backoff()
 
@@ -463,6 +466,8 @@ class TestWebSocketConnectionManager:
         monkeypatch.setattr(manager, 'connect', mock_connect)
         monkeypatch.setattr('asyncio.sleep', mock_sleep)
         monkeypatch.setattr('secrets.randbelow', lambda x: 0)
+        # Mock circuit breaker state to not interfere with test
+        monkeypatch.setattr(manager.circuit_breaker, 'state', CircuitBreakerState.CLOSED)
 
         # First connect fails, second succeeds
         mock_connect.side_effect = [Exception("Failed"), None]
@@ -498,10 +503,13 @@ class TestWebSocketConnectionManager:
 
         mock_disconnect.assert_called_once()
 
-    async def test_connect_preserves_existing_eventsub_error(self, manager, mock_session):
+    async def test_connect_preserves_existing_eventsub_error(self, manager, mock_session, monkeypatch):
         """Test that existing EventSubConnectionError is preserved."""
         original_error = EventSubConnectionError("Original error", operation_type="test")
         mock_session.ws_connect = AsyncMock(side_effect=original_error)
+
+        # Ensure circuit breaker is closed so original error is preserved
+        monkeypatch.setattr(manager.circuit_breaker, 'state', CircuitBreakerState.CLOSED)
 
         with pytest.raises(EventSubConnectionError) as exc_info:
             await manager.connect()

@@ -185,6 +185,8 @@ class ConfigRepository:
                     temp_path = tmp.name
                 os.chmod(temp_path, 0o600)
                 os.rename(temp_path, self.path)
+                # Ensure final config file has secure permissions (fixes race condition)
+                os.chmod(self.path, 0o600)
                 logging.info("💾 Config saved atomically")
         except (OSError, ValueError, RuntimeError) as e:
             if temp_path and os.path.exists(temp_path):

@@ -15,6 +15,11 @@ import aiohttp
 
 from ..errors.handling import handle_api_error
 from ..errors.internal import InternalError
+from ..utils.circuit_breaker import (
+    CircuitBreakerConfig,
+    CircuitBreakerOpenException,
+    get_circuit_breaker,
+)
 
 
 class TwitchAPI:
@@ -40,6 +45,15 @@ class TwitchAPI:
         if not session:
             raise ValueError("aiohttp session required")
         self._session = session
+
+        # Circuit breaker for API requests
+        cb_config = CircuitBreakerConfig(
+            name="twitch_api",
+            failure_threshold=5,
+            recovery_timeout=60.0,
+            success_threshold=3,
+        )
+        self.circuit_breaker = get_circuit_breaker("twitch_api", cb_config)
 
     async def request(
         self,
@@ -68,42 +82,52 @@ class TwitchAPI:
             aiohttp.ClientError: If network request fails.
             TimeoutError: If request times out.
             ValueError: If response parsing fails.
+            CircuitBreakerOpenException: If circuit breaker is open.
         """
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Client-Id": client_id,
-            "Content-Type": "application/json",
-        }
-        url = f"{self.BASE_URL}/{endpoint}"
-        async with self._session.request(
-            method, url, headers=headers, params=params, json=json_body
-        ) as resp:
-            logging.debug(
-                f"Twitch API response: status={resp.status}, content-type={resp.headers.get('content-type', 'none')}, "
-                f"content-length={resp.headers.get('content-length', 'unknown')}, url={url}"
-            )
+        async def _perform_request() -> tuple[dict[str, Any], int, dict[str, str]]:
+            """Internal request logic wrapped by circuit breaker."""
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                "Client-Id": client_id,
+                "Content-Type": "application/json",
+            }
+            url = f"{self.BASE_URL}/{endpoint}"
+            async with self._session.request(
+                method, url, headers=headers, params=params, json=json_body
+            ) as resp:
+                logging.debug(
+                    f"Twitch API response: status={resp.status}, content-type={resp.headers.get('content-type', 'none')}, "
+                    f"content-length={resp.headers.get('content-length', 'unknown')}, url={url}"
+                )
 
-            async def operation():
-                return await resp.json()
+                async def operation():
+                    return await resp.json()
 
-            try:
-                if resp.status == 204:
-                    # 204 No Content has no body, so don't try to parse JSON
+                try:
+                    if resp.status == 204:
+                        # 204 No Content has no body, so don't try to parse JSON
+                        data = {}
+                    else:
+                        data = await handle_api_error(
+                            operation, f"Twitch API {method} {endpoint}"
+                        )
+                except (
+                    aiohttp.ClientError,
+                    TimeoutError,
+                    ConnectionError,
+                    ValueError,
+                    RuntimeError,
+                    InternalError,
+                ):
                     data = {}
-                else:
-                    data = await handle_api_error(
-                        operation, f"Twitch API {method} {endpoint}"
-                    )
-            except (
-                aiohttp.ClientError,
-                TimeoutError,
-                ConnectionError,
-                ValueError,
-                RuntimeError,
-                InternalError,
-            ):
-                data = {}
-            return data, resp.status, dict(resp.headers)
+                return data, resp.status, dict(resp.headers)
+
+        try:
+            return await self.circuit_breaker.call(_perform_request)
+        except CircuitBreakerOpenException:
+            logging.error(f"🚨 Twitch API request blocked by circuit breaker: {method} {endpoint}")
+            # Return a failed response tuple when circuit breaker is open
+            return {}, 503, {"X-Circuit-Breaker": "OPEN"}
 
     # ---- High level helpers ----
     async def validate_token(self, access_token: str) -> dict[str, Any] | None:

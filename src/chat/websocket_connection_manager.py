@@ -26,6 +26,11 @@ from ..constants import (
     WEBSOCKET_MESSAGE_TIMEOUT_SECONDS,
 )
 from ..errors.eventsub import EventSubConnectionError
+from ..utils.circuit_breaker import (
+    CircuitBreakerConfig,
+    CircuitBreakerOpenException,
+    get_circuit_breaker,
+)
 from .protocols import WebSocketConnectionManagerProtocol
 
 EVENTSUB_WS_URL = "wss://eventsub.wss.twitch.tv/ws"
@@ -98,6 +103,15 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         self._stop_event = asyncio.Event()
         self._reconnect_requested = False
 
+        # Circuit breaker for WebSocket connections
+        cb_config = CircuitBreakerConfig(
+            name="websocket_connection",
+            failure_threshold=3,
+            recovery_timeout=30.0,
+            success_threshold=2,
+        )
+        self.circuit_breaker = get_circuit_breaker("websocket_connection", cb_config)
+
     async def __aenter__(self) -> WebSocketConnectionManager:
         """Async context manager entry."""
         await self.connect()
@@ -124,40 +138,51 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
 
         Raises:
             EventSubConnectionError: If connection or handshake fails.
+            CircuitBreakerOpenException: If circuit breaker is open.
         """
-        self.connection_state = ConnectionState.CONNECTING
+        async def _perform_connection() -> None:
+            """Internal connection logic wrapped by circuit breaker."""
+            self.connection_state = ConnectionState.CONNECTING
+            try:
+                headers = {
+                    "Client-Id": self.client_id,
+                    "Authorization": f"Bearer {self.token}",
+                }
+                self.ws = await self.session.ws_connect(
+                    self.ws_url,
+                    heartbeat=WEBSOCKET_HEARTBEAT_SECONDS,
+                    headers=headers,
+                    protocols=("twitch-eventsub-ws",),
+                )
+                logging.info(f"🔌 WebSocket connected to {self.ws_url}")
+
+                # Handle challenge if needed
+                if self.pending_challenge:
+                    await self._handle_challenge()
+
+                # Process welcome message
+                await self._process_welcome()
+
+                self.connection_state = ConnectionState.CONNECTED
+                logging.info(
+                    f"✅ WebSocket handshake complete, session_id: {self.session_id}"
+                )
+
+            except Exception as e:
+                self.connection_state = ConnectionState.DISCONNECTED
+                if isinstance(e, EventSubConnectionError):
+                    raise
+                raise EventSubConnectionError(
+                    f"WebSocket connection failed: {str(e)}", operation_type="connect"
+                ) from e
+
         try:
-            headers = {
-                "Client-Id": self.client_id,
-                "Authorization": f"Bearer {self.token}",
-            }
-            self.ws = await self.session.ws_connect(
-                self.ws_url,
-                heartbeat=WEBSOCKET_HEARTBEAT_SECONDS,
-                headers=headers,
-                protocols=("twitch-eventsub-ws",),
-            )
-            logging.info(f"🔌 WebSocket connected to {self.ws_url}")
-
-            # Handle challenge if needed
-            if self.pending_challenge:
-                await self._handle_challenge()
-
-            # Process welcome message
-            await self._process_welcome()
-
-            self.connection_state = ConnectionState.CONNECTED
-            logging.info(
-                f"✅ WebSocket handshake complete, session_id: {self.session_id}"
-            )
-
-        except Exception as e:
-            self.connection_state = ConnectionState.DISCONNECTED
-            if isinstance(e, EventSubConnectionError):
-                raise
+            await self.circuit_breaker.call(_perform_connection)
+        except CircuitBreakerOpenException:
+            logging.error("🚨 WebSocket connection blocked by circuit breaker")
             raise EventSubConnectionError(
-                f"WebSocket connection failed: {str(e)}", operation_type="connect"
-            ) from e
+                "WebSocket connection blocked by circuit breaker", operation_type="connect"
+            ) from CircuitBreakerOpenException("Circuit breaker is open")
 
     def update_url(self, new_url: str) -> None:
         """Update the WebSocket URL for reconnection.
@@ -363,7 +388,8 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         """Reconnect with exponential backoff.
 
         Attempts reconnection with increasing backoff times until successful
-        or stop event is set.
+        or stop event is set. Respects circuit breaker state to avoid
+        hammering failing endpoints.
 
         Returns:
             bool: True if reconnected successfully, False if abandoned.
@@ -371,6 +397,16 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         attempt = 0
         while not self._stop_event.is_set():
             attempt += 1
+
+            # Check if circuit breaker is open before attempting connection
+            if self.circuit_breaker.is_open:
+                sleep_time = self.circuit_breaker.config.recovery_timeout
+                logging.info(
+                    f"⏸️ Circuit breaker open, waiting {sleep_time}s before retry"
+                )
+                await asyncio.sleep(sleep_time)
+                continue
+
             try:
                 # Cleanup previous connection
                 await self.disconnect()
@@ -380,7 +416,7 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
 
                 logging.info(f"🔄 Reconnect attempt {attempt} to {self.ws_url}")
 
-                # Attempt connection
+                # Attempt connection (protected by circuit breaker)
                 await self.connect()
 
                 # Reset backoff on success

@@ -121,7 +121,7 @@ class TokenManager(TokenManagerProtocol):
             # Record scopes in lowercase for consistent comparison
             self.recorded_scopes = {str(scope).lower() for scope in raw_scopes}
             logging.debug(
-                f"🧪 Token scopes recorded for user {self.username}: {';'.join(sorted(self.recorded_scopes))}"
+                f"🧪 Token scopes recorded for user {self.username}: {len(self.recorded_scopes)} scopes"
             )
             return True
 
