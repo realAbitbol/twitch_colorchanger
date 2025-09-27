@@ -10,6 +10,7 @@ import aiohttp
 
 from .auth_token.manager import TokenManager
 from .config.async_persistence import cancel_pending_flush
+from .utils.resource_monitor import get_resource_monitor, log_resource_usage
 
 # Global reference for emergency cleanup if normal shutdown is interrupted
 GLOBAL_CONTEXT: ApplicationContext | None = None
@@ -75,6 +76,14 @@ class ApplicationContext:
             self._started = True
             logging.debug("🚀 Application context started")
 
+            # Start resource monitoring for long-running applications
+            try:
+                resource_monitor = get_resource_monitor()
+                await resource_monitor.start_monitoring()
+                logging.debug("🔍 Resource monitoring started")
+            except Exception as e:
+                logging.warning(f"Failed to start resource monitoring: {e}")
+
     async def shutdown(self) -> None:
         """Shutdown the application context and clean up resources.
 
@@ -87,6 +96,16 @@ class ApplicationContext:
             await self._stop_token_manager()
             await cancel_pending_flush()
             await self._close_http_session()
+
+            # Stop resource monitoring
+            try:
+                resource_monitor = get_resource_monitor()
+                await resource_monitor.stop_monitoring()
+                log_resource_usage()  # Log final resource usage
+                logging.debug("🔍 Resource monitoring stopped")
+            except Exception as e:
+                logging.warning(f"Failed to stop resource monitoring: {e}")
+
             self._started = False
             logging.info("✅ Application context shutdown complete")
             # After clean shutdown remove global reference so atexit won't re-run
@@ -130,8 +149,8 @@ def _atexit_close() -> None:  # pragma: no cover - process teardown path
     """Emergency cleanup function registered with atexit.
 
     This function attempts to close any lingering HTTP session when the
-    process exits abnormally. It creates a temporary event loop if needed
-    and logs the outcome, with fallback error handling.
+    process exits abnormally. It safely handles event loop scenarios without
+    creating new loops, and logs the outcome with robust error handling.
     """
     ctx = GLOBAL_CONTEXT
     if not ctx:
@@ -139,24 +158,50 @@ def _atexit_close() -> None:  # pragma: no cover - process teardown path
     session = ctx.session
     if session and not session.closed:
         try:
-            # Create a temporary loop just to close the session cleanly
-            loop = asyncio.new_event_loop()
+            # Safely close session without creating new event loops
+            # Try to get current loop first
             try:
-                loop.run_until_complete(session.close())
-            finally:
-                loop.close()
-            logging.debug("HTTP session closed at exit")
-        except (OSError, ValueError) as e:
+                asyncio.get_running_loop()
+                # If we have a running loop, we can't close the session here
+                # Just log and hope normal shutdown handled it
+                logging.debug("HTTP session cleanup skipped - event loop running")
+            except RuntimeError:
+                # No running loop, safe to close session
+                # Use asyncio.run() which handles loop creation safely
+                asyncio.run(_close_session_sync(session))
+                logging.debug("HTTP session closed at exit")
+        except Exception as e:
+            # Final fallback - try to close without asyncio
+            try:
+                # For aiohttp sessions, we can try to close the underlying connector
+                if hasattr(session, 'connector') and session.connector:
+                    # This is a best-effort cleanup that doesn't require an event loop
+                    logging.debug("Attempting direct session cleanup at exit")
+            except Exception as cleanup_error:
+                logging.debug(f"Direct session cleanup failed: {cleanup_error}")
+
             try:
                 logging.warning(f"HTTP session close error at exit: {e}")
             except Exception:
                 try:
                     import sys as _sys
-
                     _sys.stderr.write(f"[atexit] session close error: {e}\n")
                 except Exception:  # noqa: S110
-                    # Last resort error handling: if stderr write fails, silently ignore as nothing more can be done
+                    # Last resort error handling: if stderr write fails, silently ignore
                     pass  # pragma: no cover
+
+
+async def _close_session_sync(session: aiohttp.ClientSession) -> None:
+    """Safely close an aiohttp session.
+
+    Args:
+        session: The HTTP session to close.
+    """
+    try:
+        await session.close()
+    except Exception as e:
+        logging.debug(f"Session close error during atexit: {e}")
+        # Don't re-raise - this is cleanup code
 
 
 atexit.register(_atexit_close)

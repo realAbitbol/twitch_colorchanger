@@ -688,11 +688,106 @@ class TokenManager:
             return None
         return (info.expiry - datetime.now(UTC)).total_seconds()
 
+    def _assess_token_health(self, info: TokenInfo, remaining: float | None, drift: float) -> str:
+        """Assess token health status for proactive monitoring.
+
+        Args:
+            info: TokenInfo object containing token details.
+            remaining: Remaining seconds until expiry.
+            drift: Current drift in seconds.
+
+        Returns:
+            Health status: "healthy", "degraded", or "critical".
+        """
+        if remaining is None:
+            # Unknown expiry is always degraded
+            return "degraded"
+
+        # Critical if token is expired or very close to expiry with drift
+        if remaining <= 0 or (remaining <= 300 and drift > 60):
+            return "critical"
+
+        # Degraded if approaching expiry threshold with significant drift
+        if remaining <= TOKEN_REFRESH_THRESHOLD_SECONDS and drift > 30:
+            return "degraded"
+
+        return "healthy"
+
+    def _calculate_refresh_threshold(self, force_proactive: bool, drift_compensation: float) -> float:
+        """Calculate refresh threshold with drift compensation.
+
+        Args:
+            force_proactive: Whether proactive refresh is forced due to drift.
+            drift_compensation: Amount of drift in seconds to compensate for.
+
+        Returns:
+            Calculated refresh threshold in seconds.
+        """
+        base_threshold = TOKEN_REFRESH_THRESHOLD_SECONDS
+
+        # Apply drift compensation
+        if drift_compensation > 0:
+            # Reduce threshold by up to 50% of drift to refresh earlier
+            drift_reduction = min(drift_compensation * 0.5, base_threshold * 0.3)
+            compensated_threshold = base_threshold - drift_reduction
+        else:
+            compensated_threshold = base_threshold
+
+        # If forcing proactive refresh, use more conservative threshold
+        if force_proactive:
+            return compensated_threshold * 1.5  # 50% more conservative
+
+        return compensated_threshold
+
+    def _should_force_refresh_due_to_drift(
+        self, force_proactive: bool, drift_compensation: float, remaining: float
+    ) -> bool:
+        """Determine if refresh should be forced due to drift conditions.
+
+        Args:
+            force_proactive: Whether proactive refresh is forced.
+            drift_compensation: Amount of drift in seconds.
+            remaining: Remaining seconds until expiry.
+
+        Returns:
+            True if refresh should be forced due to drift.
+        """
+        if not force_proactive:
+            return False
+
+        # Force refresh if drift is significant and we're close to expiry
+        base_threshold = TOKEN_REFRESH_THRESHOLD_SECONDS
+        return (
+            drift_compensation > 60 and  # Significant drift (>1min)
+            remaining > base_threshold and  # But not past normal threshold
+            remaining <= base_threshold * 2  # And within conservative threshold
+        )
+
+    def _get_refresh_backoff_delay(self, info: TokenInfo) -> float:
+        """Calculate exponential backoff delay for failed refresh attempts.
+
+        Args:
+            info: TokenInfo object containing refresh attempt history.
+
+        Returns:
+            Backoff delay in seconds.
+        """
+        # Simple exponential backoff based on forced unknown attempts
+        # This helps avoid hammering the API with repeated failures
+        base_delay = TOKEN_MANAGER_BACKGROUND_BASE_SLEEP
+        if hasattr(info, 'consecutive_refresh_failures'):
+            failure_count = getattr(info, 'consecutive_refresh_failures', 0)
+            # Cap at 5 failures to avoid excessive delays
+            backoff_multiplier = min(failure_count, 5)
+            return base_delay * (2 ** backoff_multiplier)
+        return base_delay
+
     async def _background_refresh_loop(self) -> None:
         """Background loop for periodic token validation and refresh.
 
         Runs continuously while the manager is running, checking all tokens
-        and refreshing as needed.
+        and refreshing as needed. Includes drift correction to maintain
+        reliable timing for unattended operation.
 
         Raises:
             RuntimeError: If background processing fails.
@@ -702,40 +797,105 @@ class TokenManager:
         """
         base = TOKEN_MANAGER_BACKGROUND_BASE_SLEEP
         last_loop = time.time()
+        consecutive_drift = 0
+        drift_correction_applied = False
+
         while self.running:
             try:
                 now = time.time()
                 drift = now - last_loop
                 drifted = drift > (base * 3)
+
+                # Enhanced drift detection and correction
                 if drifted:
-                    logging.info(
-                        f"⏱️ Token manager loop drift detected drift={int(drift)}s base={base}s"
+                    consecutive_drift += 1
+                    logging.warning(
+                        f"⏱️ Token manager loop drift detected drift={int(drift)}s base={base}s consecutive={consecutive_drift}"
                     )
+
+                    # Apply drift correction after multiple consecutive drifts
+                    if consecutive_drift >= 3 and not drift_correction_applied:
+                        # Reduce sleep time to compensate for drift
+                        corrected_sleep = max(base * 0.3, base - (drift * 0.5))
+                        logging.info(
+                            f"🔧 Applied drift correction: sleep={corrected_sleep:.1f}s (was {base}s) drift={int(drift)}s"
+                        )
+                        drift_correction_applied = True
+                        sleep_duration = corrected_sleep
+                    else:
+                        sleep_duration = base
+                else:
+                    # Reset drift tracking on successful timing
+                    consecutive_drift = 0
+                    drift_correction_applied = False
+                    sleep_duration = base
+
                 async with self._tokens_lock:
                     users = list(self.tokens.items())
                 users = [(u, info) for u, info in users if u not in self._paused_users]
+
+                # Enhanced proactive refresh with drift compensation
                 for username, info in users:
-                    await self._process_single_background(
-                        username, info, force_proactive=drifted
-                    )
+                    try:
+                        await self._process_single_background(
+                            username, info, force_proactive=drifted, drift_compensation=drift
+                        )
+                    except Exception as e:
+                        logging.error(
+                            f"💥 Error processing background refresh for user={username}: {str(e)} type={type(e).__name__}"
+                        )
+                        # Continue with other users even if one fails
+                        continue
+
                 last_loop = now
-                await asyncio.sleep(base * _jitter_rng.uniform(0.5, 1.5))
+                # Apply jitter to corrected sleep duration
+                jittered_sleep = sleep_duration * _jitter_rng.uniform(0.5, 1.5)
+                await asyncio.sleep(jittered_sleep)
+
             except (RuntimeError, OSError, ValueError, aiohttp.ClientError) as e:
                 logging.error(f"💥 Background token manager loop error: {str(e)}")
+                # Reset drift correction on error
+                consecutive_drift = 0
+                drift_correction_applied = False
                 await asyncio.sleep(base * 2)
 
     async def _process_single_background(
-        self, username: str, info: TokenInfo, *, force_proactive: bool = False
+        self, username: str, info: TokenInfo, *, force_proactive: bool = False, drift_compensation: float = 0.0
     ) -> None:
-        """Handle refresh/validation logic for a single user (extracted to reduce complexity)."""
+        """Handle refresh/validation logic for a single user with drift compensation.
+
+        Enhanced with proactive refresh and drift compensation for reliable
+        unattended operation.
+
+        Args:
+            username: Username associated with the token.
+            info: TokenInfo object containing token details.
+            force_proactive: Whether to force proactive refresh due to drift.
+            drift_compensation: Amount of drift in seconds to compensate for.
+        """
         remaining = self._remaining_seconds(info)
         self._log_remaining_detail(username, remaining)
+
+        # Enhanced token health monitoring
+        health_status = self._assess_token_health(info, remaining, drift_compensation)
+        if health_status == "critical":
+            logging.warning(
+                f"🚨 Critical token health detected user={username} remaining={remaining}s drift={drift_compensation:.1f}s"
+            )
+            await self.ensure_fresh(username, force_refresh=True)
+            return
+        elif health_status == "degraded":
+            logging.info(
+                f"⚠️ Degraded token health detected user={username} remaining={remaining}s drift={drift_compensation:.1f}s"
+            )
+
         # Unified unknown-expiry + periodic validation resolution.
         remaining = await self._maybe_periodic_or_unknown_resolution(
             username, info, remaining
         )
         if remaining is None:
             return
+
         if remaining < 0:
             async with info.refresh_lock:
                 info.state = TokenState.EXPIRED
@@ -744,17 +904,27 @@ class TokenManager:
             )
             await self.ensure_fresh(username, force_refresh=True)
             return
-        trigger_threshold = TOKEN_REFRESH_THRESHOLD_SECONDS
-        # If the loop drifted, give ourselves more headroom by doubling threshold.
-        if force_proactive:
-            trigger_threshold *= 2
+
+        # Enhanced proactive refresh with drift compensation
+        trigger_threshold = self._calculate_refresh_threshold(force_proactive, drift_compensation)
+
         if remaining <= trigger_threshold:
-            # If drift triggered and we're only refreshing early due to doubled threshold,
-            # force the refresh so _should_skip_refresh does not ignore it.
-            if force_proactive and remaining > TOKEN_REFRESH_THRESHOLD_SECONDS:
-                await self.ensure_fresh(username, force_refresh=True)
-            else:
-                await self.ensure_fresh(username)
+            # Enhanced error handling for token refresh operations
+            try:
+                # Force refresh if we're only triggering due to drift compensation
+                if self._should_force_refresh_due_to_drift(force_proactive, drift_compensation, remaining):
+                    await self.ensure_fresh(username, force_refresh=True)
+                else:
+                    await self.ensure_fresh(username)
+            except Exception as e:
+                logging.error(
+                    f"💥 Token refresh failed for user={username} remaining={remaining}s threshold={trigger_threshold}s: {str(e)}"
+                )
+                # Mark token as expired if refresh consistently fails
+                async with info.refresh_lock:
+                    info.state = TokenState.EXPIRED
+                # Fire invalidation hook for failed refresh
+                await self._maybe_fire_invalidation_hook(username)
 
     async def _maybe_periodic_or_unknown_resolution(
         self, username: str, info: TokenInfo, remaining: float | None

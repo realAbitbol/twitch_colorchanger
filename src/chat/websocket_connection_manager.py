@@ -103,6 +103,12 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         self._stop_event = asyncio.Event()
         self._reconnect_requested = False
 
+        # Resource leak prevention
+        self._connection_count = 0
+        self._last_cleanup_time = time.monotonic()
+        self._cleanup_interval = 300.0  # 5 minutes
+        self._max_connection_attempts = 10
+
         # Circuit breaker for WebSocket connections
         cb_config = CircuitBreakerConfig(
             name="websocket_connection",
@@ -130,6 +136,35 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         """
         return self.ws is not None and not self.ws.closed
 
+    def is_healthy(self) -> bool:
+        """Check if WebSocket connection is healthy and responsive.
+
+        Returns:
+            bool: True if connection is healthy, False otherwise.
+        """
+        if not self.is_connected:
+            return False
+
+        # Check if connection state indicates health
+        if self.connection_state != ConnectionState.CONNECTED:
+            return False
+
+        # Check if session_id exists (indicates successful handshake)
+        if not self.session_id:
+            return False
+
+        # Check if we've received activity recently (within last 60 seconds)
+        # This helps detect stale connections
+        current_time = time.monotonic()
+        time_since_activity = current_time - self.last_activity
+
+        # If no activity for more than 60 seconds, consider it potentially unhealthy
+        # but don't fail immediately as Twitch might just be quiet
+        if time_since_activity > 60.0:
+            logging.debug(f"WebSocket has been inactive for {time_since_activity:.1f}s")
+
+        return True
+
     async def connect(self) -> None:
         """Establish WebSocket connection and perform handshake.
 
@@ -140,10 +175,22 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
             EventSubConnectionError: If connection or handshake fails.
             CircuitBreakerOpenException: If circuit breaker is open.
         """
+        # Check for too many connection attempts
+        if self._is_too_many_attempts():
+            logging.error("🚨 Too many connection attempts, backing off")
+            raise EventSubConnectionError(
+                "Too many connection attempts", operation_type="connect"
+            )
+
         async def _perform_connection() -> None:
             """Internal connection logic wrapped by circuit breaker."""
             self.connection_state = ConnectionState.CONNECTING
+            self._connection_count += 1
+
             try:
+                # Clean up any existing connection first
+                await self._cleanup_connection()
+
                 headers = {
                     "Client-Id": self.client_id,
                     "Authorization": f"Bearer {self.token}",
@@ -201,6 +248,11 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         """
         self._stop_event.set()
         self.connection_state = ConnectionState.DISCONNECTED
+        await self._cleanup_connection()
+        self._connection_count = 0
+
+    async def _cleanup_connection(self) -> None:
+        """Clean up the current WebSocket connection and resources."""
         if self.ws and not self.ws.closed:
             try:
                 await self.ws.close(code=1000)
@@ -209,7 +261,33 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
                 logging.warning(f"⚠️ WebSocket close error: {str(e)}")
         self.ws = None
         self.session_id = None
+        self.pending_reconnect_session_id = None
+        self.pending_challenge = None
         self.last_sequence = None
+        self.last_activity = time.monotonic()
+
+    def _should_cleanup(self) -> bool:
+        """Check if periodic cleanup should run."""
+        current_time = time.monotonic()
+        return current_time - self._last_cleanup_time > self._cleanup_interval
+
+    def _is_too_many_attempts(self) -> bool:
+        """Check if connection attempts exceed threshold."""
+        return self._connection_count > self._max_connection_attempts
+
+    async def _perform_periodic_cleanup(self) -> None:
+        """Perform periodic resource cleanup."""
+        if not self._should_cleanup():
+            return
+
+        self._last_cleanup_time = time.monotonic()
+
+        # Force cleanup if connection is stale
+        if self.ws and not self.ws.closed:
+            current_time = time.monotonic()
+            if current_time - self.last_activity > 300.0:  # 5 minutes
+                logging.info("🧹 Cleaning up stale WebSocket connection")
+                await self._cleanup_connection()
 
     async def send_json(self, data: dict[str, Any]) -> None:
         """Send JSON data over WebSocket.

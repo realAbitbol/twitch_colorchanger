@@ -1,6 +1,8 @@
 """Tests for src/chat/eventsub_backend.py."""
 
+import asyncio
 import json
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import aiohttp
@@ -551,3 +553,228 @@ async def test_handle_message_invalid_json(mock_components):
 
     assert result is True
     mock_components['msg_processor'].process_message.assert_called_once_with("invalid json")
+
+
+@pytest.mark.asyncio
+async def test_zombie_state_prevention_failed_reconnect(mock_components):
+    """Test that failed reconnections properly terminate listener loop (zombie state prevention)."""
+    backend = EventSubChatBackend(**mock_components)
+
+    # Mock WebSocket manager to fail reconnection
+    mock_components['ws_manager'].is_connected = True
+    mock_components['ws_manager'].receive_message = AsyncMock(side_effect=Exception("Connection lost"))
+    mock_components['ws_manager'].reconnect = AsyncMock(return_value=False)  # Reconnect fails
+
+    # Mock _handle_reconnect to return False (failure)
+    backend._handle_reconnect = AsyncMock(return_value=False)
+
+    # The listen method should handle the exception and break the loop
+    # when _handle_reconnect returns False
+    await backend.listen()
+
+    # Verify _handle_reconnect was called due to the exception
+    backend._handle_reconnect.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_zombie_state_prevention_websocket_closed(mock_components):
+    """Test zombie state prevention when WebSocket is closed."""
+    backend = EventSubChatBackend(**mock_components)
+
+    # Mock WebSocket manager
+    mock_components['ws_manager'].is_connected = True
+
+    # Mock a CLOSED message
+    closed_msg = MagicMock()
+    closed_msg.type = aiohttp.WSMsgType.CLOSED
+
+    mock_components['ws_manager'].receive_message = AsyncMock(return_value=closed_msg)
+    mock_components['ws_manager'].reconnect = AsyncMock(return_value=False)  # Reconnect fails
+
+    # The listen method should break the loop when _handle_reconnect returns False
+    await backend.listen()
+
+    # Verify reconnect was called for the closed connection
+    mock_components['ws_manager'].reconnect.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_connection_health_validation_success(mock_components):
+    """Test successful connection health validation after reconnection."""
+    backend = EventSubChatBackend(**mock_components)
+
+    # Mock WebSocket manager to be healthy
+    mock_components['ws_manager'].is_healthy = MagicMock(return_value=True)
+    mock_components['ws_manager'].session_id = "test_session_123"
+
+    # Mock receive_message to timeout (expected behavior for health check)
+    mock_components['ws_manager'].receive_message = AsyncMock(side_effect=asyncio.TimeoutError())
+
+    result = await backend._validate_connection_health()
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_connection_health_validation_failure_no_ws_manager(mock_components):
+    """Test connection health validation failure when no WebSocket manager."""
+    backend = EventSubChatBackend(**mock_components)
+    backend._ws_manager = None
+
+    result = await backend._validate_connection_health()
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_connection_health_validation_failure_unhealthy(mock_components):
+    """Test connection health validation failure when connection is unhealthy."""
+    backend = EventSubChatBackend(**mock_components)
+
+    # Mock WebSocket manager to be unhealthy
+    mock_components['ws_manager'].is_healthy = MagicMock(return_value=False)
+
+    result = await backend._validate_connection_health()
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_connection_health_validation_error_message(mock_components):
+    """Test connection health validation with error message."""
+    backend = EventSubChatBackend(**mock_components)
+
+    # Mock WebSocket manager to be healthy but return error message
+    mock_components['ws_manager'].is_healthy = MagicMock(return_value=True)
+
+    # Mock error message
+    error_msg = MagicMock()
+    error_msg.type = aiohttp.WSMsgType.ERROR
+
+    mock_components['ws_manager'].receive_message = AsyncMock(return_value=error_msg)
+
+    result = await backend._validate_connection_health()
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_handle_reconnect_with_health_validation(mock_components):
+    """Test that _handle_reconnect includes health validation."""
+    backend = EventSubChatBackend(**mock_components)
+
+    # Mock successful reconnect
+    mock_components['ws_manager'].reconnect = AsyncMock(return_value=True)
+    mock_components['ws_manager'].session_id = "new_session_123"
+
+    # Mock subscription manager
+    mock_components['sub_manager'].update_session_id = MagicMock()
+    mock_components['sub_manager'].unsubscribe_all = AsyncMock()
+    backend._resubscribe_all_channels = AsyncMock(return_value=True)
+
+    # Mock health validation to succeed
+    backend._validate_connection_health = AsyncMock(return_value=True)
+
+    result = await backend._handle_reconnect()
+    assert result is True
+
+    # Verify health validation was called
+    backend._validate_connection_health.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_reconnect_health_validation_failure(mock_components):
+    """Test that _handle_reconnect fails when health validation fails."""
+    backend = EventSubChatBackend(**mock_components)
+
+    # Mock successful reconnect but failed health validation
+    mock_components['ws_manager'].reconnect = AsyncMock(return_value=True)
+    backend._validate_connection_health = AsyncMock(return_value=False)
+
+    result = await backend._handle_reconnect()
+    assert result is False
+
+    # Verify health validation was called
+    backend._validate_connection_health.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_websocket_manager_is_healthy_connected(mock_components):
+    """Test WebSocket manager is_healthy method when connected."""
+    from src.chat.websocket_connection_manager import WebSocketConnectionManager, ConnectionState
+
+    # Create a real WebSocket manager instance for testing
+    import aiohttp
+    session = aiohttp.ClientSession()
+    ws_manager = WebSocketConnectionManager(session, "token", "client_id")
+
+    # Mock the WebSocket connection
+    mock_ws = MagicMock()
+    mock_ws.closed = False
+    ws_manager.ws = mock_ws
+    ws_manager.connection_state = ConnectionState.CONNECTED
+    ws_manager.session_id = "test_session"
+    ws_manager.last_activity = time.monotonic()  # Recent activity
+
+    result = ws_manager.is_healthy()
+    assert result is True
+
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_websocket_manager_is_healthy_disconnected(mock_components):
+    """Test WebSocket manager is_healthy method when disconnected."""
+    from src.chat.websocket_connection_manager import WebSocketConnectionManager
+
+    import aiohttp
+    session = aiohttp.ClientSession()
+    ws_manager = WebSocketConnectionManager(session, "token", "client_id")
+
+    # No WebSocket connection
+    ws_manager.ws = None
+
+    result = ws_manager.is_healthy()
+    assert result is False
+
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_websocket_manager_is_healthy_no_session_id(mock_components):
+    """Test WebSocket manager is_healthy method without session ID."""
+    from src.chat.websocket_connection_manager import WebSocketConnectionManager, ConnectionState
+
+    import aiohttp
+    session = aiohttp.ClientSession()
+    ws_manager = WebSocketConnectionManager(session, "token", "client_id")
+
+    # Mock connected but no session ID
+    mock_ws = MagicMock()
+    mock_ws.closed = False
+    ws_manager.ws = mock_ws
+    ws_manager.connection_state = ConnectionState.CONNECTED
+    ws_manager.session_id = None  # No session ID
+
+    result = ws_manager.is_healthy()
+    assert result is False
+
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_websocket_manager_is_healthy_wrong_state(mock_components):
+    """Test WebSocket manager is_healthy method with wrong connection state."""
+    from src.chat.websocket_connection_manager import WebSocketConnectionManager, ConnectionState
+
+    import aiohttp
+    session = aiohttp.ClientSession()
+    ws_manager = WebSocketConnectionManager(session, "token", "client_id")
+
+    # Mock connected but wrong state
+    mock_ws = MagicMock()
+    mock_ws.closed = False
+    ws_manager.ws = mock_ws
+    ws_manager.connection_state = ConnectionState.DISCONNECTED  # Wrong state
+    ws_manager.session_id = "test_session"
+
+    result = ws_manager.is_healthy()
+    assert result is False
+
+    await session.close()

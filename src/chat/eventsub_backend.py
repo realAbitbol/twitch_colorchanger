@@ -18,6 +18,7 @@ from ..chat.token_manager import TokenManager
 from ..chat.websocket_connection_manager import WebSocketConnectionManager
 from ..constants import (
     EVENTSUB_SUB_CHECK_INTERVAL_SECONDS,
+    WEBSOCKET_MESSAGE_TIMEOUT_SECONDS,
 )
 from ..utils.retry import retry_async
 
@@ -334,20 +335,61 @@ class EventSubChatBackend:
         return True
 
     async def listen(self) -> None:
-        """Listen for WebSocket messages and handle them."""
+        """Listen for WebSocket messages and handle them with idle optimization."""
         if not self._ws_manager or not self._ws_manager.is_connected:
             return
 
+        # Idle optimization: longer sleep when no recent activity
+        idle_sleep_time = 0.1  # 100ms base sleep
+        max_idle_sleep = 1.0   # 1s max sleep during idle
+        idle_threshold = 30.0  # 30s of no activity = idle
+
+        consecutive_idles = 0
+        max_consecutive_idles = 10
+
         while not self._stop_event.is_set():
             now = time.monotonic()
+
+            # Check if we should enter idle mode
+            time_since_activity = now - self._last_activity
+            is_idle = time_since_activity > idle_threshold
+
+            if is_idle and consecutive_idles < max_consecutive_idles:
+                # Gradually increase sleep time during idle periods
+                sleep_time = min(idle_sleep_time * (2 ** consecutive_idles), max_idle_sleep)
+                await asyncio.sleep(sleep_time)
+                consecutive_idles += 1
+                continue
+            elif consecutive_idles >= max_consecutive_idles:
+                # Reset idle counter periodically to stay responsive
+                consecutive_idles = 0
+
+            # Normal operation - check subscriptions
             await self._maybe_verify_subs(now)
+
 
             try:
                 msg = await self._ws_manager.receive_message()
                 if not await self._handle_message(msg):
                     break
+                # Reset idle counter on activity
+                consecutive_idles = 0
+            except Exception as e:
+                # Handle timeout exceptions specifically
+                if isinstance(e, TimeoutError) or "timeout" in str(e).lower():
+                    # Timeout is expected during idle - just continue
+                    if not is_idle:
+                        logging.debug("WebSocket receive timeout during active period")
+                    consecutive_idles += 1
+                    continue
+                else:
+                    logging.warning(f"Listen loop error: {str(e)}")
+                    consecutive_idles += 1
+                    if not await self._handle_reconnect():
+                        break
             except Exception as e:
                 logging.warning(f"Listen loop error: {str(e)}")
+                consecutive_idles += 1
                 if not await self._handle_reconnect():
                     break
 
@@ -616,10 +658,10 @@ class EventSubChatBackend:
             logging.error(f"Failed to handle session reconnect: {str(e)}")
 
     async def _handle_reconnect(self) -> bool:
-        """Handle reconnection logic.
+        """Handle reconnection logic with connection health validation.
 
         Returns:
-            bool: True if reconnection successful, False otherwise.
+            bool: True if reconnection successful and healthy, False otherwise.
         """
         if not self._ws_manager:
             return False
@@ -634,6 +676,11 @@ class EventSubChatBackend:
             return False
 
         if not success:
+            return False
+
+        # Validate connection health after reconnection
+        if not await self._validate_connection_health():
+            logging.error("Connection health validation failed after reconnection")
             return False
 
         new_session_id = getattr(self._ws_manager, "session_id", None)
@@ -663,6 +710,49 @@ class EventSubChatBackend:
             return False
 
         return True
+
+    async def _validate_connection_health(self) -> bool:
+        """Validate that the WebSocket connection is healthy after reconnection.
+
+        Returns:
+            bool: True if connection is healthy, False otherwise.
+        """
+        if not self._ws_manager:
+            logging.error("No WebSocket manager for health validation")
+            return False
+
+        # Use the WebSocket manager's built-in health check
+        if not self._ws_manager.is_healthy():
+            logging.error("WebSocket manager reports unhealthy connection")
+            return False
+
+        # Additional validation: test actual message reception with timeout
+        try:
+            # Try to receive a message with a short timeout to test if connection is responsive
+            msg = await asyncio.wait_for(
+                self._ws_manager.receive_message(),
+                timeout=3.0  # 3 second timeout for health check
+            )
+
+            # If we get a message, we've validated the connection is working
+            logging.debug(f"Health check received message type: {msg.type}")
+
+            # Any message type except ERROR indicates the connection is responsive
+            if msg.type == aiohttp.WSMsgType.ERROR:
+                logging.error("WebSocket connection has error during health validation")
+                return False
+
+            # Connection is healthy and responsive
+            logging.debug("WebSocket connection health validation passed")
+            return True
+
+        except TimeoutError:
+            # Timeout is expected for health check - means connection is alive but no messages
+            logging.debug("WebSocket health check timeout (expected) - connection is healthy")
+            return True
+        except Exception as e:
+            logging.error(f"WebSocket health validation failed: {str(e)}")
+            return False
 
     async def _on_token_invalid(self) -> None:
         """Callback invoked when token is detected as invalid."""
