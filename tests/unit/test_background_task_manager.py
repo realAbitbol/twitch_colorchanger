@@ -103,7 +103,7 @@ class TestBackgroundTaskManager:
         self.mock_manager.tokens = {"user1": mock_info1, "user2": mock_info2}
 
         with patch.object(self.task_manager, '_process_single_background', new_callable=AsyncMock) as mock_process:
-            async def mock_wait_for(coro, timeout_param):
+            async def mock_wait_for(coro, timeout=None):  # noqa: ASYNC109
                 self.task_manager.running = False
                 if hasattr(coro, '__await__'):
                     task = asyncio.create_task(coro)
@@ -489,7 +489,7 @@ class TestBackgroundTaskManager:
         self.mock_manager._paused_users = []
 
         with patch.object(self.task_manager, '_process_single_background', new_callable=AsyncMock):
-            async def mock_wait_for(coro, timeout_param):
+            async def mock_wait_for(coro, timeout=None):  # noqa: ASYNC109
                 self.task_manager.running = False
                 if hasattr(coro, '__await__'):
                     task = asyncio.create_task(coro)
@@ -520,7 +520,7 @@ class TestBackgroundTaskManager:
         with patch.object(self.task_manager, '_process_single_background', new_callable=AsyncMock) as mock_process:
             mock_process.side_effect = Exception("Processing failed")
 
-            async def mock_wait_for(coro, timeout_param):
+            async def mock_wait_for(coro, timeout=None):  # noqa: ASYNC109
                 self.task_manager.running = False
                 if hasattr(coro, '__await__'):
                     task = asyncio.create_task(coro)

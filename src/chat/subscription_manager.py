@@ -175,6 +175,82 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         """
         return list(set(self._active_subscriptions.values()))
 
+    async def _cleanup_old_session_subscriptions(self, old_session_id: str) -> None:
+        """Clean up subscriptions from an old session.
+
+        Args:
+            old_session_id (str): The old session ID to clean up subscriptions for.
+        """
+        try:
+            data, status, _ = await self._api.request(
+                "GET",
+                EVENTSUB_SUBSCRIPTIONS,
+                access_token=self._token,
+                client_id=self._client_id,
+            )
+
+            if status == 401:
+                data, status = await self._refresh_token_and_retry_get()
+                if status == 401:
+                    logging.warning(f"⚠️ Cannot cleanup old session {old_session_id}: authentication failed")
+                    return
+
+            if status != 200:
+                logging.warning(f"⚠️ Cannot cleanup old session {old_session_id}: HTTP {status}")
+                return
+
+            # Extract subscription IDs for the old session
+            old_sub_ids = self._extract_subscription_ids_for_session(data, old_session_id)
+
+            # Unsubscribe from old subscriptions
+            for sub_id in old_sub_ids:
+                try:
+                    await self._unsubscribe_single(sub_id)
+                    logging.debug(f"✅ Cleaned up old subscription {sub_id} from session {old_session_id}")
+                except Exception as e:
+                    logging.warning(f"⚠️ Failed to cleanup old subscription {sub_id}: {str(e)}")
+
+            if old_sub_ids:
+                logging.info(f"🧹 Cleaned up {len(old_sub_ids)} subscriptions from old session {old_session_id}")
+
+        except Exception as e:
+            logging.warning(f"⚠️ Error during cleanup of old session {old_session_id}: {str(e)}")
+
+    def _extract_subscription_ids_for_session(self, data: Any, session_id: str) -> list[str]:
+        """Extract subscription IDs for a specific session from API response data.
+
+        Args:
+            data (Any): The API response data.
+            session_id (str): The session ID to filter by.
+
+        Returns:
+            list[str]: List of subscription IDs for the session.
+        """
+        if not isinstance(data, dict):
+            return []
+
+        rows = data.get("data")
+        if not isinstance(rows, list):
+            return []
+
+        sub_ids = []
+        for entry in rows:
+            if not isinstance(entry, dict):
+                continue
+
+            transport = entry.get("transport", {})
+            if (
+                not isinstance(transport, dict)
+                or transport.get("session_id") != session_id
+            ):
+                continue
+
+            sub_id = entry.get("id")
+            if isinstance(sub_id, str):
+                sub_ids.append(sub_id)
+
+        return sub_ids
+
     def update_session_id(self, new_session_id: str) -> None:
         """Update the session ID for new subscriptions.
 
@@ -186,6 +262,12 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         """
         if not new_session_id or not isinstance(new_session_id, str):
             raise ValueError("Valid session_id required")
+
+        # Clean up subscriptions from the old session before updating
+        old_session_id = self._session_id
+        if old_session_id != new_session_id:
+            asyncio.create_task(self._cleanup_old_session_subscriptions(old_session_id))
+
         self._session_id = new_session_id
         logging.info(f"🔄 EventSub session ID updated to {new_session_id}")
 

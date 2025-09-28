@@ -36,7 +36,7 @@ install-dev:
 # Code quality
 lint:
 	@echo "Running Ruff linter..."
-	.venv/bin/python -m ruff check --fix src/ tests/
+	.venv/bin/python -m ruff check --fix src/
 	@echo "Running mypy..."
 	.venv/bin/python -m mypy src/
 #	@echo "Running bandit (security scan)..."

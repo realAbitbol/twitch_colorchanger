@@ -138,9 +138,9 @@ class TestAsyncPersistence:
         config_file = "test.conf"
 
         with patch('src.config.async_persistence.update_user_in_config', return_value=True), \
-             patch('asyncio.get_event_loop') as mock_loop, \
-             patch('shutil.copy2') as mock_copy, \
-             patch('os.remove') as mock_remove:
+              patch('asyncio.get_event_loop') as mock_loop, \
+              patch('shutil.copy2') as mock_copy, \
+              patch('os.remove') as mock_remove:
             mock_loop.return_value.run_in_executor = AsyncMock()
             failures = await _persist_batch(pending, config_file)
 
@@ -300,7 +300,9 @@ class TestAsyncPersistence:
             return await _persist_batch(pending, config_file)
 
         with patch('src.config.async_persistence.update_user_in_config', return_value=True), \
-              patch('asyncio.get_event_loop') as mock_loop:
+              patch('asyncio.get_event_loop') as mock_loop, \
+              patch('shutil.copy2') as mock_copy, \
+              patch('os.remove') as mock_remove:
             mock_loop.return_value.run_in_executor = AsyncMock()
             # Run concurrent persists
             results = await asyncio.gather(
