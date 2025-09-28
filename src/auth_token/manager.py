@@ -4,42 +4,25 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
-from secrets import SystemRandom
 from typing import Any, TypeVar
 
 import aiohttp
 
 from ..constants import (
-    TOKEN_MANAGER_BACKGROUND_BASE_SLEEP,
-    TOKEN_MANAGER_PERIODIC_VALIDATION_INTERVAL,
-    TOKEN_MANAGER_VALIDATION_MIN_INTERVAL,
     TOKEN_REFRESH_THRESHOLD_SECONDS,
 )
-from ..utils import format_duration
-from .client import RefreshErrorType, TokenClient, TokenOutcome, TokenResult
+from .background_task_manager import BackgroundTaskManager
+from .client import TokenOutcome
+from .client_cache import ClientCache
+from .hook_manager import HookManager
+from .token_refresher import TokenRefresher
+from .token_validator import TokenValidator
+from .types import TokenState
 
 T = TypeVar("T")
-
-_jitter_rng = SystemRandom()
-
-
-class TokenState(Enum):
-    """Enumeration of token freshness states.
-
-    Attributes:
-        FRESH: Token is recently obtained or refreshed.
-        STALE: Token is valid but nearing expiry.
-        EXPIRED: Token has expired and needs refresh.
-    """
-
-    FRESH = "fresh"
-    STALE = "stale"
-    EXPIRED = "expired"
 
 
 @dataclass
@@ -83,7 +66,6 @@ class TokenManager:
     """
 
     _instance = None  # Simple singleton; not thread-safe by design (single event loop).
-    background_task: asyncio.Task[Any] | None
 
     def __new__(cls, http_session: aiohttp.ClientSession) -> TokenManager:
         """Create or return the singleton instance.
@@ -113,24 +95,15 @@ class TokenManager:
         self.http_session = http_session
         self.tokens: dict[str, TokenInfo] = {}
         self._tokens_lock = asyncio.Lock()
-        self._client_cache_lock = asyncio.Lock()
-        self._hooks_lock = asyncio.Lock()
-        self.background_task: asyncio.Task[Any] | None = None
         self.running = False
-        self._client_cache: dict[tuple[str, str], TokenClient] = {}
-        # Registered per-user async hooks (called after successful token refresh).
-        # Multiple hooks can be registered (e.g., persist + propagate to backends).
-        self._update_hooks: dict[
-            str, list[Callable[[], Coroutine[Any, Any, None]]]
-        ] = {}
-        # Registered per-user async invalidation hooks (called when tokens are invalidated).
-        self._invalidation_hooks: dict[
-            str, list[Callable[[], Coroutine[Any, Any, None]]]
-        ] = {}
-        # Retained background tasks (e.g. persistence hooks) to prevent premature GC.
-        self._hook_tasks: list[asyncio.Task[Any]] = []
         # Paused users for background refresh
         self._paused_users: set[str] = set()
+        # Composed components
+        self.validator = TokenValidator(self)
+        self.refresher = TokenRefresher(self)
+        self.background_task_manager = BackgroundTaskManager(self)
+        self.hook_manager = HookManager(self)
+        self.client_cache = ClientCache(self)
         # Mark as initialized to avoid repeating work on future constructions.
         self._inst_initialized = True
 
@@ -147,24 +120,10 @@ class TokenManager:
         """
         if self.running:
             return
-        # Defensive: if a previous background task is still lingering (e.g. rapid
-        # stop/start where stop hasn't fully awaited cancellation yet), ensure it
-        # is cancelled and awaited to avoid multiple loops.
-        if self.background_task and not self.background_task.done():
-            logging.debug("Cancelling stale background task before restart")
-            try:
-                self.background_task.cancel()
-                await self.background_task
-            except asyncio.CancelledError:
-                raise
-            except (ValueError, TypeError, RuntimeError) as e:
-                logging.debug(f"⚠️ Error cancelling stale background task: {str(e)}")
-            finally:
-                self.background_task = None
         self.running = True
         # Initial validation pass before launching background loop
         await self._initial_validation_pass()
-        self.background_task = asyncio.create_task(self._background_refresh_loop())
+        await self.background_task_manager.start()
         logging.debug("▶️ Started centralized token manager")
         await asyncio.sleep(0)
 
@@ -207,7 +166,7 @@ class TokenManager:
                 )
                 return
             outcome = await self.validate(username)
-            remaining = self._remaining_seconds(info)
+            remaining = self.validator.remaining_seconds(info)
             if outcome == TokenOutcome.VALID and remaining is not None:
                 if remaining < TOKEN_REFRESH_THRESHOLD_SECONDS:
                     ref = await self.ensure_fresh(username)
@@ -244,15 +203,7 @@ class TokenManager:
         if not self.running:
             return
         self.running = False
-        if self.background_task:
-            try:
-                self.background_task.cancel()
-                # Don't wait for the task to complete - just cancel it
-                # The task will be cancelled when it next tries to sleep
-            except (RuntimeError, OSError, ValueError) as e:
-                logging.error(f"Error cancelling background task: {e}")
-            finally:
-                self.background_task = None
+        await self.background_task_manager.stop()
 
     async def pause_background_refresh(self, username: str) -> None:
         """Pause background refresh for a specific user.
@@ -283,12 +234,7 @@ class TokenManager:
         Hooks are additive (multiple hooks can be registered per user).
         Each hook is scheduled fire-and-forget after a token change.
         """
-        async with self._hooks_lock:
-            lst = self._update_hooks.get(username)
-            if lst is None:
-                self._update_hooks[username] = [hook]
-            else:
-                lst.append(hook)
+        await self.hook_manager.register_update_hook(username, hook)
 
     async def register_invalidation_hook(
         self, username: str, hook: Callable[[], Coroutine[Any, Any, None]]
@@ -298,12 +244,7 @@ class TokenManager:
         Hooks are additive (multiple hooks can be registered per user).
         Each hook is scheduled fire-and-forget when tokens are invalidated.
         """
-        async with self._hooks_lock:
-            lst = self._invalidation_hooks.get(username)
-            if lst is None:
-                self._invalidation_hooks[username] = [hook]
-            else:
-                lst.append(hook)
+        await self.hook_manager.register_invalidation_hook(username, hook)
 
     async def register_eventsub_backend(self, username: str, backend: Any) -> None:
         """Register chat backend for automatic token propagation.
@@ -400,26 +341,6 @@ class TokenManager:
         async with self._tokens_lock:
             return self.tokens.get(username)
 
-    async def _get_client(self, client_id: str, client_secret: str) -> TokenClient:
-        """Retrieve or create a TokenClient for the given credentials.
-
-        Uses caching to avoid creating multiple clients for the same credentials.
-
-        Args:
-            client_id: Twitch client ID.
-            client_secret: Twitch client secret.
-
-        Returns:
-            TokenClient instance for the credentials.
-        """
-        async with self._client_cache_lock:
-            key = (client_id, client_secret)
-            cli = self._client_cache.get(key)
-            if cli:
-                return cli
-            cli = TokenClient(client_id, client_secret, self.http_session)
-            self._client_cache[key] = cli
-            return cli
 
     async def ensure_fresh(
         self, username: str, force_refresh: bool = False
@@ -438,210 +359,7 @@ class TokenManager:
             ValueError: If token data is invalid.
             RuntimeError: If refresh process fails.
         """
-        async with self._tokens_lock:
-            info = self.tokens.get(username)
-            if not info:
-                return TokenOutcome.FAILED
-
-            if self._should_skip_refresh(info, force_refresh):
-                return TokenOutcome.VALID
-
-            client = await self._get_client(info.client_id, info.client_secret)
-            result, _ = await self._refresh_with_lock(
-                client, info, username, force_refresh
-            )
-            return result.outcome
-
-    # --- Internal helpers (extracted to reduce complexity) ---
-    def _should_skip_refresh(self, info: TokenInfo, force_refresh: bool) -> bool:
-        """Determine if token refresh should be skipped.
-
-        Skips if not forced and expiry exists with sufficient remaining time.
-
-        Args:
-            info: TokenInfo object containing token details.
-            force_refresh: Whether to force refresh regardless of expiry.
-
-        Returns:
-            True if refresh should be skipped, False otherwise.
-        """
-        if force_refresh:
-            return False
-        remaining = self._remaining_seconds(info)
-        return (
-            bool(info.expiry)
-            and remaining is not None
-            and remaining > TOKEN_REFRESH_THRESHOLD_SECONDS
-        )
-
-    async def _refresh_with_lock(
-        self,
-        client: TokenClient,
-        info: TokenInfo,
-        username: str,
-        force_refresh: bool,
-    ) -> tuple[TokenResult, bool]:
-        """Perform token refresh with locking to prevent concurrency issues.
-
-        Ensures only one refresh operation per user at a time.
-
-        Args:
-            client: TokenClient to use for refresh.
-            info: TokenInfo object containing token details.
-            username: Username associated with the token.
-            force_refresh: Whether to force refresh.
-
-        Returns:
-            Tuple of (TokenResult from refresh, whether token actually changed).
-        """
-        token_changed = False
-        async with info.refresh_lock:
-            before_access = info.access_token
-            before_refresh = info.refresh_token
-            result = await client.ensure_fresh(
-                username,
-                info.access_token,
-                info.refresh_token,
-                info.expiry,
-                force_refresh,
-            )
-            if result.outcome != TokenOutcome.FAILED and result.access_token:
-                self._apply_successful_refresh(info, result)
-                token_changed = (
-                    info.access_token != before_access
-                    or info.refresh_token != before_refresh
-                )
-            elif result.outcome == TokenOutcome.FAILED:
-                if result.error_type == RefreshErrorType.NON_RECOVERABLE:
-                    info.state = TokenState.EXPIRED
-                    # Fire invalidation hook for non-recoverable refresh failures
-                    await self._maybe_fire_invalidation_hook(username)
-        # Fire hook if token actually changed. This is the single authoritative
-        # location for firing update hooks to avoid double invocation (the
-        # ensure_fresh wrapper deliberately does NOT fire the hook).
-        await self._maybe_fire_update_hook(username, token_changed)
-        return result, token_changed
-
-    def _apply_successful_refresh(self, info: TokenInfo, result: TokenResult) -> None:
-        """Apply the results of a successful token refresh to TokenInfo.
-
-        Updates access token, refresh token, expiry, and state.
-
-        Args:
-            info: TokenInfo object to update.
-            result: TokenResult containing refresh outcome data.
-        """
-        if result.access_token is not None:
-            info.access_token = result.access_token
-        if result.refresh_token:
-            info.refresh_token = result.refresh_token
-        info.expiry = result.expiry
-        info.state = (
-            TokenState.FRESH
-            if result.outcome in (TokenOutcome.VALID, TokenOutcome.SKIPPED)
-            else TokenState.STALE
-        )
-        # If we actually performed a refresh (new token lifetime), reset baseline.
-        if result.outcome == TokenOutcome.REFRESHED and info.expiry:
-            remaining = int((info.expiry - datetime.now(UTC)).total_seconds())
-            if remaining > 0:
-                info.original_lifetime = remaining
-
-    async def _maybe_fire_update_hook(self, username: str, token_changed: bool) -> None:
-        """Fire registered update hooks if the token has changed.
-
-        Schedules hook coroutines to run asynchronously.
-
-        Args:
-            username: Username for which hooks should be fired.
-            token_changed: Whether the token actually changed.
-
-        Raises:
-            ValueError: If hook scheduling fails.
-            RuntimeError: If task creation fails.
-        """
-        if not token_changed:
-            return
-        async with self._hooks_lock:
-            hooks = self._update_hooks.get(username) or []
-        for hook in hooks:
-            try:
-                # Delegate creation to helper so both Ruff and VS Code recognize
-                # the task is retained and exceptions logged.
-                await self._create_retained_task(hook(), category="update_hook")
-            except (ValueError, RuntimeError) as e:
-                logging.debug(
-                    f"⚠️ Update hook scheduling error user={username} type={type(e).__name__}"
-                )
-
-    async def _maybe_fire_invalidation_hook(self, username: str) -> None:
-        """Fire registered invalidation hooks for token invalidation.
-
-        Schedules hook coroutines to run asynchronously.
-
-        Args:
-            username: Username for which hooks should be fired.
-
-        Raises:
-            ValueError: If hook scheduling fails.
-            RuntimeError: If task creation fails.
-        """
-        async with self._hooks_lock:
-            hooks = self._invalidation_hooks.get(username) or []
-        for hook in hooks:
-            try:
-                await self._create_retained_task(hook(), category="invalidation_hook")
-            except (ValueError, RuntimeError) as e:
-                logging.debug(
-                    f"⚠️ Invalidation hook scheduling error user={username} type={type(e).__name__}"
-                )
-
-    async def _create_retained_task(
-        self, coro: Coroutine[Any, Any, T], *, category: str
-    ) -> asyncio.Task[T]:
-        """Create and retain a background task with exception logging.
-
-        Ensures the task handle is stored (preventing premature GC) and any
-        exception is surfaced via structured logging.
-        """
-        # Sonar/VSC S7502: we retain task in self._hook_tasks; suppression justified.
-        task: asyncio.Task[T] = asyncio.create_task(coro)  # NOSONAR S7502
-        async with self._hooks_lock:
-            self._hook_tasks.append(task)
-
-        def _cb(t: asyncio.Task[T]) -> None:  # noqa: D401
-            _ = asyncio.create_task(self._remove_hook_task(t, category))
-
-        task.add_done_callback(_cb)
-        return task
-
-    async def _remove_hook_task(self, t: asyncio.Task[T], category: str) -> None:
-        """Remove a completed hook task from the retained tasks list.
-
-        Logs any exceptions from the task.
-
-        Args:
-            t: The asyncio Task to remove.
-            category: Category of the hook task for logging.
-        """
-        async with self._hooks_lock:
-            self._hook_tasks.remove(t)
-        if t.cancelled():
-            return
-        exc = t.exception()
-        if not exc:
-            return
-        try:
-            logging.debug(
-                f"⚠️ Retained background task error category={category} error={str(exc)} type={type(exc).__name__}"
-            )
-        except Exception as log_exc:  # pragma: no cover
-            logging.debug(
-                "TokenManager retained task logging failed: %s (%s)",
-                log_exc,
-                type(log_exc).__name__,
-            )
-
+        return await self.refresher.ensure_fresh(username, force_refresh)
     async def validate(self, username: str) -> TokenOutcome:
         """Validate a user's access token remotely.
 
@@ -656,407 +374,5 @@ class TokenManager:
             ValueError: If token data is invalid.
             RuntimeError: If validation process fails.
         """
-        async with self._tokens_lock:
-            info = self.tokens.get(username)
-        if not info:
-            return TokenOutcome.FAILED
-        now = time.time()
-        if now - info.last_validation < TOKEN_MANAGER_VALIDATION_MIN_INTERVAL:
-            return TokenOutcome.VALID
-        if not info.expiry:
-            return TokenOutcome.FAILED
-        client = await self._get_client(info.client_id, info.client_secret)
-        valid, expiry = await client._validate_remote(  # noqa: SLF001
-            username, info.access_token
-        )
-        async with self._tokens_lock:
-            info.last_validation = now
-            if valid:
-                info.expiry = expiry
-                return TokenOutcome.VALID
-            return TokenOutcome.FAILED
+        return await self.validator.validate(username)
 
-    def _remaining_seconds(self, info: TokenInfo) -> float | None:
-        """Calculate remaining seconds until token expiry.
-
-        Args:
-            info: TokenInfo object containing expiry information.
-
-        Returns:
-            Remaining seconds as float, or None if expiry is unknown.
-        """
-        if not info.expiry:
-            return None
-        return (info.expiry - datetime.now(UTC)).total_seconds()
-
-    def _assess_token_health(self, info: TokenInfo, remaining: float | None, drift: float) -> str:
-        """Assess token health status for proactive monitoring.
-
-        Args:
-            info: TokenInfo object containing token details.
-            remaining: Remaining seconds until expiry.
-            drift: Current drift in seconds.
-
-        Returns:
-            Health status: "healthy", "degraded", or "critical".
-        """
-        if remaining is None:
-            # Unknown expiry is always degraded
-            return "degraded"
-
-        # Critical if token is expired or very close to expiry with drift
-        if remaining <= 0 or (remaining <= 300 and drift > 60):
-            return "critical"
-
-        # Degraded if approaching expiry threshold with significant drift
-        if remaining <= TOKEN_REFRESH_THRESHOLD_SECONDS and drift > 30:
-            return "degraded"
-
-        return "healthy"
-
-    def _calculate_refresh_threshold(self, force_proactive: bool, drift_compensation: float) -> float:
-        """Calculate refresh threshold with drift compensation.
-
-        Args:
-            force_proactive: Whether proactive refresh is forced due to drift.
-            drift_compensation: Amount of drift in seconds to compensate for.
-
-        Returns:
-            Calculated refresh threshold in seconds.
-        """
-        base_threshold = TOKEN_REFRESH_THRESHOLD_SECONDS
-
-        # Apply drift compensation
-        if drift_compensation > 0:
-            # Reduce threshold by up to 50% of drift to refresh earlier
-            drift_reduction = min(drift_compensation * 0.5, base_threshold * 0.3)
-            compensated_threshold = base_threshold - drift_reduction
-        else:
-            compensated_threshold = base_threshold
-
-        # If forcing proactive refresh, use more conservative threshold
-        if force_proactive:
-            return compensated_threshold * 1.5  # 50% more conservative
-
-        return compensated_threshold
-
-    def _should_force_refresh_due_to_drift(
-        self, force_proactive: bool, drift_compensation: float, remaining: float
-    ) -> bool:
-        """Determine if refresh should be forced due to drift conditions.
-
-        Args:
-            force_proactive: Whether proactive refresh is forced.
-            drift_compensation: Amount of drift in seconds.
-            remaining: Remaining seconds until expiry.
-
-        Returns:
-            True if refresh should be forced due to drift.
-        """
-        if not force_proactive:
-            return False
-
-        # Force refresh if drift is significant and we're close to expiry
-        base_threshold = TOKEN_REFRESH_THRESHOLD_SECONDS
-        return (
-            drift_compensation > 60 and  # Significant drift (>1min)
-            remaining > base_threshold and  # But not past normal threshold
-            remaining <= base_threshold * 2  # And within conservative threshold
-        )
-
-    def _get_refresh_backoff_delay(self, info: TokenInfo) -> float:
-        """Calculate exponential backoff delay for failed refresh attempts.
-
-        Args:
-            info: TokenInfo object containing refresh attempt history.
-
-        Returns:
-            Backoff delay in seconds.
-        """
-        # Simple exponential backoff based on forced unknown attempts
-        # This helps avoid hammering the API with repeated failures
-        base_delay = TOKEN_MANAGER_BACKGROUND_BASE_SLEEP
-        if hasattr(info, 'consecutive_refresh_failures'):
-            failure_count = getattr(info, 'consecutive_refresh_failures', 0)
-            # Cap at 5 failures to avoid excessive delays
-            backoff_multiplier = min(failure_count, 5)
-            return base_delay * (2 ** backoff_multiplier)
-        return base_delay
-
-    async def _background_refresh_loop(self) -> None:
-        """Background loop for periodic token validation and refresh.
-
-        Runs continuously while the manager is running, checking all tokens
-        and refreshing as needed. Includes drift correction to maintain
-        reliable timing for unattended operation.
-
-        Raises:
-            RuntimeError: If background processing fails.
-            OSError: If system-level errors occur.
-            ValueError: If invalid data is encountered.
-            aiohttp.ClientError: If network requests fail.
-        """
-        base = TOKEN_MANAGER_BACKGROUND_BASE_SLEEP
-        last_loop = time.time()
-        consecutive_drift = 0
-        drift_correction_applied = False
-
-        while self.running:
-            try:
-                now = time.time()
-                drift = now - last_loop
-                drifted = drift > (base * 3)
-
-                # Enhanced drift detection and correction
-                if drifted:
-                    consecutive_drift += 1
-                    logging.warning(
-                        f"⏱️ Token manager loop drift detected drift={int(drift)}s base={base}s consecutive={consecutive_drift}"
-                    )
-
-                    # Apply drift correction after multiple consecutive drifts
-                    if consecutive_drift >= 3 and not drift_correction_applied:
-                        # Reduce sleep time to compensate for drift
-                        corrected_sleep = max(base * 0.3, base - (drift * 0.5))
-                        logging.info(
-                            f"🔧 Applied drift correction: sleep={corrected_sleep:.1f}s (was {base}s) drift={int(drift)}s"
-                        )
-                        drift_correction_applied = True
-                        sleep_duration = corrected_sleep
-                    else:
-                        sleep_duration = base
-                else:
-                    # Reset drift tracking on successful timing
-                    consecutive_drift = 0
-                    drift_correction_applied = False
-                    sleep_duration = base
-
-                async with self._tokens_lock:
-                    users = list(self.tokens.items())
-                users = [(u, info) for u, info in users if u not in self._paused_users]
-
-                # Enhanced proactive refresh with drift compensation
-                for username, info in users:
-                    try:
-                        await self._process_single_background(
-                            username, info, force_proactive=drifted, drift_compensation=drift
-                        )
-                    except Exception as e:
-                        logging.error(
-                            f"💥 Error processing background refresh for user={username}: {str(e)} type={type(e).__name__}"
-                        )
-                        # Continue with other users even if one fails
-                        continue
-
-                last_loop = now
-                # Apply jitter to corrected sleep duration
-                jittered_sleep = sleep_duration * _jitter_rng.uniform(0.5, 1.5)
-
-                # Use cancellable sleep to allow immediate shutdown
-                try:
-                    await asyncio.wait_for(asyncio.sleep(jittered_sleep), timeout=None)
-                except asyncio.CancelledError:
-                    # Re-raise to allow proper cancellation
-                    raise
-
-            except asyncio.CancelledError:
-                # Handle cancellation gracefully
-                logging.debug("Background token refresh loop cancelled")
-                raise
-            except (RuntimeError, OSError, ValueError, aiohttp.ClientError) as e:
-                logging.error(f"💥 Background token manager loop error: {str(e)}")
-                # Reset drift correction on error
-                consecutive_drift = 0
-                drift_correction_applied = False
-                try:
-                    await asyncio.wait_for(asyncio.sleep(base * 2), timeout=None)
-                except asyncio.CancelledError:
-                    raise
-
-    async def _process_single_background(
-        self, username: str, info: TokenInfo, *, force_proactive: bool = False, drift_compensation: float = 0.0
-    ) -> None:
-        """Handle refresh/validation logic for a single user with drift compensation.
-
-        Enhanced with proactive refresh and drift compensation for reliable
-        unattended operation.
-
-        Args:
-            username: Username associated with the token.
-            info: TokenInfo object containing token details.
-            force_proactive: Whether to force proactive refresh due to drift.
-            drift_compensation: Amount of drift in seconds to compensate for.
-        """
-        remaining = self._remaining_seconds(info)
-        self._log_remaining_detail(username, remaining)
-
-        # Enhanced token health monitoring
-        health_status = self._assess_token_health(info, remaining, drift_compensation)
-        if health_status == "critical":
-            logging.warning(
-                f"🚨 Critical token health detected user={username} remaining={remaining}s drift={drift_compensation:.1f}s"
-            )
-            await self.ensure_fresh(username, force_refresh=True)
-            return
-        elif health_status == "degraded":
-            logging.info(
-                f"⚠️ Degraded token health detected user={username} remaining={remaining}s drift={drift_compensation:.1f}s"
-            )
-
-        # Unified unknown-expiry + periodic validation resolution.
-        remaining = await self._maybe_periodic_or_unknown_resolution(
-            username, info, remaining
-        )
-        if remaining is None:
-            return
-
-        if remaining < 0:
-            async with info.refresh_lock:
-                info.state = TokenState.EXPIRED
-            logging.warning(
-                f"⚠️ Unexpected expired state detected user={username} remaining={remaining}"
-            )
-            await self.ensure_fresh(username, force_refresh=True)
-            return
-
-        # Enhanced proactive refresh with drift compensation
-        trigger_threshold = self._calculate_refresh_threshold(force_proactive, drift_compensation)
-
-        if remaining <= trigger_threshold:
-            # Enhanced error handling for token refresh operations
-            try:
-                # Force refresh if we're only triggering due to drift compensation
-                if self._should_force_refresh_due_to_drift(force_proactive, drift_compensation, remaining):
-                    await self.ensure_fresh(username, force_refresh=True)
-                else:
-                    await self.ensure_fresh(username)
-            except Exception as e:
-                logging.error(
-                    f"💥 Token refresh failed for user={username} remaining={remaining}s threshold={trigger_threshold}s: {str(e)}"
-                )
-                # Mark token as expired if refresh consistently fails
-                async with info.refresh_lock:
-                    info.state = TokenState.EXPIRED
-                # Fire invalidation hook for failed refresh
-                await self._maybe_fire_invalidation_hook(username)
-
-    async def _maybe_periodic_or_unknown_resolution(
-        self, username: str, info: TokenInfo, remaining: float | None
-    ) -> float | None:
-        """Resolve unknown expiry or perform periodic validation.
-
-        Returns (possibly updated) remaining seconds (None if still unknown).
-        Always logs both remaining_seconds and remaining_human for periodic events.
-        """
-        # Unknown expiry path first.
-        if info.expiry is None:
-            await self._handle_unknown_expiry(username)
-            return self._remaining_seconds(info)
-        # Periodic validation check.
-        try:
-            now = time.time()
-            if now - info.last_validation < TOKEN_MANAGER_PERIODIC_VALIDATION_INTERVAL:
-                return remaining
-            outcome = await self.validate(username)
-            updated_remaining = self._remaining_seconds(info)
-            if outcome == TokenOutcome.VALID:
-                if updated_remaining is not None:
-                    human_new = format_duration(max(0, int(updated_remaining)))
-                    logging.info(
-                        f"✅ Periodic remote token validation ok for user {username} ({human_new} remaining)"
-                    )
-                return updated_remaining
-            # Failure -> forced refresh.
-            pre_seconds = (
-                int(updated_remaining) if updated_remaining is not None else None
-            )
-            pre_human = (
-                format_duration(max(0, pre_seconds))
-                if pre_seconds is not None
-                else "unknown"
-            )
-            logging.error(
-                f"❌ Periodic remote token validation failed for user {username} ({pre_human} remaining pre-refresh, {pre_seconds}s)"
-            )
-            ref_outcome = await self.ensure_fresh(username, force_refresh=True)
-            post_remaining = self._remaining_seconds(info)
-            post_seconds = int(post_remaining) if post_remaining is not None else None
-            post_human = (
-                format_duration(max(0, post_seconds))
-                if post_seconds is not None
-                else "unknown"
-            )
-            logging.info(
-                f"🔄 Forced refresh after failed periodic remote validation for user {username} outcome={ref_outcome.value} ({post_human} remaining, {post_seconds}s)"
-            )
-            return post_remaining
-        except (aiohttp.ClientError, ValueError, RuntimeError) as e:
-            logging.warning(
-                f"⚠️ Periodic remote token validation error for user {username} type={type(e).__name__} error={str(e)}"
-            )
-            return self._remaining_seconds(info)
-
-    def _log_remaining_detail(self, username: str, remaining: float | None) -> None:
-        """Log detailed remaining token validity time for observability.
-
-        Args:
-            username: Username associated with the token.
-            remaining: Remaining seconds until expiry, or None if unknown.
-        """
-        # Emit remaining time every cycle for observability (even when no refresh triggered).
-        if remaining is None:
-            logging.debug(
-                f"❔ Token expiry unknown (will validate / refresh) user={username} remaining_seconds=None"
-            )
-            return
-        int_remaining = int(remaining)
-        human = format_duration(int(max(0, int_remaining)))
-        if int_remaining <= 900:
-            icon = "🚨"
-        elif int_remaining <= 3600:
-            icon = "⏰"
-        elif int_remaining <= 2 * 3600:
-            icon = "⌛"
-        else:
-            icon = "🔐"
-        # Expiry timestamp not included in human message (simplified per request).
-        # Build a clearer human message: explicitly mention token remaining time (no extra parenthetical details).
-        logging.debug(
-            f"{icon} Access token validity: {human} remaining user={username} remaining_seconds={int_remaining}"
-        )
-
-    async def _handle_unknown_expiry(self, username: str) -> None:
-        """Resolve unknown expiry with capped forced refresh attempts (max 3) using exponential backoff."""
-        outcome = await self.ensure_fresh(username, force_refresh=False)
-        async with self._tokens_lock:
-            info_ref = self.tokens.get(username)
-        if not info_ref:
-            return
-        if info_ref.expiry is None:
-            async with self._tokens_lock:
-                if info_ref.forced_unknown_attempts < 3:
-                    info_ref.forced_unknown_attempts += 1
-            delay = TOKEN_MANAGER_BACKGROUND_BASE_SLEEP * (
-                2 ** (info_ref.forced_unknown_attempts - 1)
-            )
-            await asyncio.sleep(delay)
-            forced = await self.ensure_fresh(username, force_refresh=True)
-            if forced == TokenOutcome.FAILED:
-                logging.warning(
-                    f"⚠️ Forced refresh attempt failed resolving unknown expiry user={username} attempt={info_ref.forced_unknown_attempts}"
-                )
-            else:
-                logging.info(
-                    f"✅ Forced refresh resolved unknown expiry user={username} attempt={info_ref.forced_unknown_attempts}"
-                )
-                async with self._tokens_lock:
-                    info_ref.forced_unknown_attempts = 0
-        else:
-            async with self._tokens_lock:
-                if info_ref.forced_unknown_attempts:
-                    info_ref.forced_unknown_attempts = 0
-        async with self._tokens_lock:
-            if outcome == TokenOutcome.FAILED and info_ref.expiry is None:
-                logging.warning(
-                    f"⚠️ Validation failed with unknown expiry user={username}"
-                )

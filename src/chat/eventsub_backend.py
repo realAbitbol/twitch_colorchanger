@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from collections.abc import Callable
@@ -12,17 +11,19 @@ import aiohttp
 from ..api.twitch import TwitchAPI
 from ..chat.cache_manager import CacheManager
 from ..chat.channel_resolver import ChannelResolver
+from ..chat.connection_coordinator import ConnectionCoordinator
+from ..chat.message_coordinator import MessageCoordinator
 from ..chat.message_processor import MessageProcessor
+from ..chat.reconnection_coordinator import ReconnectionCoordinator
+from ..chat.subscription_coordinator import SubscriptionCoordinator
 from ..chat.subscription_manager import SubscriptionManager
 from ..chat.token_manager import TokenManager
 from ..chat.websocket_connection_manager import WebSocketConnectionManager
 from ..constants import (
     EVENTSUB_SUB_CHECK_INTERVAL_SECONDS,
 )
-from ..utils.retry import retry_async
 
 MessageHandler = Callable[[str, str, str], Any]
-
 
 class EventSubChatBackend:
     """EventSub WebSocket chat backend for Twitch.
@@ -115,61 +116,24 @@ class EventSubChatBackend:
         # Backward compatibility attributes
         self._scopes: set[str] = set()
 
+        # Coordinators
+        self._connection_coordinator: ConnectionCoordinator | None = None
+        self._subscription_coordinator: SubscriptionCoordinator | None = None
+        self._message_coordinator: MessageCoordinator | None = None
+        self._reconnection_coordinator: ReconnectionCoordinator | None = None
+
     async def __aenter__(self) -> EventSubChatBackend:
         """Async context manager entry."""
-        self._initialize_components()
+        self._connection_coordinator = ConnectionCoordinator(self)
+        self._subscription_coordinator = SubscriptionCoordinator(self)
+        self._message_coordinator = MessageCoordinator(self)
+        self._reconnection_coordinator = ReconnectionCoordinator(self)
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit with cleanup."""
         await self._cleanup_components()
 
-    def _initialize_components(self) -> None:
-        """Initialize all components if not injected."""
-        if self._cache_manager is None:
-            import os
-            from pathlib import Path
-
-            # Check for environment variable
-            env_cache_path = os.getenv("TWITCH_BROADCASTER_CACHE")
-            if env_cache_path:
-                cache_path = Path(env_cache_path)
-                logging.debug(
-                    f"Using cache path from TWITCH_BROADCASTER_CACHE: {cache_path}"
-                )
-            else:
-                cache_path = Path("broadcaster_ids.cache.json").resolve()
-                logging.debug(f"Using default cache path: {cache_path}")
-
-            self._cache_manager = CacheManager(str(cache_path))
-
-        if self._channel_resolver is None:
-            self._channel_resolver = ChannelResolver(self._api, self._cache_manager)
-
-        if self._token_manager is None and self._client_id and self._client_secret:
-            self._token_manager = TokenManager(
-                username=self._username or "",
-                client_id=self._client_id,
-                client_secret=self._client_secret,
-                http_session=self._session,
-            )
-            self._token_manager.set_invalid_callback(self._on_token_invalid)
-
-        if self._ws_manager is None and self._token and self._client_id:
-            self._ws_manager = WebSocketConnectionManager(
-                session=self._session,
-                token=self._token,
-                client_id=self._client_id,
-            )
-
-        # SubscriptionManager will be created after WebSocket connection
-        # when session_id is available
-
-        if self._msg_processor is None:
-            self._msg_processor = MessageProcessor(
-                message_handler=self._message_handler or (lambda *args: None),
-                color_handler=self._color_handler or (lambda *args: None),
-            )
 
     async def _cleanup_components(self) -> None:
         """Cleanup all components."""
@@ -238,21 +202,6 @@ class EventSubChatBackend:
         else:
             self._sub_manager.update_session_id(self._ws_manager.session_id)
 
-    async def _subscribe_primary_channel(self, user_ids: dict[str, str]) -> bool:
-        """Subscribe to primary channel."""
-        if not self._sub_manager:
-            return True
-        if self._primary_channel is None:
-            return False
-        channel_id = user_ids.get(self._primary_channel)
-        if not channel_id:
-            return False
-        success = await self._sub_manager.subscribe_channel_chat(
-            channel_id, self._user_id or ""
-        )
-        if success:
-            logging.info(f"✅ {self._username} joined #{self._primary_channel}")
-        return success
 
     def set_token_invalid_callback(self, callback) -> None:
         """Sets the callback for token invalidation events.
@@ -286,10 +235,24 @@ class EventSubChatBackend:
             bool: True if connection and subscription successful, False otherwise.
         """
         try:
+            # Ensure coordinators are initialized
+            if self._connection_coordinator is None:
+                self._connection_coordinator = ConnectionCoordinator(self)
+            if self._subscription_coordinator is None:
+                self._subscription_coordinator = SubscriptionCoordinator(self)
+            if self._message_coordinator is None:
+                self._message_coordinator = MessageCoordinator(self)
+            if self._reconnection_coordinator is None:
+                self._reconnection_coordinator = ReconnectionCoordinator(self)
+
             self._set_credentials(
                 token, username, primary_channel, user_id, client_id, client_secret
             )
-            self._initialize_components()
+
+            if self._connection_coordinator:
+                self._connection_coordinator.initialize_credential_components(
+                    self._token, self._client_id, self._client_secret, self._username
+                )
 
             if not await self._validate_token(token):
                 return False
@@ -301,7 +264,7 @@ class EventSubChatBackend:
             await self._connect_websocket()
             self._setup_subscription_manager()
 
-            if not await self._subscribe_primary_channel(user_ids):
+            if not await self._subscription_coordinator.subscribe_primary_channel(user_ids):
                 return False
 
             return True
@@ -310,88 +273,11 @@ class EventSubChatBackend:
             logging.error(f"EventSub connect failed: {str(e)}")
             return False
 
-    async def _handle_message(self, msg: aiohttp.WSMessage) -> bool:
-        """Handle a single WebSocket message.
-
-        Returns True if processing should continue, False to break the loop.
-        """
-        if msg.type == aiohttp.WSMsgType.TEXT:
-            self._last_activity = time.monotonic()
-            try:
-                data = json.loads(msg.data)
-                msg_type = data.get("type")
-                if msg_type == "session_reconnect":
-                    await self._handle_session_reconnect(data)
-                    return True
-            except json.JSONDecodeError:
-                logging.warning(f"Failed to parse WebSocket message: {msg.data}")
-            if self._msg_processor:
-                await self._msg_processor.process_message(msg.data)
-            return True
-        elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-            logging.info("WebSocket abnormal end")
-            return await self._handle_reconnect()
-        return True
 
     async def listen(self) -> None:
         """Listen for WebSocket messages and handle them with idle optimization."""
-        if not self._ws_manager or not self._ws_manager.is_connected:
-            return
-
-        # Idle optimization: longer sleep when no recent activity
-        idle_sleep_time = 0.1  # 100ms base sleep
-        max_idle_sleep = 1.0   # 1s max sleep during idle
-        idle_threshold = 30.0  # 30s of no activity = idle
-
-        consecutive_idles = 0
-        max_consecutive_idles = 10
-
-        while not self._stop_event.is_set():
-            now = time.monotonic()
-
-            # Check if we should enter idle mode
-            time_since_activity = now - self._last_activity
-            is_idle = time_since_activity > idle_threshold
-
-            if is_idle and consecutive_idles < max_consecutive_idles:
-                # Gradually increase sleep time during idle periods
-                sleep_time = min(idle_sleep_time * (2 ** consecutive_idles), max_idle_sleep)
-                await asyncio.sleep(sleep_time)
-                consecutive_idles += 1
-                continue
-            elif consecutive_idles >= max_consecutive_idles:
-                # Reset idle counter periodically to stay responsive
-                consecutive_idles = 0
-
-            # Normal operation - check subscriptions
-            await self._maybe_verify_subs(now)
-
-
-            try:
-                msg = await self._ws_manager.receive_message()
-                if not await self._handle_message(msg):
-                    break
-                # Reset idle counter on activity
-                consecutive_idles = 0
-            except Exception as e:
-                # Handle timeout exceptions specifically
-                if isinstance(e, TimeoutError) or "timeout" in str(e).lower():
-                    # Timeout is expected during idle - just continue
-                    if not is_idle:
-                        logging.debug("WebSocket receive timeout during active period")
-                    consecutive_idles += 1
-
-                    # If connection is stale, trigger reconnect
-                    if time_since_activity > self._stale_threshold:
-                        logging.warning(f"Connection stale ({time_since_activity:.1f}s), triggering reconnect")
-                        if not await self._handle_reconnect():
-                            break
-                    continue
-                else:
-                    logging.warning(f"Listen loop error: {str(e)}")
-                    consecutive_idles += 1
-                    if not await self._handle_reconnect():
-                        break
+        if self._message_coordinator:
+            await self._message_coordinator.listen()
 
     async def disconnect(self) -> None:
         """Disconnect from the WebSocket and cleanup resources."""
@@ -421,35 +307,9 @@ class EventSubChatBackend:
         Returns:
             bool: True if joined successfully, False otherwise.
         """
-        channel_l = channel.lstrip("#").lower()
-        if channel_l in self._channels:
-            return True
-
-        try:
-            # Resolve channel ID
-            if self._channel_resolver:
-                user_ids = await self._channel_resolver.resolve_user_ids(
-                    [channel_l], self._token or "", self._client_id or ""
-                )
-                channel_id = user_ids.get(channel_l)
-                if not channel_id:
-                    return False
-
-                # Subscribe
-                if self._sub_manager:
-                    success = await self._sub_manager.subscribe_channel_chat(
-                        channel_id, self._user_id or ""
-                    )
-                    if success:
-                        self._channels.append(channel_l)
-                        logging.info(f"✅ {self._username} joined #{channel_l}")
-                        return True
-
-            return False
-
-        except Exception as e:
-            logging.warning(f"Join channel failed: {str(e)}")
-            return False
+        if self._subscription_coordinator:
+            return await self._subscription_coordinator.join_channel(channel)
+        return False
 
     def set_message_handler(self, handler: MessageHandler) -> None:
         """Sets the handler for incoming chat messages.
@@ -574,185 +434,7 @@ class EventSubChatBackend:
             logging.info(f"Subscription check error: {str(e)}")
         self._next_sub_check = now + EVENTSUB_SUB_CHECK_INTERVAL_SECONDS
 
-    async def _resubscribe_all_channels(self) -> bool:
-        """Resubscribe to all channels after reconnection with retry logic."""
-        if not self._sub_manager or not self._channel_resolver:
-            return True
-        all_success = True
-        for channel in self._channels:
-            try:
-                user_ids = await self._channel_resolver.resolve_user_ids(
-                    [channel], self._token or "", self._client_id or ""
-                )
-                channel_id = user_ids.get(channel)
-                if channel_id:
-                    # Retry subscription with exponential backoff
-                    result = await self._subscribe_channel_with_retry(
-                        channel_id, channel
-                    )
-                    if result is None:
-                        logging.error(
-                            f"Failed to resubscribe to {channel} after all retry attempts"
-                        )
-                        all_success = False
-                    elif not result:
-                        logging.warning(
-                            f"Subscription failed for {channel} even after retries"
-                        )
-                        all_success = False
-                else:
-                    logging.warning(f"Could not resolve channel_id for {channel}")
-                    all_success = False
-            except Exception as e:
-                logging.warning(f"Failed to resolve or resubscribe to {channel}: {e}")
-                all_success = False
-        return all_success
 
-    async def _subscribe_channel_with_retry(
-        self, channel_id: str, channel: str
-    ) -> bool | None:
-        """Subscribe to a channel with retry logic."""
-        if not self._sub_manager:
-            return None
-        sub_manager = self._sub_manager
-
-        async def subscribe_operation(attempt: int) -> tuple[bool | None, bool]:
-            try:
-                success = await sub_manager.subscribe_channel_chat(
-                    channel_id, self._user_id or ""
-                )
-                return success, not success  # success: don't retry, failure: retry
-            except Exception as e:
-                logging.warning(
-                    f"Failed to resubscribe to {channel} (attempt {attempt}): {e}"
-                )
-                return False, True  # retry on exception
-
-        return await retry_async(subscribe_operation, max_attempts=5)
-
-    async def _handle_session_reconnect(self, data: dict[str, Any]) -> None:
-        """Handle session reconnect message from Twitch.
-
-        Updates the WebSocket URL and initiates reconnection.
-
-        Args:
-            data: The session_reconnect message data.
-        """
-        try:
-            reconnect_url = (
-                data.get("payload", {}).get("session", {}).get("reconnect_url")
-            )
-            if not reconnect_url:
-                logging.error("Session reconnect message missing reconnect_url")
-                return
-
-            if self._ws_manager:
-                self._ws_manager.update_url(reconnect_url)
-                logging.info(
-                    f"Updated WebSocket URL to {reconnect_url}, initiating reconnect"
-                )
-                await self._handle_reconnect()
-            else:
-                logging.error("No WebSocket manager available for session reconnect")
-        except Exception as e:
-            logging.error(f"Failed to handle session reconnect: {str(e)}")
-
-    async def _handle_reconnect(self) -> bool:
-        """Handle reconnection logic with connection health validation.
-
-        Returns:
-            bool: True if reconnection successful and healthy, False otherwise.
-        """
-        if not self._ws_manager:
-            return False
-
-        old_session_id = getattr(self._ws_manager, "session_id", None)
-        logging.debug(f"Reconnect: old WS session_id={old_session_id}")
-
-        try:
-            success = await self._ws_manager.reconnect()
-        except Exception as e:
-            logging.error(f"Reconnect failed: {e}")
-            return False
-
-        if not success:
-            return False
-
-        # Validate connection health after reconnection
-        if not await self._validate_connection_health():
-            logging.error("Connection health validation failed after reconnection")
-            return False
-
-        new_session_id = getattr(self._ws_manager, "session_id", None)
-        logging.debug(f"Reconnect successful: new WS session_id={new_session_id}")
-
-        if self._sub_manager and new_session_id:
-            try:
-                self._sub_manager.update_session_id(new_session_id)
-            except Exception as e:
-                logging.error(f"Failed to update session_id: {e}")
-                return False
-
-        if self._sub_manager:
-            try:
-                await self._sub_manager.unsubscribe_all()
-            except Exception as e:
-                logging.error(f"Failed to unsubscribe all: {e}")
-                return False
-
-        try:
-            resub_success = await self._resubscribe_all_channels()
-        except Exception as e:
-            logging.error(f"Failed to resubscribe all channels: {e}")
-            return False
-
-        if not resub_success:
-            return False
-
-        return True
-
-    async def _validate_connection_health(self) -> bool:
-        """Validate that the WebSocket connection is healthy after reconnection.
-
-        Returns:
-            bool: True if connection is healthy, False otherwise.
-        """
-        if not self._ws_manager:
-            logging.error("No WebSocket manager for health validation")
-            return False
-
-        # Use the WebSocket manager's built-in health check
-        if not self._ws_manager.is_healthy():
-            logging.error("WebSocket manager reports unhealthy connection")
-            return False
-
-        # Additional validation: test actual message reception with timeout
-        try:
-            # Try to receive a message with a short timeout to test if connection is responsive
-            msg = await asyncio.wait_for(
-                self._ws_manager.receive_message(),
-                timeout=3.0  # 3 second timeout for health check
-            )
-
-            # If we get a message, we've validated the connection is working
-            logging.debug(f"Health check received message type: {msg.type}")
-
-            # Any message type except ERROR indicates the connection is responsive
-            if msg.type == aiohttp.WSMsgType.ERROR:
-                logging.error("WebSocket connection has error during health validation")
-                return False
-
-            # Connection is healthy and responsive
-            logging.debug("WebSocket connection health validation passed")
-            return True
-
-        except TimeoutError:
-            # Timeout is expected for health check - means connection is alive but no messages
-            logging.debug("WebSocket health check timeout (expected) - connection is healthy")
-            return True
-        except Exception as e:
-            logging.error(f"WebSocket health validation failed: {str(e)}")
-            return False
 
     async def _on_token_invalid(self) -> None:
         """Callback invoked when token is detected as invalid."""
@@ -760,4 +442,5 @@ class EventSubChatBackend:
         # Trigger token refresh and reconnect
         if self._token_manager:
             await self._token_manager.refresh_token(force_refresh=True)
-        await self._handle_reconnect()
+        if self._reconnection_coordinator:
+            await self._reconnection_coordinator.handle_reconnect()
