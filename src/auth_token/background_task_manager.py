@@ -35,7 +35,7 @@ class BackgroundTaskManager:
         if self.running:
             return
         # Defensive: if a previous background task is still lingering, cancel it
-        if self.task and not self.task.done():
+        if self.task and not self.task.done:
             logging.debug("Cancelling stale background task before restart")
             try:
                 self.task.cancel()

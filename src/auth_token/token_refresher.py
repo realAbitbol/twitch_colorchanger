@@ -135,7 +135,7 @@ class TokenRefresher:
         info.expiry = result.expiry
         info.state = (
             TokenState.FRESH
-            if result.outcome in (TokenOutcome.VALID, TokenOutcome.SKIPPED)
+            if result.outcome in (TokenOutcome.VALID, TokenOutcome.SKIPPED, TokenOutcome.REFRESHED)
             else TokenState.STALE
         )
         # If we actually performed a refresh (new token lifetime), reset baseline.

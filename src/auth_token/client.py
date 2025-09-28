@@ -58,9 +58,9 @@ class TokenResult:
     """
 
     outcome: TokenOutcome
-    access_token: str | None
-    refresh_token: str | None
-    expiry: datetime | None
+    access_token: str | None = None
+    refresh_token: str | None = None
+    expiry: datetime | None = None
     error_type: RefreshErrorType | None = None
 
 

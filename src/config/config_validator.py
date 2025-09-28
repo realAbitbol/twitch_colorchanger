@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from typing import Any
 
@@ -32,7 +33,8 @@ class ConfigValidator:
                 continue
             try:
                 uc = UserConfig.from_dict(item)
-            except ValidationError:
+            except (ValidationError, Exception) as e:
+                logging.debug(f"Skipping invalid user config: {e}")
                 continue
             if not uc.validate():  # Additional validation to filter users with empty channels or invalid usernames
                 continue
@@ -64,7 +66,8 @@ class ConfigValidator:
                 continue
             try:
                 uc = UserConfig.from_dict(item)
-            except ValidationError:
+            except (ValidationError, Exception) as e:
+                logging.debug(f"Skipping invalid user config: {e}")
                 continue
             if not uc.validate():  # Additional validation to filter users with empty channels or invalid usernames
                 continue
