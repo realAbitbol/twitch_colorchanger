@@ -2,11 +2,10 @@
 Unit tests for ConnectionStateManager.
 """
 
-import pytest
-from unittest.mock import Mock, patch
 import time
+from unittest.mock import Mock, patch
 
-from src.chat.connection_state_manager import ConnectionStateManager, ConnectionState
+from src.chat.connection_state_manager import ConnectionState, ConnectionStateManager
 
 
 class TestConnectionStateManager:

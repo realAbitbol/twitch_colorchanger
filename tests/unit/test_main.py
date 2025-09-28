@@ -2,9 +2,9 @@
 Unit tests for main.py
 """
 
+from unittest.mock import Mock, patch
+
 import pytest
-from unittest.mock import Mock, AsyncMock, patch
-import sys
 
 from src.main import main, run
 
@@ -25,8 +25,7 @@ class TestMain:
               patch('src.main.normalize_user_channels') as mock_normalize, \
               patch('src.main.setup_missing_tokens', side_effect=mock_setup) as mock_setup_patch, \
               patch('src.main.print_config_summary') as mock_print, \
-              patch('src.main.run_bots', side_effect=mock_run_bots) as mock_run_bots_patch, \
-              patch('src.main.emit_startup_instructions') as mock_emit:
+              patch('src.main.run_bots', side_effect=mock_run_bots) as mock_run_bots_patch:
 
             mock_get_config.return_value = {}
             mock_normalize.return_value = ({}, None)
@@ -43,8 +42,7 @@ class TestMain:
     async def test_main_exception(self):
         """Test main function exception handling."""
         with patch('src.main.get_configuration', side_effect=Exception("Test error")), \
-             patch('src.main.log_error') as mock_log_error, \
-             patch('builtins.print') as mock_print:
+              patch('src.main.log_error') as mock_log_error:
 
             with pytest.raises(SystemExit):
                 await main()
@@ -58,8 +56,7 @@ class TestMain:
     @pytest.mark.asyncio
     async def test_main_keyboard_interrupt(self):
         """Test main function keyboard interrupt handling."""
-        with patch('src.main.get_configuration', side_effect=KeyboardInterrupt), \
-             patch('builtins.print') as mock_print:
+        with patch('src.main.get_configuration', side_effect=KeyboardInterrupt):
 
             # Should not raise
             await main()

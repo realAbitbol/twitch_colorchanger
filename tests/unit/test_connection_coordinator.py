@@ -2,9 +2,8 @@
 Unit tests for ConnectionCoordinator.
 """
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from src.chat.connection_coordinator import ConnectionCoordinator
 
@@ -24,7 +23,7 @@ class TestConnectionCoordinator:
     def test_init_calls_initialize_components(self):
         """Test that __init__ calls _initialize_components."""
         with patch.object(ConnectionCoordinator, '_initialize_components') as mock_init:
-            coordinator = ConnectionCoordinator(self.mock_backend)
+            ConnectionCoordinator(self.mock_backend)
             mock_init.assert_called_once()
 
     def test_initialize_components_creates_cache_manager_when_none(self):

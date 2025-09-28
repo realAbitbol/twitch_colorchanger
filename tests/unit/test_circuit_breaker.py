@@ -6,20 +6,21 @@ Tests the circuit breaker functionality, including concurrent calls to verify re
 
 import asyncio
 import time
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 from src.utils.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerConfig,
     CircuitBreakerOpenException,
     CircuitBreakerState,
+    _circuit_breakers,
+    cleanup_circuit_breakers,
     get_circuit_breaker,
-    reset_circuit_breaker,
     get_circuit_breaker_state,
     remove_circuit_breaker,
-    cleanup_circuit_breakers,
-    _circuit_breakers,
+    reset_circuit_breaker,
 )
 
 

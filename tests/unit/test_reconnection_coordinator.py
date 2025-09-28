@@ -2,10 +2,11 @@
 Unit tests for ReconnectionCoordinator.
 """
 
-import pytest
 import asyncio
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, Mock, patch
+
 import aiohttp
+import pytest
 
 from src.chat.reconnection_coordinator import ReconnectionCoordinator
 
@@ -38,9 +39,9 @@ class TestReconnectionCoordinator:
         self.mock_backend._ws_manager = mock_ws_manager
 
         # Act
-        with patch.object(self.coordinator, 'handle_reconnect', new_callable=AsyncMock) as mock_reconnect:
-            with patch('src.chat.reconnection_coordinator.logging') as mock_logging:
-                await self.coordinator.handle_session_reconnect(data)
+        with patch.object(self.coordinator, 'handle_reconnect', new_callable=AsyncMock) as mock_reconnect, \
+             patch('src.chat.reconnection_coordinator.logging') as mock_logging:
+            await self.coordinator.handle_session_reconnect(data)
 
         # Assert
         mock_ws_manager.update_url.assert_called_once_with("wss://new-url.com")
@@ -167,11 +168,10 @@ class TestReconnectionCoordinator:
         mock_subscription_coordinator.resubscribe_all_channels.return_value = True
         self.mock_backend._subscription_coordinator = mock_subscription_coordinator
 
-        with patch.object(self.coordinator, 'validate_connection_health', AsyncMock(return_value=True)) as mock_validate:
-
+        with patch.object(self.coordinator, 'validate_connection_health', AsyncMock(return_value=True)) as mock_validate, \
+              patch('src.chat.reconnection_coordinator.logging'):
             # Act
-            with patch('src.chat.reconnection_coordinator.logging') as mock_logging:
-                result = await self.coordinator.handle_reconnect()
+            result = await self.coordinator.handle_reconnect()
 
         # Assert
         assert result is True
@@ -287,9 +287,9 @@ class TestReconnectionCoordinator:
         self.mock_backend._ws_manager = mock_ws_manager
 
         # Act
-        with patch('asyncio.wait_for', side_effect=asyncio.TimeoutError):
-            with patch('src.chat.reconnection_coordinator.logging') as mock_logging:
-                result = await self.coordinator.validate_connection_health()
+        with patch('asyncio.wait_for', side_effect=asyncio.TimeoutError), \
+             patch('src.chat.reconnection_coordinator.logging') as mock_logging:
+            result = await self.coordinator.validate_connection_health()
 
         # Assert
         assert result is True
@@ -304,9 +304,9 @@ class TestReconnectionCoordinator:
         self.mock_backend._ws_manager = mock_ws_manager
 
         # Act
-        with patch('asyncio.wait_for', side_effect=Exception("Test error")):
-            with patch('src.chat.reconnection_coordinator.logging') as mock_logging:
-                result = await self.coordinator.validate_connection_health()
+        with patch('asyncio.wait_for', side_effect=Exception("Test error")), \
+             patch('src.chat.reconnection_coordinator.logging') as mock_logging:
+            result = await self.coordinator.validate_connection_health()
 
         # Assert
         assert result is False

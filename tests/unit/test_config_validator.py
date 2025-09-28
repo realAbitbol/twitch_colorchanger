@@ -2,7 +2,6 @@
 Unit tests for ConfigValidator.
 """
 
-import pytest
 from unittest.mock import Mock, patch
 
 from src.config.config_validator import ConfigValidator

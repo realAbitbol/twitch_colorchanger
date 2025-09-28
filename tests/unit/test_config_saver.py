@@ -2,7 +2,6 @@
 Unit tests for ConfigSaver.
 """
 
-import pytest
 from unittest.mock import Mock, patch
 
 from src.config.config_saver import ConfigSaver
@@ -38,11 +37,11 @@ class TestConfigSaver:
         mock_users = [{"username": "testuser"}]
         mock_repo = Mock()
 
-        with patch('src.config.config_saver.normalize_user_list', return_value=(mock_users, False)) as mock_normalize:
-            with patch('src.config.config_saver.ConfigRepository', return_value=mock_repo) as mock_repo_class:
-                mock_repo.save_users.return_value = True
+        with patch('src.config.config_saver.normalize_user_list', return_value=(mock_users, False)) as mock_normalize, \
+             patch('src.config.config_saver.ConfigRepository', return_value=mock_repo) as mock_repo_class:
+            mock_repo.save_users.return_value = True
 
-                self.saver.save_users_to_config(mock_users, "test.conf")
+            self.saver.save_users_to_config(mock_users, "test.conf")
 
         mock_normalize.assert_called_once_with(mock_users)
         mock_repo_class.assert_called_once_with("test.conf")
@@ -54,11 +53,11 @@ class TestConfigSaver:
         mock_users = [{"username": "testuser"}]
         mock_repo = Mock()
 
-        with patch('src.config.config_saver.normalize_user_list', return_value=(mock_users, True)) as mock_normalize:
-            with patch('src.config.config_saver.ConfigRepository', return_value=mock_repo) as mock_repo_class:
-                mock_repo.save_users.return_value = False
+        with patch('src.config.config_saver.normalize_user_list', return_value=(mock_users, True)), \
+             patch('src.config.config_saver.ConfigRepository', return_value=mock_repo):
+            mock_repo.save_users.return_value = False
 
-                self.saver.save_users_to_config(mock_users, "test.conf")
+            self.saver.save_users_to_config(mock_users, "test.conf")
 
         # Should call save_users twice: once initially, once on retry
         assert mock_repo.save_users.call_count == 2
@@ -78,12 +77,11 @@ class TestConfigSaver:
         mock_uc.validate.return_value = True
         mock_uc.to_dict.return_value = user_dict
 
-        with patch('src.config.config_saver.UserConfig.from_dict', return_value=mock_uc):
-            with patch.object(self.saver.loader, 'load_users_from_config', return_value=[]):
-                with patch.object(self.saver, '_merge_user', return_value=([], False)):
-                    with patch.object(self.saver, 'save_users_to_config') as mock_save:
-                        with patch('src.config.config_saver.logging') as mock_logging:
-                            result = self.saver.update_user_in_config(user_dict, "test.conf")
+        with patch('src.config.config_saver.UserConfig.from_dict', return_value=mock_uc), \
+             patch.object(self.saver.loader, 'load_users_from_config', return_value=[]), \
+             patch.object(self.saver, '_merge_user', return_value=([], False)), \
+             patch.object(self.saver, 'save_users_to_config') as mock_save:
+            result = self.saver.update_user_in_config(user_dict, "test.conf")
 
         assert result is True
         mock_save.assert_called_once_with([user_dict], "test.conf")
@@ -95,9 +93,9 @@ class TestConfigSaver:
         mock_uc = Mock()
         mock_uc.validate.return_value = False
 
-        with patch('src.config.config_saver.UserConfig.from_dict', return_value=mock_uc):
-            with patch('src.config.config_saver.logging') as mock_logging:
-                result = self.saver.update_user_in_config(user_dict, "test.conf")
+        with patch('src.config.config_saver.UserConfig.from_dict', return_value=mock_uc), \
+             patch('src.config.config_saver.logging') as mock_logging:
+            result = self.saver.update_user_in_config(user_dict, "test.conf")
 
         assert result is False
         mock_logging.warning.assert_called_once()
@@ -106,9 +104,9 @@ class TestConfigSaver:
         """Test update_user_in_config handles exceptions gracefully."""
         user_dict = {"username": "testuser"}
 
-        with patch('src.config.config_saver.UserConfig.from_dict', side_effect=ValueError("Invalid")):
-            with patch('src.config.config_saver.logging') as mock_logging:
-                result = self.saver.update_user_in_config(user_dict, "test.conf")
+        with patch('src.config.config_saver.UserConfig.from_dict', side_effect=ValueError("Invalid")), \
+             patch('src.config.config_saver.logging') as mock_logging:
+            result = self.saver.update_user_in_config(user_dict, "test.conf")
 
         assert result is False
         mock_logging.error.assert_called_once()

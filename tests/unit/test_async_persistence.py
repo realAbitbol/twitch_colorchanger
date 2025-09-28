@@ -3,21 +3,21 @@ Unit tests for AsyncPersistence.
 """
 
 import asyncio
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import Mock, patch, AsyncMock
 
 from src.config import async_persistence
 from src.config.async_persistence import (
-    queue_user_update,
     _flush,
+    _log_batch_result,
+    _log_batch_start,
     _persist_batch,
+    async_update_user_in_config,
     cancel_pending_flush,
     flush_pending_updates,
-    async_update_user_in_config,
-    _log_batch_start,
-    _log_batch_result,
+    queue_user_update,
 )
-from tests.fixtures.config_fixtures import MOCK_USER_CONFIG
 
 
 class TestAsyncPersistence:
@@ -105,6 +105,7 @@ class TestAsyncPersistence:
     async def test_flush_should_process_pending_updates(self):
         """Test _flush processes all pending updates."""
         import time
+
         from src.config import async_persistence
         config_file = "test.conf"
         async_persistence._PENDING["testuser"] = ({"username": "testuser", "color": "#FF0000"}, time.time())
@@ -136,12 +137,12 @@ class TestAsyncPersistence:
         ]
         config_file = "test.conf"
 
-        with patch('src.config.async_persistence.update_user_in_config', return_value=True) as mock_update:
-            with patch('asyncio.get_event_loop') as mock_loop:
-                with patch('shutil.copy2') as mock_copy:
-                    with patch('os.remove') as mock_remove:
-                        mock_loop.return_value.run_in_executor = AsyncMock()
-                        failures = await _persist_batch(pending, config_file)
+        with patch('src.config.async_persistence.update_user_in_config', return_value=True), \
+             patch('asyncio.get_event_loop') as mock_loop, \
+             patch('shutil.copy2') as mock_copy, \
+             patch('os.remove') as mock_remove:
+            mock_loop.return_value.run_in_executor = AsyncMock()
+            failures = await _persist_batch(pending, config_file)
 
         assert failures == 0
         assert mock_loop.return_value.run_in_executor.call_count == 2
@@ -157,12 +158,11 @@ class TestAsyncPersistence:
         ]
         config_file = "test.conf"
 
-        with patch('src.config.async_persistence.update_user_in_config') as mock_update:
-            with patch('asyncio.get_event_loop') as mock_loop:
-                with patch('shutil.copy2') as mock_copy:
-                    with patch('os.remove') as mock_remove:
-                        mock_loop.return_value.run_in_executor = AsyncMock(side_effect=[True, False])
-                        failures = await _persist_batch(pending, config_file)
+        with patch('asyncio.get_event_loop') as mock_loop, \
+              patch('shutil.copy2') as mock_copy, \
+              patch('os.remove') as mock_remove:
+            mock_loop.return_value.run_in_executor = AsyncMock(side_effect=[True, False])
+            failures = await _persist_batch(pending, config_file)
 
         assert failures == 1
         # copy2 called twice: once for backup, once for rollback
@@ -175,10 +175,10 @@ class TestAsyncPersistence:
         pending = [{"username": "user1", "color": "#FF0000"}]
         config_file = "test.conf"
 
-        with patch('src.config.async_persistence.update_user_in_config', return_value=True) as mock_update:
-            with patch('asyncio.get_event_loop') as mock_loop:
-                mock_loop.return_value.run_in_executor = AsyncMock()
-                await _persist_batch(pending, config_file)
+        with patch('src.config.async_persistence.update_user_in_config', return_value=True), \
+             patch('asyncio.get_event_loop') as mock_loop:
+            mock_loop.return_value.run_in_executor = AsyncMock()
+            await _persist_batch(pending, config_file)
 
         # Verify the lock context was used (hard to test directly, but ensure no exceptions)
 
@@ -206,6 +206,7 @@ class TestAsyncPersistence:
     async def test_flush_pending_updates_should_force_flush(self):
         """Test flush_pending_updates forces immediate flush."""
         import time
+
         from src.config import async_persistence
         config_file = "test.conf"
         async_persistence._PENDING["testuser"] = ({"username": "testuser", "color": "#FF0000"}, time.time())
@@ -223,10 +224,10 @@ class TestAsyncPersistence:
         user_config = {"username": "testuser", "color": "#FF0000"}
         config_file = "test.conf"
 
-        with patch('src.config.async_persistence.update_user_in_config', return_value=True) as mock_update:
-            with patch('asyncio.get_event_loop') as mock_loop:
-                mock_loop.return_value.run_in_executor = AsyncMock(return_value=True)
-                result = await async_update_user_in_config(user_config, config_file)
+        with patch('src.config.async_persistence.update_user_in_config', return_value=True), \
+             patch('asyncio.get_event_loop') as mock_loop:
+            mock_loop.return_value.run_in_executor = AsyncMock(return_value=True)
+            result = await async_update_user_in_config(user_config, config_file)
 
         assert result is True
         mock_loop.return_value.run_in_executor.assert_called_once()
@@ -237,10 +238,10 @@ class TestAsyncPersistence:
         user_config = {"username": "testuser", "color": "#FF0000"}
         config_file = "test.conf"
 
-        with patch('src.config.async_persistence.update_user_in_config', return_value=True) as mock_update:
-            with patch('asyncio.get_event_loop') as mock_loop:
-                mock_loop.return_value.run_in_executor = AsyncMock(return_value=True)
-                await async_update_user_in_config(user_config, config_file)
+        with patch('src.config.async_persistence.update_user_in_config', return_value=True), \
+             patch('asyncio.get_event_loop') as mock_loop:
+            mock_loop.return_value.run_in_executor = AsyncMock(return_value=True)
+            await async_update_user_in_config(user_config, config_file)
 
         # Lock usage is implicit in the async with block
 
@@ -298,16 +299,14 @@ class TestAsyncPersistence:
             await asyncio.sleep(0.01)  # Small delay to test concurrency
             return await _persist_batch(pending, config_file)
 
-        with patch('src.config.async_persistence.update_user_in_config', return_value=True) as mock_update:
-            with patch('asyncio.get_event_loop') as mock_loop:
-                with patch('shutil.copy2') as mock_copy:
-                    with patch('os.remove') as mock_remove:
-                        mock_loop.return_value.run_in_executor = AsyncMock()
-                        # Run concurrent persists
-                        results = await asyncio.gather(
-                            persist_with_delay(pending1),
-                            persist_with_delay(pending2)
-                        )
+        with patch('src.config.async_persistence.update_user_in_config', return_value=True), \
+              patch('asyncio.get_event_loop') as mock_loop:
+            mock_loop.return_value.run_in_executor = AsyncMock()
+            # Run concurrent persists
+            results = await asyncio.gather(
+                persist_with_delay(pending1),
+                persist_with_delay(pending2)
+            )
 
         # Both should succeed without deadlocks
         assert results == [0, 0]
@@ -319,18 +318,18 @@ class TestAsyncPersistence:
         config_file = "test.conf"
 
         # Mock sleep to speed up test
-        with patch('asyncio.sleep', new_callable=AsyncMock) as mock_sleep:
-            with patch('src.config.async_persistence._persist_batch', new_callable=AsyncMock) as mock_persist:
-                mock_persist.return_value = 0
+        with patch('asyncio.sleep', new_callable=AsyncMock) as mock_sleep, \
+             patch('src.config.async_persistence._persist_batch', new_callable=AsyncMock) as mock_persist:
+            mock_persist.return_value = 0
 
-                # Queue update
-                await queue_user_update({"username": "testuser", "color": "#FF0000"}, config_file)
+            # Queue update
+            await queue_user_update({"username": "testuser", "color": "#FF0000"}, config_file)
 
-                # Wait for flush to complete
-                await async_persistence._FLUSH_TASK
+            # Wait for flush to complete
+            await async_persistence._FLUSH_TASK
 
-                mock_sleep.assert_called_once()
-                mock_persist.assert_called_once()
+            mock_sleep.assert_called_once()
+            mock_persist.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_error_in_persist_should_be_handled_gracefully(self):
@@ -338,11 +337,10 @@ class TestAsyncPersistence:
         pending = [{"username": "user1", "color": "#FF0000"}]
         config_file = "test.conf"
 
-        with patch('asyncio.get_event_loop') as mock_loop:
-            with patch('shutil.copy2') as mock_copy:
-                with patch('os.remove') as mock_remove:
-                    mock_loop.return_value.run_in_executor = AsyncMock(side_effect=Exception("IO Error"))
-                    failures = await _persist_batch(pending, config_file)
+        with patch('asyncio.get_event_loop') as mock_loop, \
+             patch('shutil.copy2') as mock_copy:
+            mock_loop.return_value.run_in_executor = AsyncMock(side_effect=Exception("IO Error"))
+            failures = await _persist_batch(pending, config_file)
 
         assert failures == 1
         mock_copy.assert_called()  # rollback called
@@ -356,12 +354,11 @@ class TestAsyncPersistence:
         ]
         config_file = "test.conf"
 
-        with patch('src.config.async_persistence.update_user_in_config') as mock_update:
-            with patch('asyncio.get_event_loop') as mock_loop:
-                with patch('shutil.copy2') as mock_copy:
-                    with patch('os.remove') as mock_remove:
-                        mock_loop.return_value.run_in_executor = AsyncMock(side_effect=[True, False])
-                        failures = await _persist_batch(pending, config_file)
+        with patch('asyncio.get_event_loop') as mock_loop, \
+             patch('shutil.copy2') as mock_copy, \
+             patch('os.remove') as mock_remove:
+            mock_loop.return_value.run_in_executor = AsyncMock(side_effect=[True, False])
+            failures = await _persist_batch(pending, config_file)
 
         assert failures == 1
         # copy2 called twice: once for backup, once for rollback
@@ -378,13 +375,12 @@ class TestAsyncPersistence:
         ]
         config_file = "test.conf"
 
-        with patch('src.config.async_persistence.update_user_in_config') as mock_update:
-            with patch('asyncio.get_event_loop') as mock_loop:
-                with patch('shutil.copy2') as mock_copy:
-                    with patch('os.remove') as mock_remove:
-                        # First fails, second and third succeed
-                        mock_loop.return_value.run_in_executor = AsyncMock(side_effect=[False, True, True])
-                        failures = await _persist_batch(pending, config_file)
+        with patch('asyncio.get_event_loop') as mock_loop, \
+             patch('shutil.copy2') as mock_copy, \
+             patch('os.remove') as mock_remove:
+            # First fails, second and third succeed
+            mock_loop.return_value.run_in_executor = AsyncMock(side_effect=[False, True, True])
+            failures = await _persist_batch(pending, config_file)
 
         assert failures == 1
         # copy2 called twice: once for backup, once for rollback (atomic rollback)
@@ -400,7 +396,7 @@ class TestAsyncPersistence:
         ]
         config_file = "test.conf"
 
-        with patch('shutil.copy2', side_effect=OSError("Backup failed")) as mock_copy:
+        with patch('shutil.copy2', side_effect=OSError("Backup failed")):
             failures = await _persist_batch(pending, config_file)
 
         assert failures == 2  # len(pending)
@@ -419,6 +415,7 @@ class TestAsyncPersistence:
     async def test_queue_user_update_should_clean_expired_entries(self):
         """Test queue_user_update cleans expired user lock entries."""
         import time
+
         from src.config import async_persistence
         config_file = "test.conf"
 
@@ -437,6 +434,7 @@ class TestAsyncPersistence:
     async def test_flush_should_filter_expired_entries(self):
         """Test _flush filters out expired entries before processing."""
         import time
+
         from src.config import async_persistence
         config_file = "test.conf"
 
@@ -458,6 +456,7 @@ class TestAsyncPersistence:
     async def test_user_lock_registry_memory_bounding(self):
         """Test that user lock registry memory is bounded by TTL cleanup."""
         import time
+
         from src.config import async_persistence
         config_file = "test.conf"
 

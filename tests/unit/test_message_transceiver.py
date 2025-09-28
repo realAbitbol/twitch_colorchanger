@@ -2,10 +2,9 @@
 Unit tests for MessageTransceiver.
 """
 
+from unittest.mock import AsyncMock, Mock
+
 import pytest
-import asyncio
-from unittest.mock import Mock, AsyncMock, patch
-import aiohttp
 
 from src.chat.message_transceiver import MessageTransceiver
 from src.errors.eventsub import EventSubConnectionError
@@ -92,7 +91,7 @@ class TestMessageTransceiver:
         """Test receive_message raises on timeout."""
         mock_ws = Mock()
         mock_ws.closed = False
-        mock_ws.receive = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_ws.receive = AsyncMock(side_effect=TimeoutError())
         self.connector.ws = mock_ws
 
         with pytest.raises(EventSubConnectionError) as exc_info:

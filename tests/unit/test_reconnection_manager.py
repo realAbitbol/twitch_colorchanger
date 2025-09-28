@@ -2,14 +2,13 @@
 Unit tests for ReconnectionManager.
 """
 
-import pytest
 import asyncio
-import asyncio as real_asyncio
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
 
 from src.chat.reconnection_manager import ReconnectionManager
 from src.errors.eventsub import EventSubConnectionError
-from src.utils.circuit_breaker import CircuitBreakerState
 
 
 class TestReconnectionManager:
@@ -162,9 +161,9 @@ class TestReconnectionManager:
         mock_ws.receive = AsyncMock(return_value=mock_msg)
         self.connector.ws = mock_ws
 
-        with patch('json.loads', return_value={"challenge": "wrong_challenge"}):
-            with pytest.raises(EventSubConnectionError):
-                await self.manager.handle_challenge("test_challenge")
+        with patch('json.loads', return_value={"challenge": "wrong_challenge"}), \
+             pytest.raises(EventSubConnectionError):
+            await self.manager.handle_challenge("test_challenge")
 
     def test_jitter_returns_min_when_equal(self):
         """Test _jitter returns min value when a == b."""

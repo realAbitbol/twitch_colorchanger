@@ -2,9 +2,10 @@
 Unit tests for HookManager.
 """
 
-import pytest
 import asyncio
-from unittest.mock import Mock, AsyncMock, call, patch
+from unittest.mock import Mock, patch
+
+import pytest
 
 from src.auth_token.hook_manager import HookManager
 
@@ -290,9 +291,9 @@ class TestHookManager:
         await self.hook_manager.register_update_hook("testuser", test_hook)
 
         # Act
-        with patch.object(self.hook_manager, '_create_retained_task', side_effect=ValueError("Task creation failed")):
-            with patch('src.auth_token.hook_manager.logging') as mock_logging:
-                await self.hook_manager.maybe_fire_update_hook("testuser", token_changed=True)
+        with patch.object(self.hook_manager, '_create_retained_task', side_effect=ValueError("Task creation failed")), \
+             patch('src.auth_token.hook_manager.logging') as mock_logging:
+            await self.hook_manager.maybe_fire_update_hook("testuser", token_changed=True)
 
         # Assert
         mock_logging.debug.assert_called_once()
@@ -312,9 +313,9 @@ class TestHookManager:
         await self.hook_manager.register_invalidation_hook("testuser", test_hook)
 
         # Act
-        with patch.object(self.hook_manager, '_create_retained_task', side_effect=RuntimeError("Task creation failed")):
-            with patch('src.auth_token.hook_manager.logging') as mock_logging:
-                await self.hook_manager.maybe_fire_invalidation_hook("testuser")
+        with patch.object(self.hook_manager, '_create_retained_task', side_effect=RuntimeError("Task creation failed")), \
+             patch('src.auth_token.hook_manager.logging') as mock_logging:
+            await self.hook_manager.maybe_fire_invalidation_hook("testuser")
 
         # Assert
         mock_logging.debug.assert_called_once()

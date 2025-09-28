@@ -2,9 +2,10 @@
 Unit tests for TokenSetupCoordinator.
 """
 
-import pytest
+from unittest.mock import AsyncMock, Mock, patch
+
 import aiohttp
-from unittest.mock import Mock, AsyncMock, patch
+import pytest
 
 from src.config.token_setup_coordinator import TokenSetupCoordinator
 
@@ -38,12 +39,12 @@ class TestTokenSetupCoordinator:
         mock_users[0].access_token = None
         mock_users[1].access_token = "existing_token"
 
-        with patch('aiohttp.ClientSession') as mock_session:
-            with patch.object(self.coordinator, '_process_single_user_tokens_dataclass') as mock_process:
-                mock_process.side_effect = [(True, mock_users[0]), (False, mock_users[1])]
+        with patch('aiohttp.ClientSession'), \
+             patch.object(self.coordinator, '_process_single_user_tokens_dataclass') as mock_process, \
+             patch.object(self.coordinator, '_save_updated_config_dataclass') as mock_save:
+            mock_process.side_effect = [(True, mock_users[0]), (False, mock_users[1])]
 
-                with patch.object(self.coordinator, '_save_updated_config_dataclass') as mock_save:
-                    result = await self.coordinator.setup_missing_tokens(mock_users, "test.conf")
+            result = await self.coordinator.setup_missing_tokens(mock_users, "test.conf")
 
         assert result == mock_users
         assert mock_process.call_count == 2
@@ -55,11 +56,11 @@ class TestTokenSetupCoordinator:
         mock_users = [Mock()]
         mock_users[0].access_token = "existing_token"
 
-        with patch('aiohttp.ClientSession'):
-            with patch.object(self.coordinator, '_process_single_user_tokens_dataclass') as mock_process:
-                mock_process.return_value = (False, mock_users[0])
+        with patch('aiohttp.ClientSession'), \
+             patch.object(self.coordinator, '_process_single_user_tokens_dataclass') as mock_process:
+            mock_process.return_value = (False, mock_users[0])
 
-                result = await self.coordinator.setup_missing_tokens(mock_users, "test.conf")
+            result = await self.coordinator.setup_missing_tokens(mock_users, "test.conf")
 
         assert result == mock_users
         # _save_updated_config_dataclass should not be called when no updates
@@ -237,9 +238,9 @@ class TestTokenSetupCoordinator:
         """Test _save_updated_config_dataclass calls saver correctly."""
         mock_users = [Mock(), Mock()]
 
-        with patch.object(self.coordinator.saver, 'save_users_to_config') as mock_save:
-            with patch('src.config.token_setup_coordinator.logging') as mock_logging:
-                self.coordinator._save_updated_config_dataclass(mock_users, "test.conf")
+        with patch.object(self.coordinator.saver, 'save_users_to_config') as mock_save, \
+             patch('src.config.token_setup_coordinator.logging') as mock_logging:
+            self.coordinator._save_updated_config_dataclass(mock_users, "test.conf")
 
         mock_save.assert_called_once()
         mock_logging.info.assert_called_once_with("💾 Tokens update saved")
@@ -248,8 +249,8 @@ class TestTokenSetupCoordinator:
         """Test _save_updated_config_dataclass handles save exceptions."""
         mock_users = [Mock()]
 
-        with patch.object(self.coordinator.saver, 'save_users_to_config', side_effect=OSError("Save failed")):
-            with patch('src.config.token_setup_coordinator.logging') as mock_logging:
-                self.coordinator._save_updated_config_dataclass(mock_users, "test.conf")
+        with patch.object(self.coordinator.saver, 'save_users_to_config', side_effect=OSError("Save failed")), \
+             patch('src.config.token_setup_coordinator.logging') as mock_logging:
+            self.coordinator._save_updated_config_dataclass(mock_users, "test.conf")
 
         mock_logging.error.assert_called_once()

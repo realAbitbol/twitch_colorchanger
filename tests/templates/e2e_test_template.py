@@ -7,11 +7,9 @@ E2E tests should test the application as a whole, including external dependencie
 Copy this template and customize for your specific E2E scenario.
 """
 
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import Mock, patch
-import asyncio
-import tempfile
-import os
 
 # Import main application components
 # from src.main import Application

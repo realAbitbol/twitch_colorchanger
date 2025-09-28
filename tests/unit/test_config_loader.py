@@ -2,8 +2,9 @@
 Unit tests for ConfigLoader.
 """
 
-import pytest
 from unittest.mock import Mock, patch
+
+import pytest
 
 from src.config.config_loader import ConfigLoader
 from src.config.repository import ConfigRepository
@@ -47,10 +48,10 @@ class TestConfigLoader:
         """Test get_configuration uses TWITCH_CONF_FILE environment variable."""
         mock_users = [{"username": "testuser", "color": "#FF0000", "token": "token123", "enabled": True}]
 
-        with patch.object(self.loader, 'load_users_from_config', return_value=mock_users) as mock_load:
-            with patch.object(self.loader.validator, 'validate_and_filter_users_to_dataclasses', return_value=[Mock()]) as mock_validate:
-                with patch('src.config.config_loader.logging') as mock_logging:
-                    result = self.loader.get_configuration()
+        with patch.object(self.loader, 'load_users_from_config', return_value=mock_users) as mock_load, \
+             patch.object(self.loader.validator, 'validate_and_filter_users_to_dataclasses', return_value=[Mock()]), \
+             patch('src.config.config_loader.logging'):
+            result = self.loader.get_configuration()
 
         mock_load.assert_called_once_with('custom.conf')
         assert result is not None
@@ -59,21 +60,21 @@ class TestConfigLoader:
         """Test get_configuration uses default config file when no env var."""
         mock_users = [{"username": "testuser", "color": "#FF0000", "token": "token123", "enabled": True}]
 
-        with patch.object(self.loader, 'load_users_from_config', return_value=mock_users) as mock_load:
-            with patch.object(self.loader.validator, 'validate_and_filter_users_to_dataclasses', return_value=[Mock()]) as mock_validate:
-                with patch('src.config.config_loader.logging') as mock_logging:
-                    result = self.loader.get_configuration()
+        with patch.object(self.loader, 'load_users_from_config', return_value=mock_users) as mock_load, \
+             patch.object(self.loader.validator, 'validate_and_filter_users_to_dataclasses', return_value=[Mock()]), \
+             patch('src.config.config_loader.logging'):
+            result = self.loader.get_configuration()
 
         mock_load.assert_called_once_with('twitch_colorchanger.conf')
         assert result is not None
 
     def test_get_configuration_exits_when_no_config_file(self):
         """Test get_configuration exits when no config file found."""
-        with patch('os.environ', {"TWITCH_CONF_FILE": "nonexistent.conf"}):
-            with patch.object(ConfigRepository, 'load_raw', return_value=[]):
-                with patch('src.config.config_loader.logging') as mock_logging:
-                    with pytest.raises(SystemExit):
-                        self.loader.get_configuration()
+        with patch('os.environ', {"TWITCH_CONF_FILE": "nonexistent.conf"}), \
+             patch.object(ConfigRepository, 'load_raw', return_value=[]), \
+             patch('src.config.config_loader.logging') as mock_logging, \
+             pytest.raises(SystemExit):
+            self.loader.get_configuration()
 
         mock_logging.error.assert_called()
 
@@ -81,11 +82,11 @@ class TestConfigLoader:
         """Test get_configuration exits when no valid users found."""
         mock_users = [{"username": "testuser"}]
 
-        with patch.object(self.loader, 'load_users_from_config', return_value=mock_users):
-            with patch.object(self.loader.validator, 'validate_and_filter_users_to_dataclasses', return_value=[]):
-                with patch('src.config.config_loader.logging') as mock_logging:
-                    with patch('sys.exit') as mock_exit:
-                        self.loader.get_configuration()
+        with patch.object(self.loader, 'load_users_from_config', return_value=mock_users), \
+             patch.object(self.loader.validator, 'validate_and_filter_users_to_dataclasses', return_value=[]), \
+             patch('src.config.config_loader.logging') as mock_logging, \
+             patch('sys.exit') as mock_exit:
+            self.loader.get_configuration()
 
         mock_logging.error.assert_called()
         mock_exit.assert_called_once_with(1)
@@ -95,10 +96,10 @@ class TestConfigLoader:
         mock_users = [{"username": "testuser", "color": "#FF0000", "token": "token123", "enabled": True}]
         mock_validated_users = [Mock()]
 
-        with patch.object(self.loader, 'load_users_from_config', return_value=mock_users):
-            with patch.object(self.loader.validator, 'validate_and_filter_users_to_dataclasses', return_value=mock_validated_users):
-                with patch('src.config.config_loader.logging') as mock_logging:
-                    result = self.loader.get_configuration()
+        with patch.object(self.loader, 'load_users_from_config', return_value=mock_users), \
+             patch.object(self.loader.validator, 'validate_and_filter_users_to_dataclasses', return_value=mock_validated_users), \
+             patch('src.config.config_loader.logging') as mock_logging:
+            result = self.loader.get_configuration()
 
         assert result == mock_validated_users
         mock_logging.info.assert_called_once()

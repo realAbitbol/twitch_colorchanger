@@ -2,8 +2,9 @@
 Unit tests for SubscriptionCoordinator.
 """
 
+from unittest.mock import AsyncMock, Mock, patch
+
 import pytest
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
 
 from src.chat.subscription_coordinator import SubscriptionCoordinator
 
@@ -321,9 +322,9 @@ class TestSubscriptionCoordinator:
         self.mock_backend._user_id = "user123"
 
         # Mock retry_async to return False on exception
-        with patch('src.chat.subscription_coordinator.retry_async', return_value=False):
-            with patch('src.chat.subscription_coordinator.logging') as mock_logging:
-                result = await self.coordinator._subscribe_channel_with_retry("123", "testchannel")
+        with patch('src.chat.subscription_coordinator.retry_async', return_value=False), \
+              patch('src.chat.subscription_coordinator.logging'):
+            result = await self.coordinator._subscribe_channel_with_retry("123", "testchannel")
 
         # Assert
         assert result is False

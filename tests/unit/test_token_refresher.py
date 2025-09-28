@@ -2,12 +2,13 @@
 Unit tests for TokenRefresher.
 """
 
-import pytest
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
+
+from src.auth_token.client import RefreshErrorType, TokenOutcome, TokenResult
 from src.auth_token.token_refresher import TokenRefresher
-from src.auth_token.client import TokenOutcome, RefreshErrorType, TokenResult
 from src.auth_token.types import TokenState
 
 
@@ -41,7 +42,7 @@ class TestTokenRefresher:
         """Test ensure_fresh returns VALID when token is fresh and not forced."""
         # Arrange
         mock_info = Mock()
-        mock_info.expiry = datetime.now(timezone.utc) + timedelta(hours=2)  # Well above threshold
+        mock_info.expiry = datetime.now(UTC) + timedelta(hours=2)  # Well above threshold
         self.mock_manager.tokens = {"testuser": mock_info}
 
         # Mock validator.remaining_seconds to return high value
@@ -59,13 +60,13 @@ class TestTokenRefresher:
         """Test ensure_fresh performs refresh when forced."""
         # Arrange
         mock_info = Mock()
-        mock_info.expiry = datetime.now(timezone.utc) + timedelta(hours=2)
+        mock_info.expiry = datetime.now(UTC) + timedelta(hours=2)
         mock_info.client_id = "client123"
         mock_info.client_secret = "secret123"
         self.mock_manager.tokens = {"testuser": mock_info}
 
         mock_client = AsyncMock()
-        mock_result = TokenResult(TokenOutcome.REFRESHED, "new_token", "new_refresh", datetime.now(timezone.utc) + timedelta(hours=1))
+        mock_result = TokenResult(TokenOutcome.REFRESHED, "new_token", "new_refresh", datetime.now(UTC) + timedelta(hours=1))
         self.mock_manager.client_cache.get_client = AsyncMock(return_value=mock_client)
 
         with patch.object(self.refresher, '_refresh_with_lock', new_callable=AsyncMock) as mock_refresh:
@@ -83,7 +84,7 @@ class TestTokenRefresher:
         """Test ensure_fresh performs and applies successful refresh."""
         # Arrange
         mock_info = Mock()
-        mock_info.expiry = datetime.now(timezone.utc) + timedelta(minutes=30)  # Below threshold
+        mock_info.expiry = datetime.now(UTC) + timedelta(minutes=30)  # Below threshold
         mock_info.client_id = "client123"
         mock_info.client_secret = "secret123"
         self.mock_manager.tokens = {"testuser": mock_info}
@@ -91,7 +92,7 @@ class TestTokenRefresher:
         self.mock_manager.validator.remaining_seconds.return_value = 1800  # 30 minutes
 
         mock_client = AsyncMock()
-        mock_result = TokenResult(TokenOutcome.REFRESHED, "new_token", "new_refresh", datetime.now(timezone.utc) + timedelta(hours=1))
+        mock_result = TokenResult(TokenOutcome.REFRESHED, "new_token", "new_refresh", datetime.now(UTC) + timedelta(hours=1))
         self.mock_manager.client_cache.get_client = AsyncMock(return_value=mock_client)
 
         with patch.object(self.refresher, '_refresh_with_lock', new_callable=AsyncMock) as mock_refresh:
@@ -132,7 +133,7 @@ class TestTokenRefresher:
         """Test _should_skip_refresh returns True when sufficient time remains."""
         # Arrange
         mock_info = Mock()
-        mock_info.expiry = datetime.now(timezone.utc) + timedelta(hours=2)
+        mock_info.expiry = datetime.now(UTC) + timedelta(hours=2)
         self.mock_manager.validator.remaining_seconds.return_value = 7200  # 2 hours
 
         # Act
@@ -145,7 +146,7 @@ class TestTokenRefresher:
         """Test _should_skip_refresh returns False when insufficient time remains."""
         # Arrange
         mock_info = Mock()
-        mock_info.expiry = datetime.now(timezone.utc) + timedelta(minutes=30)
+        mock_info.expiry = datetime.now(UTC) + timedelta(minutes=30)
         self.mock_manager.validator.remaining_seconds.return_value = 1800  # 30 minutes
 
         # Act
@@ -168,22 +169,22 @@ class TestTokenRefresher:
             TokenOutcome.REFRESHED,
             "new_token",
             "new_refresh",
-            datetime.now(timezone.utc) + timedelta(hours=1)
+            datetime.now(UTC) + timedelta(hours=1)
         )
         mock_client.ensure_fresh.return_value = mock_result
 
-        with patch.object(self.refresher, '_apply_successful_refresh') as mock_apply:
-            with patch.object(self.mock_manager.hook_manager, 'maybe_fire_update_hook', new_callable=AsyncMock) as mock_fire_update:
-                # Make the mock actually update the info
-                def update_info(info, result):
-                    info.access_token = result.access_token
-                    info.refresh_token = result.refresh_token
-                mock_apply.side_effect = update_info
+        with patch.object(self.refresher, '_apply_successful_refresh') as mock_apply, \
+             patch.object(self.mock_manager.hook_manager, 'maybe_fire_update_hook', new_callable=AsyncMock) as mock_fire_update:
+            # Make the mock actually update the info
+            def update_info(info, result):
+                info.access_token = result.access_token
+                info.refresh_token = result.refresh_token
+            mock_apply.side_effect = update_info
 
-                # Act
-                result, changed = await self.refresher._refresh_with_lock(
-                    mock_client, mock_info, "testuser", False
-                )
+            # Act
+            result, changed = await self.refresher._refresh_with_lock(
+                mock_client, mock_info, "testuser", False
+            )
 
         # Assert
         assert result == mock_result
@@ -203,12 +204,12 @@ class TestTokenRefresher:
         mock_result = TokenResult(TokenOutcome.FAILED, error_type=RefreshErrorType.NON_RECOVERABLE)
         mock_client.ensure_fresh.return_value = mock_result
 
-        with patch.object(self.mock_manager.hook_manager, 'maybe_fire_invalidation_hook', new_callable=AsyncMock) as mock_fire_invalidation:
-            with patch.object(self.mock_manager.hook_manager, 'maybe_fire_update_hook', new_callable=AsyncMock) as mock_fire_update:
-                # Act
-                result, changed = await self.refresher._refresh_with_lock(
-                    mock_client, mock_info, "testuser", False
-                )
+        with patch.object(self.mock_manager.hook_manager, 'maybe_fire_invalidation_hook', new_callable=AsyncMock) as mock_fire_invalidation, \
+             patch.object(self.mock_manager.hook_manager, 'maybe_fire_update_hook', new_callable=AsyncMock) as mock_fire_update:
+            # Act
+            result, changed = await self.refresher._refresh_with_lock(
+                mock_client, mock_info, "testuser", False
+            )
 
         # Assert
         assert result == mock_result
@@ -231,16 +232,16 @@ class TestTokenRefresher:
             TokenOutcome.REFRESHED,
             "same_token",  # Same as before
             "same_refresh",  # Same as before
-            datetime.now(timezone.utc) + timedelta(hours=1)
+            datetime.now(UTC) + timedelta(hours=1)
         )
         mock_client.ensure_fresh.return_value = mock_result
 
-        with patch.object(self.refresher, '_apply_successful_refresh'):
-            with patch.object(self.mock_manager.hook_manager, 'maybe_fire_update_hook', new_callable=AsyncMock) as mock_fire_update:
-                # Act
-                result, changed = await self.refresher._refresh_with_lock(
-                    mock_client, mock_info, "testuser", False
-                )
+        with patch.object(self.refresher, '_apply_successful_refresh'), \
+             patch.object(self.mock_manager.hook_manager, 'maybe_fire_update_hook', new_callable=AsyncMock) as mock_fire_update:
+            # Act
+            result, changed = await self.refresher._refresh_with_lock(
+                mock_client, mock_info, "testuser", False
+            )
 
         # Assert
         assert changed is False
@@ -254,7 +255,7 @@ class TestTokenRefresher:
             TokenOutcome.REFRESHED,
             "new_access",
             "new_refresh",
-            datetime(2023, 1, 1, 13, 0, 0, tzinfo=timezone.utc)
+            datetime(2023, 1, 1, 13, 0, 0, tzinfo=UTC)
         )
 
         # Act
@@ -263,7 +264,7 @@ class TestTokenRefresher:
         # Assert
         assert mock_info.access_token == "new_access"
         assert mock_info.refresh_token == "new_refresh"
-        assert mock_info.expiry == datetime(2023, 1, 1, 13, 0, 0, tzinfo=timezone.utc)
+        assert mock_info.expiry == datetime(2023, 1, 1, 13, 0, 0, tzinfo=UTC)
         assert mock_info.state == TokenState.FRESH
 
     def test_apply_successful_refresh_no_access_token(self):
@@ -275,7 +276,7 @@ class TestTokenRefresher:
             TokenOutcome.REFRESHED,
             None,  # No new access token
             "new_refresh",
-            datetime(2023, 1, 1, 13, 0, 0, tzinfo=timezone.utc)
+            datetime(2023, 1, 1, 13, 0, 0, tzinfo=UTC)
         )
 
         # Act
@@ -289,7 +290,7 @@ class TestTokenRefresher:
         """Test _apply_successful_refresh sets original_lifetime for REFRESHED outcome."""
         # Arrange
         mock_info = Mock()
-        mock_now = datetime(2023, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        mock_now = datetime(2023, 1, 1, 12, 0, 0, tzinfo=UTC)
         future_expiry = mock_now + timedelta(seconds=3600)
         mock_result = TokenResult(
             TokenOutcome.REFRESHED,

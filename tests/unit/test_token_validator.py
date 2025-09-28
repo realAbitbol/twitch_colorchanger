@@ -2,13 +2,14 @@
 Unit tests for TokenValidator.
 """
 
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, Mock, patch
+
 import pytest
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from datetime import datetime, timedelta, timezone
 from freezegun import freeze_time
 
-from src.auth_token.token_validator import TokenValidator
 from src.auth_token.client import TokenOutcome
+from src.auth_token.token_validator import TokenValidator
 
 
 class TestTokenValidator:
@@ -42,7 +43,7 @@ class TestTokenValidator:
         # Arrange
         mock_info = Mock()
         mock_info.last_validation = 1000.0  # Recent
-        mock_info.expiry = datetime.now(timezone.utc) + timedelta(hours=1)
+        mock_info.expiry = datetime.now(UTC) + timedelta(hours=1)
         self.mock_manager.tokens = {"testuser": mock_info}
 
         with patch('time.time', return_value=1001.0):  # Just over 1 second ago
@@ -73,14 +74,14 @@ class TestTokenValidator:
         # Arrange
         mock_info = Mock()
         mock_info.last_validation = 0
-        mock_info.expiry = datetime.now(timezone.utc) + timedelta(hours=1)
+        mock_info.expiry = datetime.now(UTC) + timedelta(hours=1)
         mock_info.client_id = "client123"
         mock_info.client_secret = "secret123"
         mock_info.access_token = "token123"
         self.mock_manager.tokens = {"testuser": mock_info}
 
         mock_client = AsyncMock()
-        mock_client._validate_remote.return_value = (True, datetime.now(timezone.utc) + timedelta(hours=2))
+        mock_client._validate_remote.return_value = (True, datetime.now(UTC) + timedelta(hours=2))
         self.mock_manager.client_cache.get_client = AsyncMock(return_value=mock_client)
 
         with patch('time.time', return_value=1000.0):
@@ -99,7 +100,7 @@ class TestTokenValidator:
         # Arrange
         mock_info = Mock()
         mock_info.last_validation = 0
-        mock_info.expiry = datetime.now(timezone.utc) + timedelta(hours=1)
+        mock_info.expiry = datetime.now(UTC) + timedelta(hours=1)
         mock_info.client_id = "client123"
         mock_info.client_secret = "secret123"
         mock_info.access_token = "token123"
@@ -121,7 +122,7 @@ class TestTokenValidator:
         """Test remaining_seconds calculates correctly with expiry."""
         # Arrange
         mock_info = Mock()
-        future_time = datetime.now(timezone.utc) + timedelta(seconds=3600)
+        future_time = datetime.now(UTC) + timedelta(seconds=3600)
         mock_info.expiry = future_time
 
         # Act
@@ -204,7 +205,7 @@ class TestTokenValidator:
         # Arrange
         mock_info = Mock()
         # Set expiry to 1 hour from frozen time
-        mock_info.expiry = datetime(2023, 1, 1, 13, 0, 0, tzinfo=timezone.utc)
+        mock_info.expiry = datetime(2023, 1, 1, 13, 0, 0, tzinfo=UTC)
 
         # Act
         result = self.validator.remaining_seconds(mock_info)

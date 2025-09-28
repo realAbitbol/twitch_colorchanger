@@ -3,8 +3,9 @@ Unit tests for ConnectionManager.
 """
 
 import asyncio
+from unittest.mock import AsyncMock, Mock, patch
+
 import pytest
-from unittest.mock import Mock, patch, AsyncMock, MagicMock
 
 from src.bot.connection_manager import ConnectionManager
 
@@ -351,8 +352,7 @@ class TestConnectionManager:
     async def test_attempt_reconnect_bounds_checking_prevents_infinite_loop(self):
         """Test _attempt_reconnect respects max_attempts parameter."""
         with patch.object(self.manager, 'initialize_connection', new_callable=AsyncMock) as mock_init, \
-             patch('asyncio.sleep') as mock_sleep, \
-             patch('src.bot.connection_manager.logging') as mock_logging:
+              patch('asyncio.sleep') as mock_sleep:
             mock_init.return_value = False
 
             await self.manager._attempt_reconnect(RuntimeError("test"), self.manager._listener_task_done, max_attempts=3)
@@ -462,9 +462,9 @@ class TestConnectionManager:
         mock_task.done.return_value = False
         self.manager.listener_task = mock_task
 
-        with patch('asyncio.wait_for', side_effect=asyncio.CancelledError):
-            with pytest.raises(asyncio.CancelledError):
-                await self.manager.wait_for_listener_task()
+        with patch('asyncio.wait_for', side_effect=asyncio.CancelledError), \
+             pytest.raises(asyncio.CancelledError):
+            await self.manager.wait_for_listener_task()
 
     @pytest.mark.asyncio
     async def test_wait_for_listener_task_other_error(self):

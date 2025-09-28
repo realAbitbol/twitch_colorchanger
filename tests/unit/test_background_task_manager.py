@@ -2,14 +2,14 @@
 Unit tests for BackgroundTaskManager.
 """
 
-import pytest
 import asyncio
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
 
 from src.auth_token.background_task_manager import BackgroundTaskManager
 from src.auth_token.client import TokenOutcome
-from src.auth_token.types import TokenState
 
 
 class TestBackgroundTaskManager:
@@ -103,8 +103,8 @@ class TestBackgroundTaskManager:
         self.mock_manager.tokens = {"user1": mock_info1, "user2": mock_info2}
 
         with patch.object(self.task_manager, '_process_single_background', new_callable=AsyncMock) as mock_process:
-            async def mock_wait_for(coro, timeout):
-                setattr(self.task_manager, 'running', False)
+            async def mock_wait_for(coro, timeout_param):
+                self.task_manager.running = False
                 if hasattr(coro, '__await__'):
                     task = asyncio.create_task(coro)
                     task.cancel()
@@ -130,14 +130,16 @@ class TestBackgroundTaskManager:
         self.mock_manager.tokens = {}
         self.mock_manager._paused_users = []
 
-        with patch('time.time', side_effect=[100, 103.5]):  # 3.5s drift
-            with patch.object(self.task_manager, '_process_single_background', new_callable=AsyncMock):
-                with patch('asyncio.wait_for', side_effect=lambda *args, **kwargs: None):
-                    # Stop after one iteration
-                    self.task_manager.running = False
+        with (
+            patch('time.time', side_effect=[100, 103.5]),  # 3.5s drift
+            patch.object(self.task_manager, '_process_single_background', new_callable=AsyncMock),
+            patch('asyncio.wait_for', side_effect=lambda *args, **kwargs: None)
+        ):
+            # Stop after one iteration
+            self.task_manager.running = False
 
-                    # Act
-                    await self.task_manager._background_refresh_loop()
+            # Act
+            await self.task_manager._background_refresh_loop()
 
         # Drift of 3.5s should trigger consecutive_drift increment
 
@@ -263,8 +265,10 @@ class TestBackgroundTaskManager:
         self.mock_manager.validator.validate = AsyncMock(return_value=TokenOutcome.VALID)
         self.mock_manager.validator.remaining_seconds.return_value = 3500
 
-        with patch('time.time', return_value=2000.0):
-            with patch('src.auth_token.background_task_manager.format_duration', return_value="58m"):
+        with (
+            patch('time.time', return_value=2000.0),
+            patch('src.auth_token.background_task_manager.format_duration', return_value="58m")
+        ):
                 # Act
                 result = await self.task_manager._maybe_periodic_or_unknown_resolution("testuser", mock_info, 3600)
 
@@ -363,8 +367,10 @@ class TestBackgroundTaskManager:
     def test_log_remaining_detail_logs_debug_info(self):
         """Test _log_remaining_detail logs appropriate debug information."""
         # Arrange
-        with patch('src.auth_token.background_task_manager.format_duration', return_value="1h 30m"):
-            with patch('src.auth_token.background_task_manager.logging') as mock_logging:
+        with (
+            patch('src.auth_token.background_task_manager.format_duration', return_value="1h 30m"),
+            patch('src.auth_token.background_task_manager.logging') as mock_logging
+        ):
                 # Act
                 self.task_manager._log_remaining_detail("testuser", 5400)
 
@@ -483,8 +489,8 @@ class TestBackgroundTaskManager:
         self.mock_manager._paused_users = []
 
         with patch.object(self.task_manager, '_process_single_background', new_callable=AsyncMock):
-            async def mock_wait_for(coro, timeout):
-                setattr(self.task_manager, 'running', False)
+            async def mock_wait_for(coro, timeout_param):
+                self.task_manager.running = False
                 if hasattr(coro, '__await__'):
                     task = asyncio.create_task(coro)
                     task.cancel()
@@ -514,8 +520,8 @@ class TestBackgroundTaskManager:
         with patch.object(self.task_manager, '_process_single_background', new_callable=AsyncMock) as mock_process:
             mock_process.side_effect = Exception("Processing failed")
 
-            async def mock_wait_for(coro, timeout):
-                setattr(self.task_manager, 'running', False)
+            async def mock_wait_for(coro, timeout_param):
+                self.task_manager.running = False
                 if hasattr(coro, '__await__'):
                     task = asyncio.create_task(coro)
                     task.cancel()

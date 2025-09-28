@@ -3,7 +3,6 @@ Fixtures for Twitch API responses and events.
 """
 
 import json
-from typing import Dict, Any
 
 # Mock Twitch EventSub message for color change
 MOCK_COLOR_CHANGE_MESSAGE = {

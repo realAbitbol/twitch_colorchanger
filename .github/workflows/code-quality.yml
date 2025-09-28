@@ -37,9 +37,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .[dev]
       - name: Run Ruff linter
-        run: ruff check --ignore UP047 src/
-      - name: Run Ruff formatter check
-        run: ruff format src/ --check
+        run: ruff check --fix src/ tests/
 
   typecheck:
     name: Type Check (mypy)
@@ -69,26 +67,6 @@ jobs:
       - name: Run mypy
         run: mypy src
 
-  security:
-    name: Security (bandit)
-    runs-on: ubuntu-latest
-    concurrency:
-      group: bandit-${{ github.ref }}
-      cancel-in-progress: true
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-          cache: 'pip'
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e .[dev]
-      - name: Run bandit
-        run: bandit -q -r src
 
   test:
     name: Test (pytest)

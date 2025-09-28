@@ -7,8 +7,9 @@ Unit tests should test isolated components without external dependencies.
 Copy this template and customize for your specific test case.
 """
 
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import Mock, patch, MagicMock
 
 # Import the module/class under test
 # from src.module import ClassOrFunction

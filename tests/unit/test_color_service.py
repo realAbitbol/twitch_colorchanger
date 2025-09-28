@@ -5,8 +5,9 @@ Tests the color change service functionality, including race condition fixes.
 """
 
 import asyncio
+from unittest.mock import MagicMock, Mock
+
 import pytest
-from unittest.mock import Mock, MagicMock
 
 from src.color.service import ColorChangeService
 

@@ -2,14 +2,13 @@
 Unit tests for ColorChanger class - focuses on cache functionality and memory leak fixes.
 """
 
-import asyncio
 import time
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from src.bot.color_changer import ColorChanger
-from src.color.models import ColorRequestResult, ColorRequestStatus
+from src.color.models import ColorRequestStatus
 
 
 class TestColorChangerCache:

@@ -2,10 +2,10 @@
 Unit tests for MessageCoordinator.
 """
 
-import pytest
-import json
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, Mock, patch
+
 import aiohttp
+import pytest
 
 from src.chat.message_coordinator import MessageCoordinator
 

@@ -2,10 +2,11 @@
 Unit tests for retry utilities.
 """
 
-import pytest
 from unittest.mock import patch
 
-from src.utils.retry import retry_async, RetryExhaustedError
+import pytest
+
+from src.utils.retry import RetryExhaustedError, retry_async
 
 
 class TestRetryAsync:
@@ -143,8 +144,6 @@ class TestRetryAsync:
     @pytest.mark.asyncio
     async def test_retry_async_backoff_timing(self) -> None:
         """Test exponential backoff timing."""
-        from unittest.mock import patch
-        import asyncio
 
         attempts = 0
         sleep_calls = []
@@ -156,7 +155,7 @@ class TestRetryAsync:
                 return None, True
             return "success", False
 
-        with patch('asyncio.sleep', side_effect=lambda x: sleep_calls.append(x)) as mock_sleep:
+        with patch('asyncio.sleep', side_effect=lambda x: sleep_calls.append(x)):
             result = await retry_async(operation, max_attempts=3)
             assert result == "success"
 

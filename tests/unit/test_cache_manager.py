@@ -4,11 +4,12 @@ Unit tests for CacheManager.
 Tests the asynchronous file-based cache manager with concurrency control.
 """
 
+import asyncio
 import json
 import os
 import tempfile
+
 import pytest
-from unittest.mock import patch
 
 from src.chat.cache_manager import CacheManager
 
@@ -122,8 +123,10 @@ class TestCacheManager:
 
             # Modify file externally (simulate external edit)
             external_data = {"key1": "modified_value", "key2": "new_value"}
-            with open(self.cache_file, 'w') as f:
-                json.dump(external_data, f, indent=2)
+            def _write():
+                with open(self.cache_file, 'w') as f:
+                    json.dump(external_data, f, indent=2)
+            await asyncio.to_thread(_write)
 
             # Get should return the modified value, not the cached one
             result = await cache.get("key1")
@@ -142,8 +145,10 @@ class TestCacheManager:
 
             # Modify file externally to remove the key
             external_data = {"key2": "value2"}
-            with open(self.cache_file, 'w') as f:
-                json.dump(external_data, f, indent=2)
+            def _write():
+                with open(self.cache_file, 'w') as f:
+                    json.dump(external_data, f, indent=2)
+            await asyncio.to_thread(_write)
 
             # contains should reflect the external change
             assert await cache.contains("key1") is False
@@ -159,8 +164,10 @@ class TestCacheManager:
 
             # Modify file externally
             external_data = {"key2": "value2", "key3": "value3"}
-            with open(self.cache_file, 'w') as f:
-                json.dump(external_data, f, indent=2)
+            def _write():
+                with open(self.cache_file, 'w') as f:
+                    json.dump(external_data, f, indent=2)
+            await asyncio.to_thread(_write)
 
             # keys should reflect the external change
             keys = await cache.keys()
@@ -173,8 +180,10 @@ class TestCacheManager:
             await cache.set("key1", "value1")
 
             # Corrupt the file
-            with open(self.cache_file, 'w') as f:
-                f.write("invalid json")
+            def _corrupt():
+                with open(self.cache_file, 'w') as f:
+                    f.write("invalid json")
+            await asyncio.to_thread(_corrupt)
 
             # Next operation should recover with empty cache
             result = await cache.get("key1")
@@ -184,8 +193,10 @@ class TestCacheManager:
     async def test_empty_file_handling(self):
         """Test handling of empty cache file."""
         # Create empty file
-        with open(self.cache_file, 'w') as f:
-            pass
+        def _create():
+            with open(self.cache_file, 'w'):
+                pass
+        await asyncio.to_thread(_create)
 
         async with CacheManager(self.cache_file) as cache:
             result = await cache.get("any_key")

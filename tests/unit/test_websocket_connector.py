@@ -2,8 +2,9 @@
 Unit tests for WebSocketConnector.
 """
 
+from unittest.mock import AsyncMock, Mock, patch
+
 import pytest
-from unittest.mock import Mock, AsyncMock, patch
 
 from src.chat.websocket_connector import WebSocketConnector
 from src.errors.eventsub import EventSubConnectionError

@@ -7,9 +7,9 @@ Integration tests can use real dependencies but should avoid external services.
 Copy this template and customize for your specific integration scenario.
 """
 
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import Mock, patch, AsyncMock
-import asyncio
 
 # Import modules under test
 # from src.module1 import Component1

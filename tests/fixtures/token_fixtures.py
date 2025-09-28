@@ -3,7 +3,7 @@ Fixtures for token-related data.
 """
 
 from datetime import datetime, timedelta
-from typing import Dict, Any
+from typing import Any
 
 # Mock valid token
 MOCK_VALID_TOKEN = {
@@ -48,7 +48,10 @@ MOCK_TOKEN_VALIDATION = {
     "expires_in": 3600
 }
 
-def get_mock_token(token_type: str = "valid") -> Dict[str, Any]:
+# Default token type for fixtures
+DEFAULT_TOKEN_TYPE = "valid"
+
+def get_mock_token(token_type: str = DEFAULT_TOKEN_TYPE) -> dict[str, Any]:
     """Get mock token data."""
     tokens = {
         "valid": MOCK_VALID_TOKEN,

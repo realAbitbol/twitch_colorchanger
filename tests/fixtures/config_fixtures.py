@@ -2,7 +2,7 @@
 Fixtures for configuration data.
 """
 
-from typing import Dict, Any, List
+from typing import Any
 
 # Mock user configuration
 MOCK_USER_CONFIG = {
@@ -67,7 +67,7 @@ users:
     enabled: false
 """
 
-def get_mock_config_as_dict(config_type: str = "full") -> Dict[str, Any]:
+def get_mock_config_as_dict(config_type: str = "full") -> dict[str, Any]:
     """Get mock configuration as dictionary."""
     configs = {
         "single": {"users": [MOCK_USER_CONFIG]},

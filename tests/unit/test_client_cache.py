@@ -2,8 +2,9 @@
 Unit tests for ClientCache.
 """
 
+from unittest.mock import Mock
+
 import pytest
-from unittest.mock import Mock, AsyncMock
 
 from src.auth_token.client_cache import ClientCache
 
