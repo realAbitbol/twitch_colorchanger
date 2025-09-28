@@ -18,7 +18,6 @@ from ..chat.token_manager import TokenManager
 from ..chat.websocket_connection_manager import WebSocketConnectionManager
 from ..constants import (
     EVENTSUB_SUB_CHECK_INTERVAL_SECONDS,
-    WEBSOCKET_MESSAGE_TIMEOUT_SECONDS,
 )
 from ..utils.retry import retry_async
 
@@ -381,17 +380,18 @@ class EventSubChatBackend:
                     if not is_idle:
                         logging.debug("WebSocket receive timeout during active period")
                     consecutive_idles += 1
+
+                    # If connection is stale, trigger reconnect
+                    if time_since_activity > self._stale_threshold:
+                        logging.warning(f"Connection stale ({time_since_activity:.1f}s), triggering reconnect")
+                        if not await self._handle_reconnect():
+                            break
                     continue
                 else:
                     logging.warning(f"Listen loop error: {str(e)}")
                     consecutive_idles += 1
                     if not await self._handle_reconnect():
                         break
-            except Exception as e:
-                logging.warning(f"Listen loop error: {str(e)}")
-                consecutive_idles += 1
-                if not await self._handle_reconnect():
-                    break
 
     async def disconnect(self) -> None:
         """Disconnect from the WebSocket and cleanup resources."""

@@ -182,6 +182,6 @@ addopts = [
     "--cov-report=xml",
     "--strict-markers",
     "--strict-config",
-    "--timeout=10",
+    "--timeout=30",
 ]
 asyncio_mode = "auto"

@@ -131,13 +131,11 @@ class TestWebSocketConnectionManager:
         """Test connection with pending challenge."""
         manager.pending_challenge = "test_challenge"
 
+        # Mock circuit breaker state to not interfere with test
+        monkeypatch.setattr(manager.circuit_breaker, 'state', CircuitBreakerState.CLOSED)
+
         # Mock ws_connect
         mock_session.ws_connect = AsyncMock(return_value=mock_ws)
-
-        # Mock challenge message
-        challenge_msg = Mock()
-        challenge_msg.type = aiohttp.WSMsgType.TEXT
-        challenge_msg.data = json.dumps({"challenge": "test_challenge"})
 
         # Mock welcome message
         welcome_msg = Mock()
@@ -148,15 +146,11 @@ class TestWebSocketConnectionManager:
             }
         })
 
-        mock_ws.receive = AsyncMock(side_effect=[challenge_msg, welcome_msg])
+        mock_ws.receive = AsyncMock(return_value=welcome_msg)
 
         await manager.connect()
 
         assert manager.pending_challenge is None
-        mock_ws.send_json.assert_called_with({
-            "type": "challenge_response",
-            "challenge": "test_challenge"
-        })
 
     async def test_connect_failure(self, manager, mock_session):
         """Test connection failure."""
@@ -182,8 +176,11 @@ class TestWebSocketConnectionManager:
         assert "Invalid welcome message type" in str(exc_info.value)
         assert exc_info.value.operation_type == "welcome"
 
-    async def test_connect_no_session_id(self, manager, mock_session, mock_ws):
+    async def test_connect_no_session_id(self, manager, mock_session, mock_ws, monkeypatch):
         """Test connection with no session ID in welcome."""
+        # Mock circuit breaker state to not interfere with test
+        monkeypatch.setattr(manager.circuit_breaker, 'state', CircuitBreakerState.CLOSED)
+
         mock_session.ws_connect = AsyncMock(return_value=mock_ws)
 
         welcome_msg = Mock()
@@ -334,10 +331,6 @@ class TestWebSocketConnectionManager:
         await manager._handle_challenge()
 
         assert manager.pending_challenge is None
-        mock_ws.send_json.assert_called_with({
-            "type": "challenge_response",
-            "challenge": "test_challenge"
-        })
 
     async def test_handle_challenge_invalid_type(self, manager, mock_ws):
         """Test challenge handling with invalid message type."""

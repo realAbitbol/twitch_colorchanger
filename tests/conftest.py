@@ -1,10 +1,18 @@
+import os
 import asyncio
 import atexit
 import logging
+import time
 
 import aiohttp
 import pytest
 import pytest_asyncio
+from unittest.mock import AsyncMock, patch
+
+# Set test-friendly defaults for constants that affect test performance
+os.environ.setdefault("TOKEN_MANAGER_BACKGROUND_BASE_SLEEP", "0")
+os.environ.setdefault("TOKEN_MANAGER_PERIODIC_VALIDATION_INTERVAL", "0")
+os.environ.setdefault("TOKEN_MANAGER_VALIDATION_MIN_INTERVAL", "0")
 
 # Track created aiohttp.ClientSession objects so we can close them at the end
 _CREATED_SESSIONS: set[aiohttp.ClientSession] = set()
@@ -88,6 +96,35 @@ async def _async_persistence_teardown():
     # Clear user locks to prevent lock pollution between tests
     async with _USER_LOCKS_LOCK:
         _USER_LOCKS.clear()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def patch_time_and_sleep():
+    """Global mocking of time functions and asyncio.sleep to eliminate delays in tests."""
+    def monotonic_mock():
+        if not hasattr(monotonic_mock, 'value'):
+            monotonic_mock.value = 0.0
+        monotonic_mock.value += 0.001  # Minimal passage
+        return monotonic_mock.value
+
+    def mock_time():
+        if not hasattr(mock_time, 'value'):
+            mock_time.value = 0.0
+        mock_time.value += 0.001  # Minimal passage
+        return mock_time.value
+
+    async def mock_sleep(delay, *args, **kwargs):
+        # Advance mocked time by the sleep delay to simulate time passage
+        if hasattr(mock_time, 'value'):
+            mock_time.value += delay
+        if hasattr(monotonic_mock, 'value'):
+            monotonic_mock.value += delay
+        return None
+
+    with patch('asyncio.sleep', side_effect=mock_sleep) as sleep_mock, \
+         patch('time.monotonic', side_effect=monotonic_mock) as mono_mock, \
+         patch('time.time', side_effect=mock_time) as time_mock:
+        yield
 
 
 # Redundant safeguard in case process terminates before fixture finalizer

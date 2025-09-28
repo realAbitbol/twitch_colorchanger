@@ -247,9 +247,10 @@ class TokenManager:
         if self.background_task:
             try:
                 self.background_task.cancel()
-                await self.background_task
+                # Don't wait for the task to complete - just cancel it
+                # The task will be cancelled when it next tries to sleep
             except (RuntimeError, OSError, ValueError) as e:
-                logging.error(f"Error awaiting cancelled background task: {e}")
+                logging.error(f"Error cancelling background task: {e}")
             finally:
                 self.background_task = None
 
@@ -850,14 +851,27 @@ class TokenManager:
                 last_loop = now
                 # Apply jitter to corrected sleep duration
                 jittered_sleep = sleep_duration * _jitter_rng.uniform(0.5, 1.5)
-                await asyncio.sleep(jittered_sleep)
 
+                # Use cancellable sleep to allow immediate shutdown
+                try:
+                    await asyncio.wait_for(asyncio.sleep(jittered_sleep), timeout=None)
+                except asyncio.CancelledError:
+                    # Re-raise to allow proper cancellation
+                    raise
+
+            except asyncio.CancelledError:
+                # Handle cancellation gracefully
+                logging.debug("Background token refresh loop cancelled")
+                raise
             except (RuntimeError, OSError, ValueError, aiohttp.ClientError) as e:
                 logging.error(f"💥 Background token manager loop error: {str(e)}")
                 # Reset drift correction on error
                 consecutive_drift = 0
                 drift_correction_applied = False
-                await asyncio.sleep(base * 2)
+                try:
+                    await asyncio.wait_for(asyncio.sleep(base * 2), timeout=None)
+                except asyncio.CancelledError:
+                    raise
 
     async def _process_single_background(
         self, username: str, info: TokenInfo, *, force_proactive: bool = False, drift_compensation: float = 0.0

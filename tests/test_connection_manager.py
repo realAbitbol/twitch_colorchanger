@@ -286,7 +286,8 @@ def test_listener_task_done_success(connection_manager, bot):
     # No logging expected
 
 
-def test_listener_task_done_exception(connection_manager, bot):
+@pytest.mark.asyncio
+async def test_listener_task_done_exception(connection_manager, bot):
     """Test _listener_task_done with exception."""
     task = MagicMock()
     task.cancelled.return_value = False

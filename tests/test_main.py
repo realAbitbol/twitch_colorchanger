@@ -254,10 +254,9 @@ def test_run_asyncio_cancelled_error():
 
 def test_run_top_level_exception():
     """Test run handles top level exception."""
-    with patch('asyncio.run', side_effect=Exception("Top level error")), \
-         patch('src.main.log_error') as mock_log_error, \
-         patch('sys.exit') as mock_exit:
+    with patch('src.main.main', side_effect=Exception("Top level error")), \
+           patch('src.main.log_error') as mock_log_error, \
+           patch('sys.exit') as mock_exit:
         run()
         mock_log_error.assert_called_once_with("Top-level error", ANY)
-        mock_exit.assert_called_once_with(1)
         mock_exit.assert_called_once_with(1)
