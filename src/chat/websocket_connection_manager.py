@@ -11,65 +11,49 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import secrets
 import time
-from enum import Enum
 from typing import Any
 
 import aiohttp
 
-from ..constants import (
-    EVENTSUB_JITTER_FACTOR,
-    EVENTSUB_MAX_BACKOFF_SECONDS,
-    EVENTSUB_RECONNECT_DELAY_SECONDS,
-    WEBSOCKET_HEARTBEAT_SECONDS,
-    WEBSOCKET_MESSAGE_TIMEOUT_SECONDS,
-)
 from ..errors.eventsub import EventSubConnectionError
 from ..utils.circuit_breaker import (
     CircuitBreakerConfig,
     CircuitBreakerOpenException,
     get_circuit_breaker,
 )
+from .connection_state_manager import ConnectionState, ConnectionStateManager
+from .message_transceiver import MessageTransceiver
 from .protocols import WebSocketConnectionManagerProtocol
+from .reconnection_manager import ReconnectionManager
+from .websocket_connector import WebSocketConnector
 
 EVENTSUB_WS_URL = "wss://eventsub.wss.twitch.tv/ws"
 
 WEBSOCKET_NOT_CONNECTED_ERROR = "WebSocket not connected"
 
 
-class ConnectionState(Enum):
-    """Enumeration of WebSocket connection states."""
-
-    DISCONNECTED = "disconnected"
-    CONNECTING = "connecting"
-    CONNECTED = "connected"
-    RECONNECTING = "reconnecting"
-
-
 class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
     """Manages WebSocket connections for Twitch EventSub.
 
-    This class handles the complete lifecycle of WebSocket connections including
-    establishment, handshake, session management, reconnection with exponential
-    backoff, connection state tracking, and challenge/response handling.
+    This class orchestrates WebSocket connection management through composition
+    of specialized components for connection, reconnection, messaging, and state tracking.
 
     Attributes:
         session (aiohttp.ClientSession): HTTP session for WebSocket connections.
         token (str): OAuth access token for authentication.
         client_id (str): Twitch client ID for authentication.
-        ws_url (str): Current WebSocket URL (may change via reconnect).
-        ws (aiohttp.ClientWebSocketResponse | None): Active WebSocket connection.
-        session_id (str | None): Current EventSub session ID.
-        pending_reconnect_session_id (str | None): Session ID for reconnect.
-        pending_challenge (str | None): Pending challenge for handshake.
-        connection_state (ConnectionState): Current connection state.
-        last_sequence (int | None): Last received message sequence number.
-        backoff (float): Current reconnect backoff time.
-        max_backoff (float): Maximum backoff time.
-        last_activity (float): Timestamp of last WebSocket activity.
+        connector (WebSocketConnector): Handles basic connection establishment and cleanup.
+        reconnection_manager (ReconnectionManager): Manages reconnection with backoff.
+        transceiver (MessageTransceiver): Handles sending and receiving messages.
+        state_manager (ConnectionStateManager): Tracks connection state and health.
         _stop_event (asyncio.Event): Event to signal shutdown.
         _reconnect_requested (bool): Flag for reconnect request.
+        _connection_count (int): Count of connection attempts for leak prevention.
+        _last_cleanup_time (float): Timestamp of last cleanup.
+        _cleanup_interval (float): Interval for periodic cleanup.
+        _max_connection_attempts (int): Maximum allowed connection attempts.
+        circuit_breaker: Circuit breaker for connection protection.
     """
 
     def __init__(
@@ -90,17 +74,14 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         self.session = session
         self.token = token
         self.client_id = client_id
-        self.ws_url = ws_url
-        self.ws: aiohttp.ClientWebSocketResponse | None = None
-        self.session_id: str | None = None
-        self.pending_reconnect_session_id: str | None = None
-        self.pending_challenge: str | None = None
-        self.connection_state = ConnectionState.DISCONNECTED
-        self.last_sequence: int | None = None
-        self.backoff = 1.0
-        self.max_backoff = EVENTSUB_MAX_BACKOFF_SECONDS
-        self.last_activity = time.monotonic()
+
+        # Compose specialized components
+        self.connector = WebSocketConnector(session, token, client_id, ws_url)
         self._stop_event = asyncio.Event()
+        self.reconnection_manager = ReconnectionManager(self.connector, self._stop_event)
+        self.state_manager = ConnectionStateManager(self.connector)
+        self.transceiver = MessageTransceiver(self.connector, self.state_manager.last_activity)
+
         self._reconnect_requested = False
 
         # Resource leak prevention
@@ -134,7 +115,16 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         Returns:
             bool: True if connected, False otherwise.
         """
-        return self.ws is not None and not self.ws.closed
+        return self.state_manager.is_connected
+
+    @property
+    def session_id(self) -> str | None:
+        """Get the current session ID.
+
+        Returns:
+            str | None: The session ID if connected, None otherwise.
+        """
+        return self.state_manager.session_id
 
     def is_healthy(self) -> bool:
         """Check if WebSocket connection is healthy and responsive.
@@ -142,28 +132,7 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         Returns:
             bool: True if connection is healthy, False otherwise.
         """
-        if not self.is_connected:
-            return False
-
-        # Check if connection state indicates health
-        if self.connection_state != ConnectionState.CONNECTED:
-            return False
-
-        # Check if session_id exists (indicates successful handshake)
-        if not self.session_id:
-            return False
-
-        # Check if we've received activity recently (within last 60 seconds)
-        # This helps detect stale connections
-        current_time = time.monotonic()
-        time_since_activity = current_time - self.last_activity
-
-        # If no activity for more than 60 seconds, consider it potentially unhealthy
-        # but don't fail immediately as Twitch might just be quiet
-        if time_since_activity > 60.0:
-            logging.debug(f"WebSocket has been inactive for {time_since_activity:.1f}s")
-
-        return True
+        return self.state_manager.is_healthy()
 
     async def connect(self) -> None:
         """Establish WebSocket connection and perform handshake.
@@ -184,39 +153,28 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
 
         async def _perform_connection() -> None:
             """Internal connection logic wrapped by circuit breaker."""
-            self.connection_state = ConnectionState.CONNECTING
+            self.state_manager.connection_state = ConnectionState.CONNECTING
             self._connection_count += 1
 
             try:
-                # Clean up any existing connection first
-                await self._cleanup_connection()
-
-                headers = {
-                    "Client-Id": self.client_id,
-                    "Authorization": f"Bearer {self.token}",
-                }
-                self.ws = await self.session.ws_connect(
-                    self.ws_url,
-                    heartbeat=WEBSOCKET_HEARTBEAT_SECONDS,
-                    headers=headers,
-                    protocols=("twitch-eventsub-ws",),
-                )
-                logging.info(f"🔌 WebSocket connected to {self.ws_url}")
+                # Establish connection
+                await self.connector.connect()
+                logging.info(f"🔌 WebSocket connected to {self.connector.ws_url}")
 
                 # Handle challenge if needed
-                if self.pending_challenge:
-                    await self._handle_challenge()
+                if self.state_manager.pending_challenge:
+                    await self.reconnection_manager.handle_challenge(self.state_manager.pending_challenge)
 
                 # Process welcome message
                 await self._process_welcome()
 
-                self.connection_state = ConnectionState.CONNECTED
+                self.state_manager.connection_state = ConnectionState.CONNECTED
                 logging.info(
-                    f"✅ WebSocket handshake complete, session_id: {self.session_id}"
+                    f"✅ WebSocket handshake complete, session_id: {self.state_manager.session_id}"
                 )
 
             except Exception as e:
-                self.connection_state = ConnectionState.DISCONNECTED
+                self.state_manager.connection_state = ConnectionState.DISCONNECTED
                 if isinstance(e, EventSubConnectionError):
                     raise
                 raise EventSubConnectionError(
@@ -237,9 +195,7 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         Args:
             new_url (str): The new WebSocket URL to use.
         """
-        if new_url and new_url != self.ws_url:
-            logging.info(f"🔄 Updating WebSocket URL from {self.ws_url} to {new_url}")
-            self.ws_url = new_url
+        self.state_manager.update_url(new_url)
 
     async def disconnect(self) -> None:
         """Disconnect from WebSocket and cleanup resources.
@@ -247,24 +203,9 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         Closes the WebSocket connection gracefully and clears state.
         """
         self._stop_event.set()
-        self.connection_state = ConnectionState.DISCONNECTED
-        await self._cleanup_connection()
+        self.state_manager.connection_state = ConnectionState.DISCONNECTED
+        await self.connector.disconnect()
         self._connection_count = 0
-
-    async def _cleanup_connection(self) -> None:
-        """Clean up the current WebSocket connection and resources."""
-        if self.ws and not self.ws.closed:
-            try:
-                await self.ws.close(code=1000)
-                logging.info("🔌 WebSocket disconnected")
-            except Exception as e:
-                logging.warning(f"⚠️ WebSocket close error: {str(e)}")
-        self.ws = None
-        self.session_id = None
-        self.pending_reconnect_session_id = None
-        self.pending_challenge = None
-        self.last_sequence = None
-        self.last_activity = time.monotonic()
 
     def _should_cleanup(self) -> bool:
         """Check if periodic cleanup should run."""
@@ -283,11 +224,12 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         self._last_cleanup_time = time.monotonic()
 
         # Force cleanup if connection is stale
-        if self.ws and not self.ws.closed:
+        if self.connector.ws and not self.connector.ws.closed:
             current_time = time.monotonic()
-            if current_time - self.last_activity > 300.0:  # 5 minutes
+            if current_time - self.state_manager.last_activity > 300.0:  # 5 minutes
                 logging.info("🧹 Cleaning up stale WebSocket connection")
-                await self._cleanup_connection()
+                await self.connector.cleanup_connection()
+                self.state_manager.last_activity = time.monotonic()
 
     async def send_json(self, data: dict[str, Any]) -> None:
         """Send JSON data over WebSocket.
@@ -298,22 +240,7 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         Raises:
             EventSubConnectionError: If not connected or send fails.
         """
-        if not self.is_connected:
-            raise EventSubConnectionError(
-                WEBSOCKET_NOT_CONNECTED_ERROR, operation_type="send"
-            )
-
-        try:
-            if self.ws is None:
-                raise EventSubConnectionError(
-                    WEBSOCKET_NOT_CONNECTED_ERROR, operation_type="send"
-                )
-            await self.ws.send_json(data)
-            self.last_activity = time.monotonic()
-        except Exception as e:
-            raise EventSubConnectionError(
-                f"WebSocket send failed: {str(e)}", operation_type="send"
-            ) from e
+        await self.transceiver.send_json(data)
 
     async def receive_message(self) -> aiohttp.WSMessage:
         """Receive a WebSocket message.
@@ -324,31 +251,7 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         Raises:
             EventSubConnectionError: If not connected or receive fails.
         """
-        if not self.is_connected:
-            raise EventSubConnectionError(
-                WEBSOCKET_NOT_CONNECTED_ERROR, operation_type="receive"
-            )
-
-        try:
-            if self.ws is None:
-                raise EventSubConnectionError(
-                    WEBSOCKET_NOT_CONNECTED_ERROR, operation_type="receive"
-                )
-            msg = await asyncio.wait_for(
-                self.ws.receive(), timeout=WEBSOCKET_MESSAGE_TIMEOUT_SECONDS
-            )
-            self.last_activity = time.monotonic()
-            return msg
-        except TimeoutError:
-            raise EventSubConnectionError(
-                "WebSocket receive timeout", operation_type="receive"
-            ) from TimeoutError()
-        except Exception as e:
-            if isinstance(e, EventSubConnectionError):
-                raise
-            raise EventSubConnectionError(
-                f"WebSocket receive failed: {str(e)}", operation_type="receive"
-            ) from e
+        return await self.transceiver.receive_message()
 
     async def reconnect(self) -> bool:
         """Request reconnection with backoff.
@@ -359,54 +262,12 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
             bool: True if reconnected successfully, False if abandoned.
         """
         self._reconnect_requested = True
-        self.connection_state = ConnectionState.RECONNECTING
-        return await self._reconnect_with_backoff()
-
-    async def _handle_challenge(self) -> None:
-        """Handle challenge/response handshake.
-
-        Waits for challenge message, verifies it, and sends response.
-
-        Raises:
-            EventSubConnectionError: If challenge handling fails.
-        """
-        if not self.ws or not self.pending_challenge:
-            return
-
-        logging.info(f"🔐 Handling challenge: {self.pending_challenge}")
-
-        try:
-            # Wait for challenge message
-            msg = await asyncio.wait_for(
-                self.ws.receive(), timeout=WEBSOCKET_MESSAGE_TIMEOUT_SECONDS
-            )
-
-            if msg.type != aiohttp.WSMsgType.TEXT:
-                raise EventSubConnectionError(
-                    "Invalid challenge message type", operation_type="challenge"
-                )
-
-            data = json.loads(msg.data)
-            received_challenge = data.get("challenge")
-
-            if received_challenge != self.pending_challenge:
-                raise EventSubConnectionError(
-                    "Challenge mismatch", operation_type="challenge"
-                )
-
-            # Send response
-            response = {"type": "challenge_response", "challenge": received_challenge}
-            await self.ws.send_json(response)
-
-            logging.info("✅ Challenge response sent")
-            self.pending_challenge = None
-
-        except Exception as e:
-            if isinstance(e, EventSubConnectionError):
-                raise
-            raise EventSubConnectionError(
-                f"Challenge handling failed: {str(e)}", operation_type="challenge"
-            ) from e
+        self.state_manager.connection_state = ConnectionState.RECONNECTING
+        success = await self.reconnection_manager.reconnect()
+        if success:
+            await self._process_welcome()
+            self.state_manager.connection_state = ConnectionState.CONNECTED
+        return success
 
     async def _process_welcome(self) -> None:
         """Process welcome message and extract session ID.
@@ -414,7 +275,7 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         Raises:
             EventSubConnectionError: If welcome processing fails.
         """
-        if not self.ws:
+        if not self.connector.ws:
             raise EventSubConnectionError(
                 "No WebSocket connection", operation_type="welcome"
             )
@@ -422,9 +283,7 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         try:
             # If challenge was handled, welcome might already be received
             # For simplicity, always wait for welcome
-            msg = await asyncio.wait_for(
-                self.ws.receive(), timeout=WEBSOCKET_MESSAGE_TIMEOUT_SECONDS
-            )
+            msg = await self.transceiver.receive_message()
 
             if msg.type != aiohttp.WSMsgType.TEXT:
                 raise EventSubConnectionError(
@@ -432,9 +291,9 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
                 )
 
             data = json.loads(msg.data)
-            self.session_id = data.get("payload", {}).get("session", {}).get("id")
+            self.state_manager.session_id = data.get("payload", {}).get("session", {}).get("id")
 
-            if not self.session_id:
+            if not self.state_manager.session_id:
                 raise EventSubConnectionError(
                     "No session ID in welcome", operation_type="welcome"
                 )
@@ -445,74 +304,3 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
             raise EventSubConnectionError(
                 f"Welcome processing failed: {str(e)}", operation_type="welcome"
             ) from e
-
-    def _jitter(self, a: float, b: float) -> float:
-        """Generate jitter for backoff timing.
-
-        Args:
-            a (float): Minimum value.
-            b (float): Maximum value.
-
-        Returns:
-            float: Random value between a and b.
-        """
-        if b <= a:
-            return a
-        span = b - a
-        r = secrets.randbelow(1000) / 1000.0
-        return a + r * span
-
-    async def _reconnect_with_backoff(self) -> bool:
-        """Reconnect with exponential backoff.
-
-        Attempts reconnection with increasing backoff times until successful
-        or stop event is set. Respects circuit breaker state to avoid
-        hammering failing endpoints.
-
-        Returns:
-            bool: True if reconnected successfully, False if abandoned.
-        """
-        attempt = 0
-        while not self._stop_event.is_set():
-            attempt += 1
-
-            # Check if circuit breaker is open before attempting connection
-            if self.circuit_breaker.is_open:
-                sleep_time = self.circuit_breaker.config.recovery_timeout
-                logging.info(
-                    f"⏸️ Circuit breaker open, waiting {sleep_time}s before retry"
-                )
-                await asyncio.sleep(sleep_time)
-                continue
-
-            try:
-                # Cleanup previous connection
-                await self.disconnect()
-
-                # Wait before reconnect
-                await asyncio.sleep(EVENTSUB_RECONNECT_DELAY_SECONDS)
-
-                logging.info(f"🔄 Reconnect attempt {attempt} to {self.ws_url}")
-
-                # Attempt connection (protected by circuit breaker)
-                await self.connect()
-
-                # Reset backoff on success
-                self.backoff = 1.0
-                self._reconnect_requested = False
-                self.connection_state = ConnectionState.CONNECTED
-                logging.info(f"✅ Reconnect successful on attempt {attempt}")
-                return True
-
-            except Exception as e:
-                logging.error(f"❌ Reconnect failed attempt {attempt}: {str(e)}")
-
-                # Apply backoff
-                sleep_time = self.backoff + self._jitter(
-                    0, EVENTSUB_JITTER_FACTOR * self.backoff
-                )
-                await asyncio.sleep(sleep_time)
-                self.backoff = min(self.backoff * 2, self.max_backoff)
-
-        logging.error("❌ Reconnect abandoned")
-        return False
