@@ -34,7 +34,7 @@ class TestReconnectionCoordinator:
             }
         }
 
-        mock_ws_manager = AsyncMock()
+        mock_ws_manager = Mock()
         self.mock_backend._ws_manager = mock_ws_manager
 
         # Act
@@ -158,15 +158,16 @@ class TestReconnectionCoordinator:
         mock_ws_manager.session_id = "new_session_123"
         self.mock_backend._ws_manager = mock_ws_manager
 
-        mock_sub_manager = AsyncMock()
+        mock_sub_manager = Mock()
+        mock_sub_manager.update_session_id = Mock(side_effect=lambda *args, **kwargs: None)
+        mock_sub_manager.unsubscribe_all = AsyncMock()
         self.mock_backend._sub_manager = mock_sub_manager
 
         mock_subscription_coordinator = AsyncMock()
         mock_subscription_coordinator.resubscribe_all_channels.return_value = True
         self.mock_backend._subscription_coordinator = mock_subscription_coordinator
 
-        with patch.object(self.coordinator, 'validate_connection_health', new_callable=AsyncMock) as mock_validate:
-            mock_validate.return_value = True
+        with patch.object(self.coordinator, 'validate_connection_health', AsyncMock(return_value=True)) as mock_validate:
 
             # Act
             with patch('src.chat.reconnection_coordinator.logging') as mock_logging:
@@ -239,6 +240,10 @@ class TestReconnectionCoordinator:
 
         self.mock_backend._ws_manager = mock_ws_manager
 
+        # Mock message coordinator to handle the message
+        mock_message_coordinator = AsyncMock()
+        self.mock_backend._message_coordinator = mock_message_coordinator
+
         # Act
         with patch('asyncio.wait_for', new_callable=AsyncMock) as mock_wait_for:
             mock_wait_for.return_value = mock_msg
@@ -248,6 +253,7 @@ class TestReconnectionCoordinator:
         # Assert
         assert result is True
         mock_logging.debug.assert_called()
+        mock_message_coordinator.handle_message.assert_called_once_with(mock_msg)
 
     @pytest.mark.asyncio
     async def test_validate_connection_health_handles_error_message(self):
@@ -305,3 +311,28 @@ class TestReconnectionCoordinator:
         # Assert
         assert result is False
         mock_logging.error.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_validate_connection_health_success_with_message_no_coordinator(self):
+        """Test validate_connection_health succeeds and logs warning when message coordinator is not initialized."""
+        # Arrange
+        mock_ws_manager = Mock()
+        mock_ws_manager.is_healthy.return_value = True
+
+        mock_msg = Mock()
+        mock_msg.type = aiohttp.WSMsgType.TEXT
+        mock_ws_manager.receive_message = AsyncMock(return_value=mock_msg)
+
+        self.mock_backend._ws_manager = mock_ws_manager
+        self.mock_backend._message_coordinator = None  # Explicitly set to None
+
+        # Act
+        with patch('asyncio.wait_for', new_callable=AsyncMock) as mock_wait_for:
+            mock_wait_for.return_value = mock_msg
+            with patch('src.chat.reconnection_coordinator.logging') as mock_logging:
+                result = await self.coordinator.validate_connection_health()
+
+        # Assert
+        assert result is True
+        mock_logging.warning.assert_called_once_with("MessageCoordinator not initialized, message discarded during health check")
+        mock_logging.debug.assert_called()

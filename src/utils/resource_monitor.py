@@ -53,6 +53,32 @@ class ResourceMetrics:
         memory_trend = recent[-1].memory_mb - recent[0].memory_mb
         return memory_trend > self.leak_threshold_mb
 
+    def detect_connection_leak(self) -> bool:
+        """Detect potential connection leaks."""
+        if len(self.snapshots) < 2:
+            return False
+
+        recent = self.snapshots[-3:] if len(self.snapshots) >= 3 else self.snapshots
+        if len(recent) < 2:
+            return False
+
+        # Check for increasing connections
+        connection_trend = recent[-1].connections - recent[0].connections
+        return connection_trend > 5  # More than 5 new connections over time
+
+    def detect_task_leak(self) -> bool:
+        """Detect potential asyncio task leaks."""
+        if len(self.snapshots) < 2:
+            return False
+
+        recent = self.snapshots[-3:] if len(self.snapshots) >= 3 else self.snapshots
+        if len(recent) < 2:
+            return False
+
+        # Check for increasing tasks
+        task_trend = recent[-1].asyncio_tasks - recent[0].asyncio_tasks
+        return task_trend > 10  # More than 10 new tasks over time
+
 
 class ResourceMonitor:
     """Monitor system resources and detect leaks."""
@@ -93,11 +119,32 @@ class ResourceMonitor:
                 snapshot = self._take_snapshot()
                 self.metrics.add_snapshot(snapshot)
 
-                # Check for leaks
+                # Check for leaks and trigger cleanup
+                leak_detected = False
+
                 if self.metrics.detect_memory_leak():
                     logging.warning(
                         f"🚨 Potential memory leak detected: {snapshot.memory_mb:.1f}MB"
                     )
+                    leak_detected = True
+                    await self._trigger_memory_cleanup()
+
+                if self.metrics.detect_connection_leak():
+                    logging.warning(
+                        f"🚨 Potential connection leak detected: {snapshot.connections} connections"
+                    )
+                    leak_detected = True
+                    await self._trigger_connection_cleanup()
+
+                if self.metrics.detect_task_leak():
+                    logging.warning(
+                        f"🚨 Potential task leak detected: {snapshot.asyncio_tasks} tasks"
+                    )
+                    leak_detected = True
+                    await self._trigger_task_cleanup()
+
+                if leak_detected:
+                    logging.info("🧹 Resource cleanup triggered due to detected leaks")
 
                 await asyncio.sleep(self.metrics.leak_check_interval)
             except Exception as e:
@@ -157,6 +204,43 @@ class ResourceMonitor:
         """Force garbage collection to help detect leaks."""
         gc.collect()
         logging.debug("🗑️ Forced garbage collection")
+
+    async def _trigger_memory_cleanup(self) -> None:
+        """Trigger memory cleanup when leak detected."""
+        try:
+            # Force garbage collection
+            self.force_garbage_collection()
+
+            # Log current memory usage
+            snapshot = self.get_latest_snapshot()
+            if snapshot:
+                logging.info(f"🧹 Memory cleanup triggered: {snapshot.memory_mb:.1f}MB used")
+
+        except Exception as e:
+            logging.error(f"Failed to trigger memory cleanup: {e}")
+
+    async def _trigger_connection_cleanup(self) -> None:
+        """Trigger connection cleanup when leak detected."""
+        try:
+            # This would need integration with connection managers
+            # For now, just log and force GC
+            self.force_garbage_collection()
+            logging.info("🧹 Connection cleanup triggered - check connection managers")
+
+        except Exception as e:
+            logging.error(f"Failed to trigger connection cleanup: {e}")
+
+    async def _trigger_task_cleanup(self) -> None:
+        """Trigger task cleanup when leak detected."""
+        try:
+            # Cancel any lingering tasks (this is dangerous, so be conservative)
+            current_tasks = asyncio.all_tasks()
+            if len(current_tasks) > 50:  # Only if many tasks
+                logging.warning(f"🧹 High task count detected: {len(current_tasks)} tasks")
+                # Don't cancel tasks automatically - just warn
+
+        except Exception as e:
+            logging.error(f"Failed to trigger task cleanup: {e}")
 
 
 # Global resource monitor instance

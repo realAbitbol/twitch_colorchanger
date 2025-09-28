@@ -49,12 +49,11 @@ class TokenValidator:
         valid, expiry = await client._validate_remote(  # noqa: SLF001
             username, info.access_token
         )
-        async with self.manager._tokens_lock:
-            info.last_validation = now
-            if valid:
-                info.expiry = expiry
-                return TokenOutcome.VALID
-            return TokenOutcome.FAILED
+        info.last_validation = now
+        if valid:
+            info.expiry = expiry
+            return TokenOutcome.VALID
+        return TokenOutcome.FAILED
 
     def remaining_seconds(self, info: TokenInfo) -> float | None:
         """Calculate remaining seconds until token expiry.

@@ -189,11 +189,6 @@ class ConfigRepository:
                 os.chmod(self.path, 0o600)
                 logging.info("💾 Config saved atomically")
         except (OSError, ValueError, RuntimeError) as e:
-            if temp_path and os.path.exists(temp_path):
-                try:
-                    os.unlink(temp_path)
-                except OSError:
-                    pass
             logging.error(f"💥 Atomic config save failed: {type(e).__name__}")
             raise
         finally:
@@ -201,6 +196,11 @@ class ConfigRepository:
                 os.unlink(lock_path)
             except OSError:
                 pass
+            if temp_path and os.path.exists(temp_path) and temp_path != self.path:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
 
     def _create_backup(self, config_path: Path) -> None:
         """Create a rotating backup of the configuration file.

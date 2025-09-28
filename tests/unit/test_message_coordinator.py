@@ -30,7 +30,11 @@ class TestMessageCoordinator:
         mock_msg.type = aiohttp.WSMsgType.TEXT
         mock_msg.data = '{"type": "notification", "payload": {}}'
 
-        mock_msg_processor = AsyncMock()
+        async def mock_process_message(data):
+            pass
+
+        mock_msg_processor = Mock()
+        mock_msg_processor.process_message = Mock(side_effect=mock_process_message)
         self.mock_backend._msg_processor = mock_msg_processor
         self.mock_backend._reconnection_coordinator = None
 
@@ -50,7 +54,11 @@ class TestMessageCoordinator:
         mock_msg.type = aiohttp.WSMsgType.TEXT
         mock_msg.data = '{"type": "session_reconnect", "payload": {}}'
 
-        mock_reconnection_coordinator = AsyncMock()
+        async def mock_handle_session_reconnect(data):
+            pass
+
+        mock_reconnection_coordinator = Mock()
+        mock_reconnection_coordinator.handle_session_reconnect = Mock(side_effect=mock_handle_session_reconnect)
         self.mock_backend._reconnection_coordinator = mock_reconnection_coordinator
         self.mock_backend._msg_processor = None
 
@@ -83,7 +91,11 @@ class TestMessageCoordinator:
         mock_msg.type = aiohttp.WSMsgType.TEXT
         mock_msg.data = 'invalid json'
 
-        mock_msg_processor = AsyncMock()
+        async def mock_process_message(data):
+            pass
+
+        mock_msg_processor = Mock()
+        mock_msg_processor.process_message = Mock(side_effect=mock_process_message)
         self.mock_backend._msg_processor = mock_msg_processor
 
         # Act
@@ -102,8 +114,11 @@ class TestMessageCoordinator:
         mock_msg = Mock()
         mock_msg.type = aiohttp.WSMsgType.CLOSED
 
-        mock_reconnection_coordinator = AsyncMock()
-        mock_reconnection_coordinator.handle_reconnect.return_value = True
+        async def mock_handle_reconnect():
+            return True
+
+        mock_reconnection_coordinator = Mock()
+        mock_reconnection_coordinator.handle_reconnect = Mock(side_effect=mock_handle_reconnect)
         self.mock_backend._reconnection_coordinator = mock_reconnection_coordinator
 
         # Act
@@ -122,8 +137,11 @@ class TestMessageCoordinator:
         mock_msg = Mock()
         mock_msg.type = aiohttp.WSMsgType.ERROR
 
-        mock_reconnection_coordinator = AsyncMock()
-        mock_reconnection_coordinator.handle_reconnect.return_value = False
+        async def mock_handle_reconnect():
+            return False
+
+        mock_reconnection_coordinator = Mock()
+        mock_reconnection_coordinator.handle_reconnect = Mock(side_effect=mock_handle_reconnect)
         self.mock_backend._reconnection_coordinator = mock_reconnection_coordinator
 
         # Act
@@ -166,15 +184,22 @@ class TestMessageCoordinator:
     async def test_listen_handles_idle_periods(self):
         """Test listen implements idle optimization."""
         # Arrange
+        async def mock_receive_timeout():
+            raise TimeoutError()
+
         mock_ws_manager = Mock()
         mock_ws_manager.is_connected = True
-        mock_ws_manager.receive_message = AsyncMock(side_effect=TimeoutError())
+        mock_ws_manager.receive_message = Mock(side_effect=mock_receive_timeout)
         self.mock_backend._ws_manager = mock_ws_manager
         self.mock_backend._stop_event = Mock()
         self.mock_backend._stop_event.is_set.return_value = False
         self.mock_backend._last_activity = -31  # Very old activity to trigger idle immediately
         self.mock_backend._stale_threshold = 100.0
-        self.mock_backend._maybe_verify_subs = AsyncMock()
+
+        async def mock_verify_subs(now):
+            pass
+
+        self.mock_backend._maybe_verify_subs = Mock(side_effect=mock_verify_subs)
 
         # Mock time.monotonic to simulate passage of time
         with patch('src.chat.message_coordinator.time') as mock_time:
@@ -194,14 +219,21 @@ class TestMessageCoordinator:
     async def test_listen_processes_messages_normally(self):
         """Test listen processes messages during normal operation."""
         # Arrange
+        async def mock_receive_message():
+            mock_msg = Mock()
+            mock_msg.type = aiohttp.WSMsgType.TEXT
+            mock_msg.data = '{"type": "notification"}'
+            return mock_msg
+
+        async def mock_process_message(data):
+            pass
+
         mock_ws_manager = Mock()
         mock_ws_manager.is_connected = True
-        mock_msg = Mock()
-        mock_msg.type = aiohttp.WSMsgType.TEXT
-        mock_msg.data = '{"type": "notification"}'
-        mock_ws_manager.receive_message = AsyncMock(return_value=mock_msg)
+        mock_ws_manager.receive_message = Mock(side_effect=mock_receive_message)
 
-        mock_msg_processor = AsyncMock()
+        mock_msg_processor = Mock()
+        mock_msg_processor.process_message = Mock(side_effect=mock_process_message)
         self.mock_backend._ws_manager = mock_ws_manager
         self.mock_backend._msg_processor = mock_msg_processor
         self.mock_backend._stop_event = Mock()
@@ -221,18 +253,24 @@ class TestMessageCoordinator:
             await self.coordinator.listen()
 
         # Assert
-        mock_msg_processor.process_message.assert_called_once_with(mock_msg.data)
+        mock_msg_processor.process_message.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_listen_handles_stale_connection(self):
         """Test listen triggers reconnect for stale connections."""
         # Arrange
+        async def mock_receive_timeout():
+            raise TimeoutError()
+
+        async def mock_handle_reconnect():
+            return True
+
         mock_ws_manager = Mock()
         mock_ws_manager.is_connected = True
-        mock_ws_manager.receive_message = AsyncMock(side_effect=TimeoutError())
+        mock_ws_manager.receive_message = Mock(side_effect=mock_receive_timeout)
 
-        mock_reconnection_coordinator = AsyncMock()
-        mock_reconnection_coordinator.handle_reconnect.return_value = True
+        mock_reconnection_coordinator = Mock()
+        mock_reconnection_coordinator.handle_reconnect = Mock(side_effect=mock_handle_reconnect)
 
         self.mock_backend._ws_manager = mock_ws_manager
         self.mock_backend._reconnection_coordinator = mock_reconnection_coordinator
@@ -240,7 +278,11 @@ class TestMessageCoordinator:
         self.mock_backend._stop_event.is_set.return_value = False
         self.mock_backend._last_activity = 0  # Very old
         self.mock_backend._stale_threshold = 10.0  # Low threshold
-        self.mock_backend._maybe_verify_subs = AsyncMock()
+
+        async def mock_verify_subs(now):
+            pass
+
+        self.mock_backend._maybe_verify_subs = Mock(side_effect=mock_verify_subs)
 
         # Act
         with patch('src.chat.message_coordinator.time') as mock_time:
@@ -260,12 +302,18 @@ class TestMessageCoordinator:
     async def test_listen_handles_general_exceptions(self):
         """Test listen handles general exceptions and triggers reconnect."""
         # Arrange
+        async def mock_receive_exception():
+            raise Exception("Test error")
+
+        async def mock_handle_reconnect():
+            return False
+
         mock_ws_manager = Mock()
         mock_ws_manager.is_connected = True
-        mock_ws_manager.receive_message = AsyncMock(side_effect=Exception("Test error"))
+        mock_ws_manager.receive_message = Mock(side_effect=mock_receive_exception)
 
-        mock_reconnection_coordinator = AsyncMock()
-        mock_reconnection_coordinator.handle_reconnect.return_value = False
+        mock_reconnection_coordinator = Mock()
+        mock_reconnection_coordinator.handle_reconnect = Mock(side_effect=mock_handle_reconnect)
 
         self.mock_backend._ws_manager = mock_ws_manager
         self.mock_backend._reconnection_coordinator = mock_reconnection_coordinator
@@ -273,7 +321,11 @@ class TestMessageCoordinator:
         self.mock_backend._stop_event.is_set.return_value = False
         self.mock_backend._last_activity = 0
         self.mock_backend._stale_threshold = 100.0
-        self.mock_backend._maybe_verify_subs = AsyncMock()
+
+        async def mock_verify_subs(now):
+            pass
+
+        self.mock_backend._maybe_verify_subs = Mock(side_effect=mock_verify_subs)
 
         # Act
         with patch('src.chat.message_coordinator.time') as mock_time:

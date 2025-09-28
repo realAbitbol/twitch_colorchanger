@@ -130,13 +130,16 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         self.last_color: str | None = None
 
         # Lazy/optional services
-        self._color_service: ColorChangeService | None = None
         self._last_color_change_payload: dict[str, Any] | None = None
+        self._hex_rejection_strikes = 0
 
         # Initialize composed components
         self.connection_manager: ConnectionManager = ConnectionManager(self)
         self.message_processor: MessageProcessor = MessageProcessor(self)
-        self.color_changer: ColorChanger = ColorChanger(self)
+        # Create ColorChanger first, then inject the service
+        self.color_changer: ColorChanger = ColorChanger(self, None)  # type: ignore
+        color_service = ColorChangeService(self.color_changer)
+        self.color_changer._color_service = color_service
         self.token_handler: TokenHandler = TokenHandler(self)
 
     async def start(self) -> None:

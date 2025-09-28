@@ -84,11 +84,13 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
 
         self._reconnect_requested = False
 
-        # Resource leak prevention
+        # Resource leak prevention and pooling
         self._connection_count = 0
         self._last_cleanup_time = time.monotonic()
         self._cleanup_interval = 300.0  # 5 minutes
         self._max_connection_attempts = 10
+        self._connection_pool: set[WebSocketConnectionManager] = set()
+        self._max_pool_size = 3  # Limit concurrent connections
 
         # Circuit breaker for WebSocket connections
         cb_config = CircuitBreakerConfig(
@@ -150,6 +152,11 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
             raise EventSubConnectionError(
                 "Too many connection attempts", operation_type="connect"
             )
+
+        # Check connection pool limits
+        if len(self._connection_pool) >= self._max_pool_size:
+            logging.warning(f"🚨 Connection pool full ({len(self._connection_pool)}/{self._max_pool_size}), cleaning up stale connections")
+            await self._cleanup_stale_connections()
 
         async def _perform_connection() -> None:
             """Internal connection logic wrapped by circuit breaker."""
@@ -230,6 +237,35 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
                 logging.info("🧹 Cleaning up stale WebSocket connection")
                 await self.connector.cleanup_connection()
                 self.state_manager.last_activity = time.monotonic()
+
+        # Clean up connection pool
+        await self._cleanup_stale_connections()
+
+    async def _cleanup_stale_connections(self) -> None:
+        """Clean up stale connections from the pool."""
+        current_time = time.monotonic()
+        stale_connections = []
+
+        # Find connections that haven't been active recently
+        stale_connections = [
+            conn for conn in self._connection_pool.copy()
+            if (hasattr(conn, 'state_manager') and conn.state_manager and
+                current_time - conn.state_manager.last_activity > 600.0)  # 10 minutes
+        ]
+
+        # Remove and cleanup stale connections
+        for conn in stale_connections:
+            try:
+                logging.info("🧹 Removing stale connection from pool")
+                self._connection_pool.discard(conn)
+                if conn.is_connected:
+                    await conn.disconnect()
+            except Exception as e:
+                logging.warning(f"Failed to cleanup stale connection: {e}")
+
+        # Log pool status
+        if len(self._connection_pool) > 0:
+            logging.debug(f"📊 Connection pool size: {len(self._connection_pool)}")
 
     async def send_json(self, data: dict[str, Any]) -> None:
         """Send JSON data over WebSocket.

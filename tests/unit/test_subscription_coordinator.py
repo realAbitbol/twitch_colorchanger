@@ -327,3 +327,120 @@ class TestSubscriptionCoordinator:
 
         # Assert
         assert result is False
+
+    @pytest.mark.asyncio
+    async def test_leave_channel_not_in_channels(self):
+        """Test leave_channel returns True when channel not in channels list."""
+        # Arrange
+        self.mock_backend._channels = ["otherchannel"]
+
+        # Act
+        result = await self.coordinator.leave_channel("testchannel")
+
+        # Assert
+        assert result is True
+        assert "testchannel" not in self.mock_backend._channels
+
+    @pytest.mark.asyncio
+    async def test_leave_channel_successful(self):
+        """Test leave_channel succeeds with proper unsubscription and removal."""
+        # Arrange
+        mock_sub_manager = Mock()
+        mock_sub_manager._active_subscriptions = {"sub123": "999"}
+        mock_sub_manager._unsubscribe_single = AsyncMock()
+        mock_channel_resolver = AsyncMock()
+        mock_channel_resolver.resolve_user_ids.return_value = {"testchannel": "999"}
+
+        self.mock_backend._sub_manager = mock_sub_manager
+        self.mock_backend._channel_resolver = mock_channel_resolver
+        self.mock_backend._channels = ["testchannel"]
+        self.mock_backend._token = "token123"
+        self.mock_backend._client_id = "client123"
+        self.mock_backend._username = "testuser"
+
+        # Act
+        with patch('src.chat.subscription_coordinator.logging') as mock_logging:
+            result = await self.coordinator.leave_channel("#TestChannel")
+
+        # Assert
+        assert result is True
+        assert "testchannel" not in self.mock_backend._channels
+        mock_channel_resolver.resolve_user_ids.assert_called_once_with(
+            ["testchannel"], "token123", "client123"
+        )
+        mock_sub_manager._unsubscribe_single.assert_called_once_with("sub123")
+        assert "sub123" not in mock_sub_manager._active_subscriptions
+        mock_logging.info.assert_called_once_with("✅ testuser left #testchannel")
+
+    @pytest.mark.asyncio
+    async def test_leave_channel_resolution_failure(self):
+        """Test leave_channel handles channel resolution failure but still removes from channels."""
+        # Arrange
+        mock_channel_resolver = AsyncMock()
+        mock_channel_resolver.resolve_user_ids.return_value = {}  # no channel_id
+
+        self.mock_backend._sub_manager = Mock()
+        self.mock_backend._channel_resolver = mock_channel_resolver
+        self.mock_backend._channels = ["testchannel"]
+        self.mock_backend._token = "token123"
+        self.mock_backend._client_id = "client123"
+        self.mock_backend._username = "testuser"
+
+        # Act
+        with patch('src.chat.subscription_coordinator.logging') as mock_logging:
+            result = await self.coordinator.leave_channel("testchannel")
+
+        # Assert
+        assert result is True
+        assert "testchannel" not in self.mock_backend._channels
+        mock_logging.info.assert_called_once_with("✅ testuser left #testchannel")
+
+    @pytest.mark.asyncio
+    async def test_leave_channel_unsubscription_failure(self):
+        """Test leave_channel handles unsubscription failure but still removes from channels."""
+        # Arrange
+        mock_sub_manager = Mock()
+        mock_sub_manager._active_subscriptions = {"sub123": "999"}
+        mock_sub_manager._unsubscribe_single = AsyncMock(side_effect=Exception("Unsub error"))
+        mock_channel_resolver = AsyncMock()
+        mock_channel_resolver.resolve_user_ids.return_value = {"testchannel": "999"}
+
+        self.mock_backend._sub_manager = mock_sub_manager
+        self.mock_backend._channel_resolver = mock_channel_resolver
+        self.mock_backend._channels = ["testchannel"]
+        self.mock_backend._token = "token123"
+        self.mock_backend._client_id = "client123"
+        self.mock_backend._username = "testuser"
+
+        # Act
+        with patch('src.chat.subscription_coordinator.logging') as mock_logging:
+            result = await self.coordinator.leave_channel("testchannel")
+
+        # Assert
+        assert result is True
+        assert "testchannel" not in self.mock_backend._channels
+        mock_sub_manager._unsubscribe_single.assert_called_once_with("sub123")
+        # Subscription remains in active_subscriptions since unsubscription failed
+        assert "sub123" in mock_sub_manager._active_subscriptions
+        mock_logging.warning.assert_called_once()
+        mock_logging.info.assert_called_once_with("✅ testuser left #testchannel")
+
+    @pytest.mark.asyncio
+    async def test_leave_channel_exception_handling(self):
+        """Test leave_channel handles exceptions and attempts to remove from channels."""
+        # Arrange
+        mock_channel_resolver = AsyncMock()
+        mock_channel_resolver.resolve_user_ids.side_effect = Exception("Resolution error")
+
+        self.mock_backend._sub_manager = Mock()
+        self.mock_backend._channel_resolver = mock_channel_resolver
+        self.mock_backend._channels = ["testchannel"]
+
+        # Act
+        with patch('src.chat.subscription_coordinator.logging') as mock_logging:
+            result = await self.coordinator.leave_channel("testchannel")
+
+        # Assert
+        assert result is False
+        assert "testchannel" not in self.mock_backend._channels
+        mock_logging.warning.assert_called_once()

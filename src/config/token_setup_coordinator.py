@@ -47,7 +47,10 @@ class TokenSetupCoordinator:
         updated_users: list[UserConfig] = []
         any_updates = False
 
-        async with aiohttp.ClientSession() as session:
+        # Configure timeouts for reliability: total 30s, connect 10s, read 20s
+        # Balances responsiveness with resilience for unattended operation
+        timeout = aiohttp.ClientTimeout(total=30.0, connect=10.0, sock_read=20.0, sock_connect=10.0)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             provisioner = TokenProvisioner(session)
             api = TwitchAPI(session)
             for user in users:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from ..utils.retry import retry_async
+from ..utils.retry import RetryExhaustedError, retry_async
 
 if TYPE_CHECKING:
     from .eventsub_backend import EventSubChatBackend
@@ -85,7 +85,10 @@ class SubscriptionCoordinator:
                 )
                 return False, True  # retry on exception
 
-        return await retry_async(subscribe_operation, max_attempts=5)
+        try:
+            return await retry_async(subscribe_operation, max_attempts=5)
+        except RetryExhaustedError:
+            return None
 
     async def join_channel(self, channel: str) -> bool:
         """Joins a channel and subscribes to its chat messages."""
@@ -117,4 +120,52 @@ class SubscriptionCoordinator:
 
         except Exception as e:
             logging.warning(f"Join channel failed: {str(e)}")
+            return False
+
+    async def leave_channel(self, channel: str) -> bool:
+        """Leaves a channel and unsubscribes from its chat messages."""
+        channel_l = channel.lstrip("#").lower()
+        if channel_l not in self.backend._channels:
+            return True
+
+        try:
+            # Resolve channel ID to find subscription
+            channel_id = None
+            if self.backend._channel_resolver:
+                user_ids = await self.backend._channel_resolver.resolve_user_ids(
+                    [channel_l], self.backend._token or "", self.backend._client_id or ""
+                )
+                channel_id = user_ids.get(channel_l)
+
+            # Find and unsubscribe from subscription
+            if self.backend._sub_manager and channel_id:
+                # Find subscription ID for this channel
+                sub_id_to_remove = None
+                for sub_id, active_channel_id in self.backend._sub_manager._active_subscriptions.items():
+                    if active_channel_id == channel_id:
+                        sub_id_to_remove = sub_id
+                        break
+
+                if sub_id_to_remove:
+                    try:
+                        await self.backend._sub_manager._unsubscribe_single(sub_id_to_remove)
+                        # Remove from active subscriptions
+                        del self.backend._sub_manager._active_subscriptions[sub_id_to_remove]
+                    except Exception as e:
+                        logging.warning(f"Failed to unsubscribe from {channel_l}: {str(e)}")
+                        # Continue with channel removal even if unsubscription fails
+
+            # Remove from channels list
+            self.backend._channels.remove(channel_l)
+            logging.info(f"✅ {self.backend._username} left #{channel_l}")
+            return True
+
+        except Exception as e:
+            logging.warning(f"Leave channel failed: {str(e)}")
+            # Still try to remove from channels if possible
+            try:
+                if channel_l in self.backend._channels:
+                    self.backend._channels.remove(channel_l)
+            except ValueError:
+                pass
             return False

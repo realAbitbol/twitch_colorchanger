@@ -22,6 +22,18 @@ if TYPE_CHECKING:
     from .manager import TokenInfo, TokenManager
 
 
+class TaskHealthStatus:
+    """Health status information for background tasks."""
+
+    def __init__(self) -> None:
+        self.last_success_time: float | None = None
+        self.last_failure_time: float | None = None
+        self.consecutive_failures = 0
+        self.total_failures = 0
+        self.is_healthy = True
+        self.last_error_message: str | None = None
+
+
 class BackgroundTaskManager:
     """Manages the background refresh loop and related operations."""
 
@@ -29,13 +41,15 @@ class BackgroundTaskManager:
         self.manager = manager
         self.task: asyncio.Task[Any] | None = None
         self.running = False
+        self.health = TaskHealthStatus()
+        self._health_lock = asyncio.Lock()
 
     async def start(self) -> None:
         """Start the background refresh loop."""
         if self.running:
             return
         # Defensive: if a previous background task is still lingering, cancel it
-        if self.task and not self.task.done:
+        if self.task and not self.task.done:  # type: ignore[truthy-function]
             logging.debug("Cancelling stale background task before restart")
             try:
                 self.task.cancel()
@@ -58,11 +72,47 @@ class BackgroundTaskManager:
         if self.task:
             try:
                 self.task.cancel()
-                # Don't wait for the task to complete
-            except (RuntimeError, OSError, ValueError) as e:
-                logging.error(f"Error cancelling background task: {e}")
+                # Wait for task to complete with timeout to ensure cleanup
+                await asyncio.wait_for(self.task, timeout=5.0)
+            except TimeoutError:
+                logging.warning("Background task did not complete within timeout")
+            except (RuntimeError, OSError, ValueError, asyncio.CancelledError) as e:
+                logging.debug(f"Expected error during background task cancellation: {e}")
             finally:
                 self.task = None
+
+    def get_health_status(self) -> TaskHealthStatus:
+        """Get current health status of background tasks."""
+        return self.health
+
+    async def _record_success(self) -> None:
+        """Record a successful background task execution."""
+        async with self._health_lock:
+            self.health.last_success_time = time.time()
+            self.health.consecutive_failures = 0
+            self.health.is_healthy = True
+            self.health.last_error_message = None
+
+    async def _record_failure(self, error: Exception) -> None:
+        """Record a failed background task execution."""
+        async with self._health_lock:
+            now = time.time()
+            self.health.last_failure_time = now
+            self.health.consecutive_failures += 1
+            self.health.total_failures += 1
+            self.health.last_error_message = str(error)
+
+            # Mark unhealthy after 3 consecutive failures
+            if self.health.consecutive_failures >= 3:
+                self.health.is_healthy = False
+                logging.error(
+                    f"🚨 Background task supervisor: Task marked unhealthy after {self.health.consecutive_failures} consecutive failures. "
+                    f"Last error: {self.health.last_error_message}"
+                )
+            else:
+                logging.warning(
+                    f"⚠️ Background task supervisor: Task failure #{self.health.consecutive_failures} - {self.health.last_error_message}"
+                )
 
     async def _background_refresh_loop(self) -> None:
         """Background loop for periodic token validation and refresh.
@@ -114,9 +164,10 @@ class BackgroundTaskManager:
 
                 async with self.manager._tokens_lock:
                     users = list(self.manager.tokens.items())
-                users = [(u, info) for u, info in users if u not in self.manager._paused_users]
+                    users = [(u, info) for u, info in users if u not in self.manager._paused_users]
 
                 # Enhanced proactive refresh with drift compensation
+                loop_success = True
                 for username, info in users:
                     try:
                         await self._process_single_background(
@@ -126,8 +177,15 @@ class BackgroundTaskManager:
                         logging.error(
                             f"💥 Error processing background refresh for user={username}: {str(e)} type={type(e).__name__}"
                         )
-                        # Continue with other users even if one fails
+                        # Continue with other users even if one fails, but mark loop as failed
+                        loop_success = False
                         continue
+
+                # Record success or failure for this loop iteration
+                if loop_success:
+                    await self._record_success()
+                else:
+                    await self._record_failure(Exception("One or more user background refreshes failed"))
 
                 last_loop = now
                 # Apply jitter to corrected sleep duration
@@ -146,6 +204,7 @@ class BackgroundTaskManager:
                 raise
             except (RuntimeError, OSError, ValueError, aiohttp.ClientError) as e:
                 logging.error(f"💥 Background token manager loop error: {str(e)}")
+                await self._record_failure(e)
                 # Reset drift correction on error
                 consecutive_drift = 0
                 drift_correction_applied = False

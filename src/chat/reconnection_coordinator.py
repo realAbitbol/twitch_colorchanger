@@ -130,6 +130,12 @@ class ReconnectionCoordinator:
                 logging.error("WebSocket connection has error during health validation")
                 return False
 
+            # Process the received message to avoid message loss
+            if self.backend._message_coordinator is not None:
+                await self.backend._message_coordinator.handle_message(msg)
+            else:
+                logging.warning("MessageCoordinator not initialized, message discarded during health check")
+
             # Connection is healthy and responsive
             logging.debug("WebSocket connection health validation passed")
             return True

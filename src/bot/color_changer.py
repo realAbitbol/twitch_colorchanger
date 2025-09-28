@@ -24,13 +24,15 @@ CHAT_COLOR_ENDPOINT = "chat/color"
 class ColorChanger:
     """Mixin class for handling color change logic and API calls."""
 
-    def __init__(self, bot: TwitchColorBot) -> None:
-        """Initialize the ColorChanger with a bot instance.
+    def __init__(self, bot: TwitchColorBot, color_service: ColorChangeService | None = None) -> None:
+        """Initialize the ColorChanger with a bot instance and optional color service.
 
         Args:
             bot: The TwitchColorBot instance this changer belongs to.
+            color_service: The ColorChangeService to use for color operations.
         """
         self.bot = bot
+        self._color_service = color_service
         # Initialize color cache
         self._init_color_cache()
 
@@ -75,13 +77,6 @@ class ColorChanger:
     def client_id(self) -> str:
         return self.bot.client_id
 
-    @property
-    def _color_service(self) -> ColorChangeService | None:
-        return self.bot._color_service
-
-    @_color_service.setter
-    def _color_service(self, value: ColorChangeService | None) -> None:
-        self.bot._color_service = value
 
     @property
     def last_color(self) -> str | None:
@@ -103,9 +98,25 @@ class ColorChanger:
     def use_random_colors(self) -> bool:
         return self.bot.use_random_colors
 
+    @use_random_colors.setter
+    def use_random_colors(self, value: bool) -> None:
+        self.bot.use_random_colors = value
+
     def _build_user_config(self) -> dict[str, Any]:
         """Build user configuration dictionary."""
         return self.bot._build_user_config()
+
+    @property
+    def _hex_rejection_strikes(self) -> int:
+        return self.bot._hex_rejection_strikes
+
+    @_hex_rejection_strikes.setter
+    def _hex_rejection_strikes(self, value: int) -> None:
+        self.bot._hex_rejection_strikes = value
+
+    async def _check_and_refresh_token(self, force: bool = False) -> bool:
+        """Check and refresh the access token if needed."""
+        return await self.bot._check_and_refresh_token(force)
 
     """Mixin class for handling color change logic and API calls."""
 
@@ -114,6 +125,17 @@ class ColorChanger:
         self._cache_lock = asyncio.Lock()
         self._current_color_cache: dict[str, dict[str, Any]] = {}
         self._cache_ttl = 30.0  # 30 seconds for current color cache
+        self._last_cleanup_time = 0.0
+
+    async def _cleanup_expired_cache_entries(self) -> None:
+        """Clean up expired entries from the color cache periodically."""
+        current_time = time.time()
+        if current_time - self._last_cleanup_time < self._cache_ttl / 2:
+            return
+        self._last_cleanup_time = current_time
+        expired = [k for k, v in self._current_color_cache.items() if current_time - v["timestamp"] > self._cache_ttl]
+        for k in expired:
+            del self._current_color_cache[k]
 
     async def on_persistent_prime_detection(self) -> None:
         """Persist that this user should not use random hex colors.
@@ -128,7 +150,7 @@ class ColorChanger:
         user_config["is_prime_or_turbo"] = False
         try:
             await queue_user_update(user_config, self.config_file)
-        except (ValueError, RuntimeError, OSError) as e:
+        except OSError as e:
             logging.warning(f"Persist detection error: {str(e)}")
 
     async def _prime_color_state(self) -> None:
@@ -210,8 +232,6 @@ class ColorChanger:
             aiohttp.ClientError,
             TimeoutError,
             ConnectionError,
-            ValueError,
-            RuntimeError,
         ):
             return None
 
@@ -275,6 +295,7 @@ class ColorChanger:
                     return cached["color"]
 
         async def operation(attempt):
+            await self._cleanup_expired_cache_entries()
             data, status_code = await self._make_color_request()
             result = self._process_color_response(data, status_code, attempt)
             should_retry = (
@@ -300,8 +321,6 @@ class ColorChanger:
             aiohttp.ClientError,
             TimeoutError,
             ConnectionError,
-            ValueError,
-            RuntimeError,
         ):
             return None
 
@@ -352,7 +371,7 @@ class ColorChanger:
 
     # --- Color change low-level request (expected by ColorChangeService) ---
     async def _perform_color_request(
-        self, params: dict[str, str], *, action: str
+        self, params: dict[str, str | None], *, action: str
     ) -> ColorRequestResult:  # noqa: D401
         """Issue a raw color change (PUT chat/color) returning structured result.
 
@@ -365,6 +384,7 @@ class ColorChanger:
         logging.debug(f"Performing color request action={action} user={self.username}")
 
         async def operation(attempt):
+            await self._cleanup_expired_cache_entries()
             if self.access_token is None:
                 return ColorRequestResult(
                     ColorRequestStatus.UNAUTHORIZED, error="No access token"
@@ -402,8 +422,6 @@ class ColorChanger:
             aiohttp.ClientError,
             TimeoutError,
             ConnectionError,
-            ValueError,
-            RuntimeError,
         ):
             return ColorRequestResult(
                 ColorRequestStatus.INTERNAL_ERROR, error="Max retries exceeded"
@@ -421,7 +439,7 @@ class ColorChanger:
         Returns:
             ColorRequestResult or None for retry.
         """
-        if status_code in (200, 204):
+        if 200 <= status_code < 300:
             return ColorRequestResult(
                 ColorRequestStatus.SUCCESS, http_status=status_code
             )
@@ -458,11 +476,8 @@ class ColorChanger:
         Returns:
             True if color change was successful.
         """
-        # Local import only when needed to avoid circular dependency at import time
         if self._color_service is None:
-            from ..color import ColorChangeService  # local import
-
-            self._color_service = ColorChangeService(self)
+            raise RuntimeError("ColorChangeService not initialized")
         return await self._color_service.change_color(hex_color)
 
     def _extract_color_error_snippet(self) -> str | None:

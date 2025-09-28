@@ -75,7 +75,7 @@ class HookManager:
         if not token_changed:
             return
         async with self._hooks_lock:
-            hooks = self._update_hooks.get(username) or []
+            hooks = list(self._update_hooks.get(username) or [])
         for hook in hooks:
             try:
                 # Delegate creation to helper so both Ruff and VS Code recognize
@@ -99,7 +99,7 @@ class HookManager:
             RuntimeError: If task creation fails.
         """
         async with self._hooks_lock:
-            hooks = self._invalidation_hooks.get(username) or []
+            hooks = list(self._invalidation_hooks.get(username) or [])
         for hook in hooks:
             try:
                 await self._create_retained_task(hook(), category="invalidation_hook")
@@ -130,7 +130,7 @@ class HookManager:
     async def _remove_hook_task(self, t: asyncio.Task[Any], category: str) -> None:
         """Remove a completed hook task from the retained tasks list.
 
-        Logs any exceptions from the task.
+        Logs any exceptions from the task with appropriate severity levels.
 
         Args:
             t: The asyncio Task to remove.
@@ -144,12 +144,11 @@ class HookManager:
         if not exc:
             return
         try:
-            logging.debug(
-                f"⚠️ Retained background task error category={category} error={str(exc)} type={type(exc).__name__}"
+            # Use warning level for hook task failures to surface them to operators
+            logging.warning(
+                f"⚠️ Background hook task failed category={category} error={str(exc)} type={type(exc).__name__}"
             )
         except Exception as log_exc:  # pragma: no cover
-            logging.debug(
-                "TokenManager retained task logging failed: %s (%s)",
-                log_exc,
-                type(log_exc).__name__,
+            logging.error(
+                f"🚨 Hook task logging failed: {log_exc} ({type(log_exc).__name__})"
             )

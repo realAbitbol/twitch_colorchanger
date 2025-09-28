@@ -7,9 +7,10 @@ sprinkling raw request logic across modules.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, cast
 
 import aiohttp
 
@@ -199,25 +200,42 @@ class TwitchAPI:
         headers = self._auth_headers(access_token, client_id)
         out: dict[str, str] = {}
         url = f"{self.BASE_URL}/users"
-        for part in self._chunk(deduped, 100):
-            params_list = [("login", c) for c in part]
-            async with self._session.get(
-                url, headers=headers, params=params_list
-            ) as resp:
-                import logging
+        # Semaphore for rate limiting to 5 concurrent requests
+        semaphore = asyncio.Semaphore(5)
 
-                logging.debug(
-                    f"🔍 Twitch API get_users status={resp.status} logins={part}"
-                )
-                rows = await self._safe_rows(resp)
-                logging.debug(
-                    f"📋 Twitch API get_users rows={len(rows)} for logins={part}"
-                )
-                for entry in rows:
-                    login = entry.get("login")
-                    uid = entry.get("id")
-                    if isinstance(login, str) and isinstance(uid, str):
-                        out[login.lower()] = uid
+        async def fetch_chunk(part):
+            async with semaphore:
+                params_list = [("login", c) for c in part]
+                async with self._session.get(
+                    url, headers=headers, params=params_list
+                ) as resp:
+                    logging.debug(
+                        f"🔍 Twitch API get_users status={resp.status} logins={part}"
+                    )
+                    rows = await self._safe_rows(resp)
+                    logging.debug(
+                        f"📋 Twitch API get_users rows={len(rows)} for logins={part}"
+                    )
+                    return rows
+
+        # Collect chunks
+        parts = list(self._chunk(deduped, 100))
+        # Create concurrent tasks
+        tasks = [fetch_chunk(part) for part in parts]
+        # Gather results, allowing individual failures
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Process results
+        for i, result in enumerate(results):
+            part = parts[i]
+            if isinstance(result, Exception):
+                logging.error(f"Failed to fetch chunk {part}: {result}")
+                continue
+            rows = cast(list[dict[str, Any]], result)
+            for entry in rows:
+                login = entry.get("login")
+                uid = entry.get("id")
+                if isinstance(login, str) and isinstance(uid, str):
+                    out[login.lower()] = uid
         return out
 
     # ---- internal helpers (kept simple to satisfy static checks) ----
@@ -293,11 +311,17 @@ class TwitchAPI:
             ValueError,
             RuntimeError,
             InternalError,
-        ):
+        ) as e:
+            logging.debug(f"Failed to parse Twitch API response JSON: {e}")
             return []
-        if resp.status != 200 or not isinstance(data, dict):
+        if resp.status != 200:
+            logging.debug(f"Twitch API response status {resp.status} != 200, returning empty rows")
+            return []
+        if not isinstance(data, dict):
+            logging.debug(f"Twitch API response data is not a dict: {type(data)}, returning empty rows")
             return []
         rows = data.get("data")
-        if isinstance(rows, list):
-            return [r for r in rows if isinstance(r, dict)]
-        return []
+        if not isinstance(rows, list):
+            logging.debug(f"Twitch API response data['data'] is not a list: {type(rows)}, returning empty rows")
+            return []
+        return [r for r in rows if isinstance(r, dict)]

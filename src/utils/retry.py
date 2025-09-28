@@ -20,10 +20,19 @@ class RetryableException(Exception):
     pass
 
 
+class RetryExhaustedError(Exception):
+    """Exception raised when all retry attempts have been exhausted."""
+
+    def __init__(self, message: str, attempts: int, final_exception: Exception | None = None) -> None:
+        super().__init__(message)
+        self.attempts = attempts
+        self.final_exception = final_exception
+
+
 async def retry_async[T](  # type: ignore[valid-type]
     operation: Callable[[int], Awaitable[tuple[T | None, bool]]],
     max_attempts: int = 6,
-) -> T | None:
+) -> T:
     """Retry an asynchronous operation with exponential backoff using Tenacity.
 
     Args:
@@ -31,7 +40,10 @@ async def retry_async[T](  # type: ignore[valid-type]
         max_attempts: Maximum number of attempts.
 
     Returns:
-        The result from operation if successful, None if all attempts exhausted.
+        The result from operation if successful.
+
+    Raises:
+        RetryExhaustedError: If all attempts are exhausted.
     """
     attempt_count = 0
 
@@ -60,6 +72,10 @@ async def retry_async[T](  # type: ignore[valid-type]
 
     try:
         return await retrying(wrapped_operation)
-    except Exception:
+    except Exception as e:
         # All attempts exhausted
-        return None
+        raise RetryExhaustedError(
+            f"Operation failed after {max_attempts} attempts",
+            attempts=max_attempts,
+            final_exception=e,
+        ) from e

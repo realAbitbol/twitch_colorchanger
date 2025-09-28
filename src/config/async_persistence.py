@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import shutil
 import time
 from contextlib import suppress
 from typing import Any
@@ -18,7 +20,6 @@ from typing import Any
 from ..constants import (
     CONFIG_DEBOUNCE_SECONDS,
     CONFIG_MAX_FAILURES_WARNING,
-    USER_LOCK_TTL_SECONDS,
 )
 from .core import update_user_in_config
 
@@ -31,64 +32,14 @@ __all__ = [
 
 # --- Debounced batching infrastructure ---
 
-_PENDING: dict[str, dict[str, Any]] = {}
+_PENDING: dict[str, tuple[dict[str, Any], float]] = {}
 _FLUSH_TASK: asyncio.Task[Any] | None = None
 _LOCK = asyncio.Lock()
 _DEBOUNCE_SECONDS = CONFIG_DEBOUNCE_SECONDS  # adjustable small delay to coalesce bursts
+_USER_LOCK_TTL_SECONDS = 300  # 5 minutes TTL for user lock registry entries
 
-# Per-user write locks so a direct immediate write and a batched flush do not
-# interleave for the same username (e.g., rapid toggle paths mixing queue and
-# explicit persistence). These are created lazily to avoid unbounded growth.
-_USER_LOCKS: dict[str, tuple[asyncio.Lock, float]] = {}
-_USER_LOCKS_LOCK = asyncio.Lock()
-_LOCK_TTL_SECONDS = USER_LOCK_TTL_SECONDS  # prune inactive user locks after 1h
-
-
-async def _get_user_lock(username: str) -> asyncio.Lock:
-    """Return (creating if needed) the asyncio.Lock for a username.
-
-    A dedicated small lock registry prevents write interleaving on the same
-    logical record while allowing unrelated users to persist concurrently in
-    future if parallelism is later introduced. (Current implementation keeps
-    sequential writes, but this preserves correctness if that changes.)
-
-    Args:
-        username: The username to get the lock for.
-
-    Returns:
-        The asyncio.Lock associated with the username.
-    """
-    # Normalize once to lower; callers already lowercase but be defensive.
-    uname = username.lower()
-    now = time.time()
-    async with _USER_LOCKS_LOCK:
-        entry = _USER_LOCKS.get(uname)
-        if entry is None:
-            lock = asyncio.Lock()
-            _USER_LOCKS[uname] = (lock, now)
-            return lock
-        lock, _ts = entry
-        _USER_LOCKS[uname] = (lock, now)
-        return lock
-
-
-async def _prune_user_locks() -> None:
-    """Prune inactive user locks after TTL to prevent unbounded growth."""
-    now = time.time()
-    async with _USER_LOCKS_LOCK:
-        stale = [
-            u for u, (_l, ts) in _USER_LOCKS.items() if now - ts > _LOCK_TTL_SECONDS
-        ]
-        for u in stale:
-            _USER_LOCKS.pop(u, None)
-        if stale:
-            try:
-                # Use placeholder names matching event template (removed, remaining)
-                logging.info(
-                    f"🧹 Pruned user locks removed={len(stale)} remaining={len(_USER_LOCKS)}"
-                )
-            except Exception as e:  # noqa: BLE001
-                logging.debug(f"⚠️ Error logging user lock prune details: {str(e)}")
+# Single lock for all persistence operations to prevent interleaving.
+_PERSISTENCE_LOCK = asyncio.Lock()
 
 
 async def _flush(config_file: str) -> None:
@@ -99,7 +50,8 @@ async def _flush(config_file: str) -> None:
     """
     global _FLUSH_TASK
     async with _LOCK:
-        pending = list(_PENDING.values())
+        now = time.time()
+        pending = [config for config, ts in _PENDING.values() if now - ts <= _USER_LOCK_TTL_SECONDS]
         _PENDING.clear()
         _FLUSH_TASK = None
     if not pending:
@@ -107,11 +59,6 @@ async def _flush(config_file: str) -> None:
     _log_batch_start(len(pending))
     failures = await _persist_batch(pending, config_file)
     _log_batch_result(failures, len(pending))
-    # Opportunistically prune inactive locks after a batch flush
-    try:
-        await _prune_user_locks()
-    except Exception as e:  # noqa: BLE001
-        logging.debug(f"⚠️ Error pruning user locks: {str(e)}")
 
 
 def _log_batch_start(count: int) -> None:
@@ -149,27 +96,45 @@ async def _persist_batch(pending: list[dict[str, Any]], config_file: str) -> int
     Returns:
         Number of failed persistence operations.
     """
+    if not pending:
+        return 0
+
+    backup_file = f"{config_file}.backup"
+    try:
+        shutil.copy2(config_file, backup_file)
+    except Exception as e:
+        logging.error(f"Failed to create backup for batch persistence: {e}")
+        return len(pending)  # fail all if can't backup
+
     failures = 0
     for uc in pending:
         uname = str(uc.get("username", "")).lower()
-        per_user_lock: asyncio.Lock | None = None
-        if uname:
-            per_user_lock = await _get_user_lock(uname)
         try:
             loop = asyncio.get_event_loop()
-            if per_user_lock:
-                async with per_user_lock:
-                    await loop.run_in_executor(
-                        None, update_user_in_config, uc, config_file
-                    )
-            else:
-                await loop.run_in_executor(None, update_user_in_config, uc, config_file)
+            async with _PERSISTENCE_LOCK:
+                success = await loop.run_in_executor(
+                    None, update_user_in_config, uc, config_file
+                )
+            if not success:
+                failures += 1
         except Exception as e:  # noqa: BLE001
             failures += 1
             if failures <= CONFIG_MAX_FAILURES_WARNING:
                 logging.warning(
                     f"⚠️ Error writing batch item user={uname or uc.get('username')}: {str(e)}"
                 )
+
+    if failures > 0:
+        try:
+            shutil.copy2(backup_file, config_file)
+        except Exception as e:
+            logging.error(f"Failed to rollback batch: {e}")
+
+    try:
+        os.remove(backup_file)
+    except Exception as e:
+        logging.warning(f"Failed to remove backup file: {e}")
+
     return failures
 
 
@@ -197,9 +162,15 @@ async def queue_user_update(user_config: dict[str, Any], config_file: str) -> No
     if not uname:
         return
     async with _LOCK:
-        existing = _PENDING.get(uname, {})
-        merged = {**existing, **user_config}
-        _PENDING[uname] = merged
+        now = time.time()
+        # Clean expired entries
+        expired = [k for k, (_, ts) in _PENDING.items() if now - ts > _USER_LOCK_TTL_SECONDS]
+        for k in expired:
+            del _PENDING[k]
+        # Update or add entry
+        existing_config, _ = _PENDING.get(uname, ({}, 0))
+        merged = {**existing_config, **user_config}
+        _PENDING[uname] = (merged, now)
         global _FLUSH_TASK
         if _FLUSH_TASK is None or _FLUSH_TASK.done():
             _FLUSH_TASK = asyncio.create_task(_schedule_flush(config_file))
@@ -207,15 +178,16 @@ async def queue_user_update(user_config: dict[str, Any], config_file: str) -> No
 
 async def cancel_pending_flush() -> None:
     """Cancel any pending flush task to prevent warnings on shutdown."""
-    global _FLUSH_TASK
-    if _FLUSH_TASK and not _FLUSH_TASK.done():
-        logging.debug("Cancelling pending flush task")
-        _FLUSH_TASK.cancel()
-        try:
-            await _FLUSH_TASK
-        except asyncio.CancelledError:  # noqa
-            pass
-        _FLUSH_TASK = None
+    async with _LOCK:
+        global _FLUSH_TASK
+        if _FLUSH_TASK and not _FLUSH_TASK.done():
+            logging.debug("Cancelling pending flush task")
+            _FLUSH_TASK.cancel()
+            try:
+                await _FLUSH_TASK
+            except asyncio.CancelledError:  # noqa
+                pass
+            _FLUSH_TASK = None
 
 
 async def flush_pending_updates(config_file: str) -> None:
@@ -241,14 +213,7 @@ async def async_update_user_in_config(
         Boolean result from the underlying synchronous function.
     """
     loop = asyncio.get_event_loop()
-    uname = str(user_config.get("username", "")).lower()
-    if uname:
-        lock = await _get_user_lock(uname)
-        async with lock:
-            return await loop.run_in_executor(
-                None, update_user_in_config, user_config, config_file
-            )
-    # Fallback if username missing (should be rare / non-critical paths).
-    return await loop.run_in_executor(
-        None, update_user_in_config, user_config, config_file
-    )
+    async with _PERSISTENCE_LOCK:
+        return await loop.run_in_executor(
+            None, update_user_in_config, user_config, config_file
+        )

@@ -77,11 +77,9 @@ class ConnectionStateManager:
         current_time = time.monotonic()
         time_since_activity = current_time - self.last_activity
 
-        # If no activity for more than 60 seconds, consider it potentially unhealthy
-        # but don't fail immediately as Twitch might just be quiet
+        # If no activity for more than 60 seconds, consider it unhealthy
         if time_since_activity > 60.0:
-            # Note: logging would be done in the main class
-            pass
+            return False
 
         return True
 

@@ -34,6 +34,7 @@ class ConnectionManager:
         self.chat_backend: EventSubChatBackend | None = None
         self.listener_task: asyncio.Task[None] | None = None
         self._normalized_channels_cache: list[str] | None = None
+        self._total_reconnect_attempts = 0
 
     async def initialize_connection(self) -> bool:
         """Prepare identity, choose backend, connect, and register handlers."""
@@ -281,6 +282,12 @@ class ConnectionManager:
             max_backoff: Maximum delay in seconds.
             max_attempts: Maximum number of reconnection attempts.
         """
+        self._total_reconnect_attempts += 1
+        if self._total_reconnect_attempts > max_attempts:
+            logging.error(
+                f"❌ Max total reconnection attempts ({max_attempts}) reached, giving up user={self.bot.username}"
+            )
+            return
         backoff = initial_backoff
         attempts = 0
         current_error = error
@@ -304,6 +311,7 @@ class ConnectionManager:
                     self.listener_task = asyncio.create_task(backend2.listen())
                     self.listener_task.add_done_callback(cb)
                 await self.listener_task
+                self._total_reconnect_attempts = 0  # Reset on successful reconnection
                 return
             except Exception as e2:  # noqa: BLE001
                 current_error = e2

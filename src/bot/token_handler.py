@@ -16,7 +16,7 @@ from ..auth_token.provisioner import TokenProvisioner
 from ..config.async_persistence import async_update_user_in_config, queue_user_update
 from ..config.model import normalize_channels_list
 from ..errors.handling import handle_api_error
-from ..errors.internal import InternalError
+from ..utils.retry import RetryExhaustedError, retry_async
 
 
 class TokenHandler:
@@ -52,15 +52,12 @@ class TokenHandler:
             expiry=self.bot.token_expiry,
         )
         logging.debug(f"📝 Token manager: registered user={self.bot.username}")
-        try:
-            await self.bot.token_manager.register_update_hook(
-                self.bot.username, self._persist_token_changes
-            )
-            await self.bot.token_manager.register_invalidation_hook(
-                self.bot.username, self._trigger_device_flow_reauth
-            )
-        except (ValueError, RuntimeError) as e:
-            logging.debug(f"Token hook registration failed: {str(e)}")
+        await self.bot.token_manager.register_update_hook(
+            self.bot.username, self._persist_token_changes
+        )
+        await self.bot.token_manager.register_invalidation_hook(
+            self.bot.username, self._trigger_device_flow_reauth
+        )
         return True
 
     async def handle_initial_token_refresh(self) -> None:
@@ -86,7 +83,7 @@ class TokenHandler:
         if access_changed or refresh_changed:
             try:
                 await self._persist_token_changes()
-            except (OSError, ValueError, RuntimeError) as e:
+            except OSError as e:
                 logging.debug(f"Token persistence error: {str(e)}")
         # Check required scopes on initial load
         if info.access_token and not await self._validate_required_scopes(
@@ -130,9 +127,6 @@ class TokenHandler:
             aiohttp.ClientError,
             TimeoutError,
             ConnectionError,
-            ValueError,
-            RuntimeError,
-            InternalError,
         ):
             logging.debug(f"🚫 Token scope validation error user={self.bot.username}")
 
@@ -188,7 +182,7 @@ class TokenHandler:
             if token_changed:
                 self._update_backend_token(info.access_token)
             return outcome.name != "FAILED"
-        except (aiohttp.ClientError, ValueError, RuntimeError) as e:
+        except aiohttp.ClientError as e:
             logging.error(f"Token refresh error: {str(e)}")
             return False
 
@@ -223,10 +217,7 @@ class TokenHandler:
         """
         backend_local = self.bot.connection_manager.chat_backend
         if backend_local is not None:
-            try:
-                backend_local.update_token(access_token)
-            except (AttributeError, ValueError, RuntimeError) as e:
-                logging.debug(f"Backend token update error: {str(e)}")
+            backend_local.update_token(access_token)
 
     async def _validate_required_scopes(self, access_token: str) -> bool:
         """Validate that the access token has the required scopes.
@@ -250,7 +241,7 @@ class TokenHandler:
                 return False
             current_scopes = {str(s).lower() for s in raw_scopes}
             return required_scopes.issubset(current_scopes)
-        except (aiohttp.ClientError, ValueError, RuntimeError):
+        except aiohttp.ClientError:
             return False
 
     async def _trigger_device_flow_reauth(
@@ -275,11 +266,20 @@ class TokenHandler:
                     )
                     return
                 provisioner = TokenProvisioner(self.bot.context.session)
-                try:
+                async def authorize_operation(attempt: int) -> tuple[Any, bool]:
                     access, refresh, expiry = await provisioner._interactive_authorize(
                         self.bot.client_id, self.bot.client_secret, self.bot.username
                     )
                     if access and refresh:
+                        return (access, refresh, expiry), False
+                    return None, True
+
+                try:
+                    result: tuple[str, str, Any] | None = await asyncio.wait_for(
+                        retry_async(authorize_operation, max_attempts=3), timeout=300
+                    )
+                    if result:
+                        access, refresh, expiry = result
                         # Update bot's tokens
                         self.bot.access_token = access
                         self.bot.refresh_token = refresh
@@ -310,8 +310,16 @@ class TokenHandler:
                             )
                     else:
                         logging.error(
-                            f"❌ Device flow re-auth failed user={self.bot.username}"
+                            f"❌ Device flow re-auth failed after retries user={self.bot.username}"
                         )
+                except TimeoutError:
+                    logging.error(
+                        f"❌ Device flow re-auth timed out after 300 seconds user={self.bot.username}"
+                    )
+                except RetryExhaustedError as e:
+                    logging.error(
+                        f"❌ Device flow re-auth failed after {e.attempts} attempts user={self.bot.username}: {e}"
+                    )
                 except Exception as e:
                     logging.error(
                         f"💥 Device flow re-auth error user={self.bot.username}: {str(e)}"
@@ -339,7 +347,7 @@ class TokenHandler:
         user_config["channels"] = self.bot.channels
         try:
             await queue_user_update(user_config, config_file)
-        except (OSError, ValueError, RuntimeError) as e:
+        except OSError as e:
             logging.warning(f"Persist channels error: {str(e)}")
 
     def _validate_config_prerequisites(self) -> bool:
@@ -419,7 +427,7 @@ class TokenHandler:
                 f"🔒 Permission denied writing config user={self.bot.username}"
             )
             return True
-        except (OSError, ValueError, RuntimeError) as e:
+        except OSError as e:
             return await self._handle_config_save_error(e, attempt, max_retries)
 
     async def _handle_config_save_error(

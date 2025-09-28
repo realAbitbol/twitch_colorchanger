@@ -60,6 +60,7 @@ class CircuitBreaker:
         self.failure_count = 0
         self.success_count = 0
         self.last_failure_time: float | None = None
+        self.last_used: float = time.monotonic()
         self._lock = asyncio.Lock()
 
     async def call(
@@ -82,6 +83,8 @@ class CircuitBreaker:
             CircuitBreakerOpenException: If circuit breaker is OPEN
             Exception: If function execution fails
         """
+        self.last_used = time.monotonic()
+        # Initial state check with lock
         async with self._lock:
             if self.state == CircuitBreakerState.OPEN:
                 if self._should_attempt_recovery():
@@ -95,10 +98,12 @@ class CircuitBreaker:
                         f"Circuit breaker '{self.config.name}' is OPEN"
                     )
 
-            # Execute function while holding the lock to prevent race conditions
-            try:
-                result = await func(*args, **kwargs) if asyncio.iscoroutinefunction(func) else func(*args, **kwargs)
+        # Execute function without holding the lock to reduce contention
+        try:
+            result = await func(*args, **kwargs) if asyncio.iscoroutinefunction(func) else func(*args, **kwargs)
 
+            # Update state with lock
+            async with self._lock:
                 if self.state == CircuitBreakerState.HALF_OPEN:
                     self.success_count += 1
                     if self.success_count >= self.config.success_threshold:
@@ -110,11 +115,13 @@ class CircuitBreaker:
                     # Reset failure count on successful call in CLOSED state
                     self.failure_count = 0
 
-                return result
+            return result
 
-            except Exception:
+        except Exception:
+            # Record failure with lock
+            async with self._lock:
                 self._record_failure()
-                raise
+            raise
 
     def _should_attempt_recovery(self) -> bool:
         """Check if enough time has passed to attempt recovery."""
@@ -223,12 +230,19 @@ def remove_circuit_breaker(name: str) -> None:
 def cleanup_circuit_breakers() -> int:
     """Clean up unused circuit breakers from the global registry.
 
+    Removes circuit breakers that haven't been used for more than 1 hour.
+
     Returns:
         Number of circuit breakers removed
     """
-    # For now, this is a simple function that could be extended
-    # to implement more sophisticated cleanup logic (e.g., LRU eviction)
     removed_count = 0
-    # Implementation could be extended to remove circuit breakers
-    # that haven't been used for a long time, etc.
+    current_time = time.monotonic()
+    inactivity_timeout = 3600.0  # 1 hour
+
+    for name, cb in list(_circuit_breakers.items()):
+        if current_time - cb.last_used > inactivity_timeout:
+            del _circuit_breakers[name]
+            removed_count += 1
+            logging.info(f"🗑️ Circuit breaker '{name}' cleaned up due to inactivity")
+
     return removed_count

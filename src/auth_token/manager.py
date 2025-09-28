@@ -98,6 +98,8 @@ class TokenManager:
         self.running = False
         # Paused users for background refresh
         self._paused_users: set[str] = set()
+        # Registered backends for immediate token propagation
+        self._backends: dict[str, Any] = {}
         # Composed components
         self.validator = TokenValidator(self)
         self.refresher = TokenRefresher(self)
@@ -205,6 +207,14 @@ class TokenManager:
         self.running = False
         await self.background_task_manager.stop()
 
+    def get_background_task_health(self) -> Any:
+        """Get health status of background tasks for monitoring.
+
+        Returns:
+            TaskHealthStatus object with health metrics.
+        """
+        return self.background_task_manager.get_health_status()
+
     async def pause_background_refresh(self, username: str) -> None:
         """Pause background refresh for a specific user.
 
@@ -247,7 +257,7 @@ class TokenManager:
         await self.hook_manager.register_invalidation_hook(username, hook)
 
     async def register_eventsub_backend(self, username: str, backend: Any) -> None:
-        """Register chat backend for automatic token propagation.
+        """Register chat backend for immediate token propagation.
 
         - If backend has update_access_token(new_token), prefer that.
         - Else if backend has update_token(new_token), use that.
@@ -261,21 +271,25 @@ class TokenManager:
         if not propagate_attr:
             return
 
-        async def _propagate() -> None:  # coroutine required by register_update_hook
-            async with self._tokens_lock:
-                info = self.tokens.get(username)
-            if not info or not info.access_token:
-                return
-            try:
-                getattr(backend, propagate_attr)(info.access_token)
-            except (ValueError, RuntimeError, TypeError) as e:
-                logging.warning(
-                    f"⚠️ EventSub token propagation error user={username}: {str(e)}"
-                )
-            # tiny await to satisfy linters that expect async use
-            await asyncio.sleep(0)
+        # Store backend for immediate propagation during token refresh
+        async with self._tokens_lock:
+            self._backends[username] = (backend, propagate_attr)
 
-        await self.register_update_hook(username, _propagate)
+    def _propagate_token_immediately(self, username: str, access_token: str) -> None:
+        """Propagate token to registered backends immediately.
+
+        Called synchronously during token refresh to minimize propagation delays.
+        """
+        backend_info = self._backends.get(username)
+        if not backend_info:
+            return
+        backend, propagate_attr = backend_info
+        try:
+            getattr(backend, propagate_attr)(access_token)
+        except (ValueError, RuntimeError, TypeError) as e:
+            logging.warning(
+                f"⚠️ EventSub token propagation error user={username}: {str(e)}"
+            )
 
     async def _upsert_token_info(
         self,
@@ -339,7 +353,11 @@ class TokenManager:
 
     async def get_info(self, username: str) -> TokenInfo | None:
         async with self._tokens_lock:
-            return self.tokens.get(username)
+            info = self.tokens.get(username)
+            if info:
+                async with info.refresh_lock:
+                    return info
+            return None
 
 
     async def ensure_fresh(

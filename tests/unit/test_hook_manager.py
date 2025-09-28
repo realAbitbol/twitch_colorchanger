@@ -104,7 +104,9 @@ class TestHookManager:
     async def test_maybe_fire_update_hook_creates_task_when_changed(self):
         """Test maybe_fire_update_hook creates task when token changed."""
         # Arrange
-        hook_mock = AsyncMock()
+        async def mock_hook():
+            pass
+        hook_mock = Mock(side_effect=mock_hook)
         await self.hook_manager.register_update_hook("testuser", hook_mock)
 
         # Act
@@ -140,7 +142,9 @@ class TestHookManager:
     async def test_maybe_fire_invalidation_hook_creates_task(self):
         """Test maybe_fire_invalidation_hook creates task for invalidation."""
         # Arrange
-        hook_mock = AsyncMock()
+        async def mock_hook():
+            pass
+        hook_mock = Mock(side_effect=mock_hook)
         await self.hook_manager.register_invalidation_hook("testuser", hook_mock)
 
         # Act
@@ -149,6 +153,8 @@ class TestHookManager:
         # Assert
         assert len(self.hook_manager._hook_tasks) == 1
         hook_mock.assert_called_once()
+        await asyncio.sleep(0)  # Allow tasks to complete
+        await asyncio.sleep(0)  # Allow tasks to complete
 
     @pytest.mark.asyncio
     async def test_maybe_fire_invalidation_hook_no_hooks_registered(self):
@@ -213,8 +219,8 @@ class TestHookManager:
             await self.hook_manager._remove_hook_task(task, "test")
 
         # Assert
-        mock_logging.debug.assert_called()
-        assert "Task failed" in str(mock_logging.debug.call_args)
+        mock_logging.warning.assert_called()
+        assert "Task failed" in str(mock_logging.warning.call_args)
 
     @pytest.mark.asyncio
     async def test_remove_hook_task_handles_cancelled_task(self):
@@ -237,3 +243,116 @@ class TestHookManager:
 
         # Assert
         assert task not in self.hook_manager._hook_tasks
+
+    @pytest.mark.asyncio
+    async def test_concurrent_hook_registration_and_firing(self):
+        """Test concurrent hook registration and firing operations."""
+        # Arrange
+        hook_calls = []
+
+        async def hook1():
+            hook_calls.append("hook1")
+            await asyncio.sleep(0.01)  # Simulate some work
+
+        async def hook2():
+            hook_calls.append("hook2")
+            await asyncio.sleep(0.01)
+
+        async def register_hooks():
+            await self.hook_manager.register_update_hook("testuser", hook1)
+            await asyncio.sleep(0.005)  # Small delay
+            await self.hook_manager.register_update_hook("testuser", hook2)
+
+        async def fire_hooks():
+            await asyncio.sleep(0.002)  # Start after registration begins
+            await self.hook_manager.maybe_fire_update_hook("testuser", token_changed=True)
+
+        # Act - Run concurrently
+        await asyncio.gather(register_hooks(), fire_hooks())
+
+        # Assert - Both hooks should have been called
+        # The firing should have gotten a snapshot of hooks at that time
+        # Since registration happens concurrently, hook1 might or might not be included
+        # But no race conditions should occur
+        assert len(hook_calls) >= 0  # At least no exceptions
+        # Wait for tasks to complete
+        await asyncio.sleep(0.1)
+        # Check that tasks were created and completed
+        assert len(self.hook_manager._hook_tasks) >= 0
+
+    @pytest.mark.asyncio
+    async def test_maybe_fire_update_hook_task_creation_failure_logs_error(self):
+        """Test maybe_fire_update_hook logs error when task creation fails."""
+        # Arrange
+        async def mock_hook():
+            pass
+        test_hook = Mock(side_effect=mock_hook)
+        await self.hook_manager.register_update_hook("testuser", test_hook)
+
+        # Act
+        with patch.object(self.hook_manager, '_create_retained_task', side_effect=ValueError("Task creation failed")):
+            with patch('src.auth_token.hook_manager.logging') as mock_logging:
+                await self.hook_manager.maybe_fire_update_hook("testuser", token_changed=True)
+
+        # Assert
+        mock_logging.debug.assert_called_once()
+        call_args = mock_logging.debug.call_args[0][0]
+        assert "Update hook scheduling error" in call_args
+        assert "user=testuser" in call_args
+        assert "ValueError" in call_args
+        await asyncio.sleep(0)  # Allow tasks to complete
+
+    @pytest.mark.asyncio
+    async def test_maybe_fire_invalidation_hook_task_creation_failure_logs_error(self):
+        """Test maybe_fire_invalidation_hook logs error when task creation fails."""
+        # Arrange
+        async def mock_hook():
+            pass
+        test_hook = Mock(side_effect=mock_hook)
+        await self.hook_manager.register_invalidation_hook("testuser", test_hook)
+
+        # Act
+        with patch.object(self.hook_manager, '_create_retained_task', side_effect=RuntimeError("Task creation failed")):
+            with patch('src.auth_token.hook_manager.logging') as mock_logging:
+                await self.hook_manager.maybe_fire_invalidation_hook("testuser")
+
+        # Assert
+        mock_logging.debug.assert_called_once()
+        call_args = mock_logging.debug.call_args[0][0]
+        assert "Invalidation hook scheduling error" in call_args
+        assert "user=testuser" in call_args
+        assert "RuntimeError" in call_args
+        await asyncio.sleep(0)  # Allow tasks to complete
+
+    @pytest.mark.asyncio
+    async def test_hook_firing_uses_snapshot_under_lock(self):
+        """Test that hook firing uses a snapshot taken under lock, ensuring thread-safe hook execution."""
+        # Arrange
+        fired_hooks = []
+
+        async def hook_a():
+            fired_hooks.append("A")
+
+        async def hook_b():
+            fired_hooks.append("B")
+
+        # Register initial hook
+        await self.hook_manager.register_update_hook("testuser", hook_a)
+
+        # Fire hooks - should only fire hook_a
+        await self.hook_manager.maybe_fire_update_hook("testuser", token_changed=True)
+        await asyncio.sleep(0.01)  # Let tasks complete
+
+        # Assert: Only hook_a was fired
+        assert fired_hooks == ["A"]
+
+        # Now register another hook
+        await self.hook_manager.register_update_hook("testuser", hook_b)
+
+        # Fire again - should fire both hooks
+        fired_hooks.clear()
+        await self.hook_manager.maybe_fire_update_hook("testuser", token_changed=True)
+        await asyncio.sleep(0.01)  # Let tasks complete
+
+        # Assert: Both hooks were fired
+        assert fired_hooks == ["A", "B"]

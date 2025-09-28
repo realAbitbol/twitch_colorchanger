@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from .models import ColorRequestResult, ColorRequestStatus
 from .utils import TWITCH_PRESET_COLORS, get_random_hex, get_random_preset
 
 if TYPE_CHECKING:  # pragma: no cover
-    from bot import TwitchColorBot
+    from ..bot.color_changer import ColorChanger
 
 
 class ColorChangeService:
@@ -19,7 +19,7 @@ class ColorChangeService:
     Handles color change requests, retries, fallbacks, and error handling.
     """
 
-    def __init__(self, bot: TwitchColorBot) -> None:
+    def __init__(self, bot: ColorChanger) -> None:
         """Initialize the color change service.
 
         Args:
@@ -28,6 +28,7 @@ class ColorChangeService:
         if bot is None:
             raise TypeError("bot cannot be None")
         self.bot = bot
+        self._lock = asyncio.Lock()
 
     async def change_color(self, hex_color: str | None = None) -> bool:
         """Change the bot's color to the specified hex or a random color.
@@ -109,12 +110,7 @@ class ColorChangeService:
             ColorRequestResult: The result of the request.
         """
         params = {"user_id": self.bot.user_id, "color": color}
-        # _perform_color_request is defined on the bot and returns a ColorRequestResult
-        # but lacks a precise return annotation; cast here to satisfy typing.
-        return cast(
-            ColorRequestResult,
-            await self.bot._perform_color_request(params, action=action),
-        )
+        return await self.bot._perform_color_request(params, action=action)
 
     def _on_success(self, color: str, is_preset: bool) -> bool:
         """Handle successful color change.
@@ -197,8 +193,6 @@ class ColorChangeService:
         # Persistent Turbo/Prime detection: track repeated hex rejections
         if not is_preset and status_code in (400, 403):
             await self._handle_hex_rejection(status_code)
-        if 200 <= status_code < 300:
-            return self._on_success(self.bot.last_color or "", is_preset)
         logging.error(f"Failed to change color: {status_code}")
         if fallback_to_preset and not is_preset:
             preset = get_random_preset(exclude=self.bot.last_color)
@@ -218,18 +212,22 @@ class ColorChangeService:
         Args:
             status_code (int): The rejection status code (400 or 403).
         """
-        strikes = getattr(self.bot, "_hex_rejection_strikes", 0) + 1
-        self.bot._hex_rejection_strikes = strikes
-        logging.info(f"Hex color rejected: {status_code}, strikes: {strikes}")
+        async with self._lock:
+            strikes = getattr(self.bot, "_hex_rejection_strikes", 0) + 1
+            self.bot._hex_rejection_strikes = strikes
+            logging.info(f"Hex color rejected: {status_code}, strikes: {strikes}")
 
-        if strikes >= 2 and getattr(self.bot, "use_random_colors", False):
-            self.bot.use_random_colors = False
-            logging.info("Disabling random hex due to persistent rejections")
-            hook = getattr(self.bot, "on_persistent_prime_detection", None)
-            if hook and callable(hook):
-                res = hook()
-                if asyncio.iscoroutine(res):
-                    await res
+            if strikes >= 2 and getattr(self.bot, "use_random_colors", False):
+                self.bot.use_random_colors = False
+                logging.info("Disabling random hex due to persistent rejections")
+                hook = getattr(self.bot, "on_persistent_prime_detection", None)
+                if hook and callable(hook):
+                    try:
+                        res = hook()
+                        if asyncio.iscoroutine(res):
+                            await res
+                    except Exception as e:
+                        logging.error(f"Hook execution failed: {e}")
 
     def _select_color(self) -> str:
         """Select a random color based on bot settings.

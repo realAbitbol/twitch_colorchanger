@@ -89,7 +89,7 @@ class TestConnectionStateManager:
         assert self.manager.is_healthy() is True
 
     def test_is_healthy_detects_stale_connection(self):
-        """Test is_healthy still returns True for stale connections (by design)."""
+        """Test is_healthy returns False for stale connections (>60s inactivity)."""
         mock_ws = Mock()
         mock_ws.closed = False
         self.connector.ws = mock_ws
@@ -97,9 +97,34 @@ class TestConnectionStateManager:
         self.manager.session_id = "session123"
         self.manager.last_activity = time.monotonic() - 120  # 2 minutes ago
 
-        # The method returns True even for stale connections
-        # (stale detection is handled elsewhere)
+        # The method returns False for stale connections
+        assert self.manager.is_healthy() is False
+
+    @patch('time.monotonic')
+    def test_is_healthy_returns_true_at_exactly_60_seconds(self, mock_monotonic):
+        """Test is_healthy returns True at exactly 60 seconds (boundary case)."""
+        mock_monotonic.return_value = 100.0
+        mock_ws = Mock()
+        mock_ws.closed = False
+        self.connector.ws = mock_ws
+        self.manager.connection_state = ConnectionState.CONNECTED
+        self.manager.session_id = "session123"
+        self.manager.last_activity = 100.0 - 60.0  # Exactly 60 seconds ago
+
         assert self.manager.is_healthy() is True
+
+    @patch('time.monotonic')
+    def test_is_healthy_returns_false_slightly_over_60_seconds(self, mock_monotonic):
+        """Test is_healthy returns False slightly over 60 seconds."""
+        mock_monotonic.return_value = 100.0
+        mock_ws = Mock()
+        mock_ws.closed = False
+        self.connector.ws = mock_ws
+        self.manager.connection_state = ConnectionState.CONNECTED
+        self.manager.session_id = "session123"
+        self.manager.last_activity = 100.0 - 61.0  # 61 seconds ago
+
+        assert self.manager.is_healthy() is False
 
     def test_update_url_updates_connector_url(self):
         """Test update_url updates the connector's WebSocket URL."""

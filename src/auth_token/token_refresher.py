@@ -108,6 +108,9 @@ class TokenRefresher:
                     info.access_token != before_access
                     or info.refresh_token != before_refresh
                 )
+                # Propagate token immediately to minimize delays
+                if token_changed and info.access_token:
+                    self.manager._propagate_token_immediately(username, info.access_token)
             elif result.outcome == TokenOutcome.FAILED:
                 if result.error_type == RefreshErrorType.NON_RECOVERABLE:
                     info.state = TokenState.EXPIRED

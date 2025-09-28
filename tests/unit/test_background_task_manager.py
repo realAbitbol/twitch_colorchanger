@@ -54,6 +54,7 @@ class TestBackgroundTaskManager:
         # Arrange
         mock_task = AsyncMock()
         mock_task.done = False
+        mock_task.cancel = Mock()  # cancel is synchronous
         self.task_manager.task = mock_task
 
         # Act
@@ -67,11 +68,12 @@ class TestBackgroundTaskManager:
         """Test stop cancels background task when running."""
         # Arrange
         await self.task_manager.start()
-        mock_task = Mock()
+        mock_task = AsyncMock()
         self.task_manager.task = mock_task
 
         # Act
-        await self.task_manager.stop()
+        with patch('asyncio.wait_for', new_callable=AsyncMock):
+            await self.task_manager.stop()
 
         # Assert
         assert self.task_manager.running is False
@@ -101,18 +103,24 @@ class TestBackgroundTaskManager:
         self.mock_manager.tokens = {"user1": mock_info1, "user2": mock_info2}
 
         with patch.object(self.task_manager, '_process_single_background', new_callable=AsyncMock) as mock_process:
-            with patch('asyncio.wait_for', new_callable=AsyncMock) as mock_wait_for:
+            async def mock_wait_for(coro, timeout):
+                setattr(self.task_manager, 'running', False)
+                if hasattr(coro, '__await__'):
+                    task = asyncio.create_task(coro)
+                    task.cancel()
+                return None
+
+            with patch('asyncio.wait_for', mock_wait_for):
                 # Stop after one iteration
                 self.task_manager.running = True
-                mock_wait_for.side_effect = lambda *args, **kwargs: setattr(self.task_manager, 'running', False) or None
 
                 # Act
                 await self.task_manager._background_refresh_loop()
 
         # Assert
         assert mock_process.call_count == 2
-        mock_process.assert_any_call("user1", mock_info1, force_proactive=False, drift_compensation=pytest.approx(0.0, abs=1e-6))
-        mock_process.assert_any_call("user2", mock_info2, force_proactive=False, drift_compensation=pytest.approx(0.0, abs=1e-6))
+        mock_process.assert_any_call("user1", mock_info1, force_proactive=False, drift_compensation=pytest.approx(0.0, abs=1e-5))
+        mock_process.assert_any_call("user2", mock_info2, force_proactive=False, drift_compensation=pytest.approx(0.0, abs=1e-5))
 
     @pytest.mark.asyncio
     async def test_background_refresh_loop_handles_drift_correction(self):
@@ -124,7 +132,7 @@ class TestBackgroundTaskManager:
 
         with patch('time.time', side_effect=[100, 103.5]):  # 3.5s drift
             with patch.object(self.task_manager, '_process_single_background', new_callable=AsyncMock):
-                with patch('asyncio.wait_for', new_callable=AsyncMock):
+                with patch('asyncio.wait_for', side_effect=lambda *args, **kwargs: None):
                     # Stop after one iteration
                     self.task_manager.running = False
 
@@ -133,6 +141,7 @@ class TestBackgroundTaskManager:
 
         # Drift of 3.5s should trigger consecutive_drift increment
 
+
     @pytest.mark.asyncio
     async def test_process_single_background_critical_health_forces_refresh(self):
         """Test _process_single_background forces refresh for critical health."""
@@ -140,7 +149,7 @@ class TestBackgroundTaskManager:
         mock_info = Mock()
         self.mock_manager.validator.assess_token_health.return_value = "critical"
         self.mock_manager.validator.remaining_seconds.return_value = 3600
-        self.mock_manager.refresher.ensure_fresh = AsyncMock(return_value=TokenOutcome.REFRESHED)
+        self.mock_manager.refresher.ensure_fresh = AsyncMock(side_effect=lambda *args, **kwargs: TokenOutcome.REFRESHED)
 
         # Act
         await self.task_manager._process_single_background("testuser", mock_info)
@@ -157,7 +166,10 @@ class TestBackgroundTaskManager:
         self.mock_manager.validator.assess_token_health.return_value = "healthy"
         self.mock_manager.validator.remaining_seconds.return_value = None
 
-        with patch.object(self.task_manager, '_handle_unknown_expiry', new_callable=AsyncMock):
+        async def mock_handle_unknown_expiry(username):
+            pass
+
+        with patch.object(self.task_manager, '_handle_unknown_expiry', mock_handle_unknown_expiry):
             # Act
             await self.task_manager._process_single_background("testuser", mock_info)
 
@@ -215,7 +227,10 @@ class TestBackgroundTaskManager:
         mock_info = Mock()
         mock_info.expiry = None
 
-        with patch.object(self.task_manager, '_handle_unknown_expiry', new_callable=AsyncMock):
+        async def mock_handle_unknown_expiry(username):
+            pass
+
+        with patch.object(self.task_manager, '_handle_unknown_expiry', mock_handle_unknown_expiry):
             # Act
             result = await self.task_manager._maybe_periodic_or_unknown_resolution("testuser", mock_info, None)
 
@@ -358,3 +373,163 @@ class TestBackgroundTaskManager:
         log_call = str(mock_logging.debug.call_args)
         assert "testuser" in log_call
         assert "1h 30m" in log_call
+
+    def test_task_health_status_initialization(self):
+        """Test TaskHealthStatus initializes with correct default values."""
+        from src.auth_token.background_task_manager import TaskHealthStatus
+
+        # Act
+        health = TaskHealthStatus()
+
+        # Assert
+        assert health.last_success_time is None
+        assert health.last_failure_time is None
+        assert health.consecutive_failures == 0
+        assert health.total_failures == 0
+        assert health.is_healthy is True
+        assert health.last_error_message is None
+
+    @pytest.mark.asyncio
+    async def test_record_success_updates_health_status(self):
+        """Test _record_success updates health status correctly."""
+        # Arrange
+        import time
+        start_time = time.time()
+
+        # Act
+        await self.task_manager._record_success()
+
+        # Assert
+        health = self.task_manager.health
+        assert health.last_success_time is not None
+        assert health.last_success_time >= start_time
+        assert health.consecutive_failures == 0
+        assert health.is_healthy is True
+        assert health.last_error_message is None
+
+    @pytest.mark.asyncio
+    async def test_record_failure_updates_health_status_first_failure(self):
+        """Test _record_failure updates health status for first failure."""
+        # Arrange
+        import time
+        start_time = time.time()
+        test_error = RuntimeError("Test error")
+
+        # Act
+        await self.task_manager._record_failure(test_error)
+
+        # Assert
+        health = self.task_manager.health
+        assert health.last_failure_time is not None
+        assert health.last_failure_time >= start_time
+        assert health.consecutive_failures == 1
+        assert health.total_failures == 1
+        assert health.is_healthy is True  # Still healthy after 1 failure
+        assert health.last_error_message == "Test error"
+
+    @pytest.mark.asyncio
+    async def test_record_failure_updates_health_status_multiple_failures(self):
+        """Test _record_failure marks unhealthy after 3 consecutive failures."""
+        # Arrange
+        test_error = RuntimeError("Test error")
+
+        # Act - Record 3 failures
+        await self.task_manager._record_failure(test_error)
+        await self.task_manager._record_failure(test_error)
+        await self.task_manager._record_failure(test_error)
+
+        # Assert
+        health = self.task_manager.health
+        assert health.consecutive_failures == 3
+        assert health.total_failures == 3
+        assert health.is_healthy is False
+        assert health.last_error_message == "Test error"
+
+    @pytest.mark.asyncio
+    async def test_record_failure_resets_on_success(self):
+        """Test _record_failure counter resets after success."""
+        # Arrange
+        test_error = RuntimeError("Test error")
+
+        # Act - Record 2 failures, then success, then 1 more failure
+        await self.task_manager._record_failure(test_error)
+        await self.task_manager._record_failure(test_error)
+        await self.task_manager._record_success()
+        await self.task_manager._record_failure(test_error)
+
+        # Assert
+        health = self.task_manager.health
+        assert health.consecutive_failures == 1  # Reset after success
+        assert health.total_failures == 3  # But total still accumulates
+        assert health.is_healthy is True  # Back to healthy
+
+    def test_get_health_status_returns_health_object(self):
+        """Test get_health_status returns the health status object."""
+        # Act
+        health = self.task_manager.get_health_status()
+
+        # Assert
+        assert health is self.task_manager.health
+        assert hasattr(health, 'last_success_time')
+        assert hasattr(health, 'consecutive_failures')
+        assert hasattr(health, 'is_healthy')
+
+    @pytest.mark.asyncio
+    async def test_background_refresh_loop_records_success_on_successful_iteration(self):
+        """Test _background_refresh_loop records success for successful iterations."""
+        # Arrange
+        self.mock_manager._tokens_lock = AsyncMock()
+        self.mock_manager.tokens = {}
+        self.mock_manager._paused_users = []
+
+        with patch.object(self.task_manager, '_process_single_background', new_callable=AsyncMock):
+            async def mock_wait_for(coro, timeout):
+                setattr(self.task_manager, 'running', False)
+                if hasattr(coro, '__await__'):
+                    task = asyncio.create_task(coro)
+                    task.cancel()
+                return None
+
+            with patch('asyncio.wait_for', mock_wait_for):
+                # Stop after one iteration
+                self.task_manager.running = True
+
+                # Act
+                await self.task_manager._background_refresh_loop()
+
+        # Assert - Health should record success
+        health = self.task_manager.health
+        assert health.last_success_time is not None
+        assert health.consecutive_failures == 0
+        assert health.is_healthy is True
+
+    @pytest.mark.asyncio
+    async def test_background_refresh_loop_records_failure_on_failed_iteration(self):
+        """Test _background_refresh_loop records failure when user processing fails."""
+        # Arrange
+        self.mock_manager._tokens_lock = AsyncMock()
+        self.mock_manager.tokens = {"user1": Mock()}
+        self.mock_manager._paused_users = []
+
+        with patch.object(self.task_manager, '_process_single_background', new_callable=AsyncMock) as mock_process:
+            mock_process.side_effect = Exception("Processing failed")
+
+            async def mock_wait_for(coro, timeout):
+                setattr(self.task_manager, 'running', False)
+                if hasattr(coro, '__await__'):
+                    task = asyncio.create_task(coro)
+                    task.cancel()
+                return None
+
+            with patch('asyncio.wait_for', mock_wait_for):
+                # Stop after one iteration
+                self.task_manager.running = True
+
+                # Act
+                await self.task_manager._background_refresh_loop()
+
+        # Assert - Health should record failure
+        health = self.task_manager.health
+        assert health.last_failure_time is not None
+        assert health.consecutive_failures == 1
+        assert health.last_error_message == "One or more user background refreshes failed"

@@ -78,7 +78,10 @@ class EventSubChatBackend:
             token_manager (TokenManager | None): Token manager instance.
             cache_manager (CacheManager | None): Cache manager instance.
         """
-        self._session = http_session or aiohttp.ClientSession()
+        # Configure timeouts for reliability: total 30s, connect 10s, read 20s
+        # Balances responsiveness with resilience for unattended operation
+        timeout = aiohttp.ClientTimeout(total=30.0, connect=10.0, sock_read=20.0, sock_connect=10.0)
+        self._session = http_session or aiohttp.ClientSession(timeout=timeout)
         self._api = TwitchAPI(self._session)
 
         # Injected components (will be created if not provided)
@@ -355,7 +358,7 @@ class EventSubChatBackend:
         """
         return self._channels.copy()
 
-    def leave_channel(self, channel: str) -> bool:
+    async def leave_channel(self, channel: str) -> bool:
         """Leave a channel and unsubscribe from its chat messages.
 
         Args:
@@ -364,18 +367,9 @@ class EventSubChatBackend:
         Returns:
             bool: True if left successfully, False otherwise.
         """
-        channel_l = channel.lstrip("#").lower()
-        if channel_l not in self._channels:
-            return True
-
-        try:
-            # For now, just remove from channels list
-            # Full unsubscription would require tracking subscription IDs
-            self._channels.remove(channel_l)
-            return True
-        except Exception as e:
-            logging.warning(f"Leave channel failed: {str(e)}")
-            return False
+        if self._subscription_coordinator:
+            return await self._subscription_coordinator.leave_channel(channel)
+        return False
 
     def is_connected(self) -> bool:
         """Check if WebSocket is connected.

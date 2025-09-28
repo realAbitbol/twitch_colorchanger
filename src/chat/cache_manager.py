@@ -7,6 +7,7 @@ Includes in-memory LRU cache for performance and atomic file writes.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -69,6 +70,7 @@ class CacheManager(CacheManagerProtocol):
         self._lock = asyncio.Lock()
         self._memory_cache: OrderedDict[str, Any] = OrderedDict()
         self._max_cache_size = max_cache_size
+        self._file_hash: str | None = None
 
     def _get_from_memory(self, key: str) -> Any:
         """Get value from memory cache, moving to end (most recent)."""
@@ -97,6 +99,23 @@ class CacheManager(CacheManagerProtocol):
     def _clear_memory(self) -> None:
         """Clear all entries from memory cache."""
         self._memory_cache.clear()
+
+    async def _compute_file_hash(self) -> str | None:
+        """Compute SHA256 hash of the cache file content."""
+        if not os.path.exists(self._cache_file_path):
+            return None
+        loop = asyncio.get_event_loop()
+        def _hash_file():
+            with open(self._cache_file_path, 'rb') as f:
+                return hashlib.sha256(f.read()).hexdigest()
+        return await loop.run_in_executor(None, _hash_file)
+
+    async def _is_file_changed(self) -> bool:
+        """Check if the cache file has changed by comparing hashes."""
+        current_hash = await self._compute_file_hash()
+        changed = current_hash != self._file_hash
+        self._file_hash = current_hash
+        return changed
 
     async def _load_data(self) -> dict[str, Any]:
         """Load cache data from file asynchronously with recovery.
@@ -190,6 +209,10 @@ class CacheManager(CacheManagerProtocol):
         Returns:
             Any: The value associated with the key, or None if not found.
         """
+        # Check if file changed
+        if await self._is_file_changed():
+            self._clear_memory()
+
         # Check memory cache first
         value = self._get_from_memory(key)
         if value is not None:
@@ -211,6 +234,9 @@ class CacheManager(CacheManagerProtocol):
             value (Any): The value to store.
         """
         async with self._lock:
+            # Check if file changed
+            if await self._is_file_changed():
+                self._clear_memory()
             data = await self._load_data()
             data[key] = value
             await self._save_data(data)
@@ -224,6 +250,9 @@ class CacheManager(CacheManagerProtocol):
             key (str): The key to remove.
         """
         async with self._lock:
+            # Check if file changed
+            if await self._is_file_changed():
+                self._clear_memory()
             data = await self._load_data()
             data.pop(key, None)
             await self._save_data(data)
@@ -233,6 +262,9 @@ class CacheManager(CacheManagerProtocol):
     async def clear(self) -> None:
         """Clear all data from the cache."""
         async with self._lock:
+            # Check if file changed
+            if await self._is_file_changed():
+                self._clear_memory()
             await self._save_data({})
             # Clear memory cache
             self._clear_memory()
@@ -246,6 +278,10 @@ class CacheManager(CacheManagerProtocol):
         Returns:
             bool: True if the key exists, False otherwise.
         """
+        # Check if file changed
+        if await self._is_file_changed():
+            self._clear_memory()
+
         # Check memory cache first
         if self._get_from_memory(key) is not None:
             return True
@@ -265,6 +301,9 @@ class CacheManager(CacheManagerProtocol):
             list[str]: List of all keys in the cache.
         """
         async with self._lock:
+            # Check if file changed
+            if await self._is_file_changed():
+                self._clear_memory()
             data = await self._load_data()
             return list(data.keys())
 

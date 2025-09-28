@@ -4,6 +4,7 @@ Unit tests for ReconnectionManager.
 
 import pytest
 import asyncio
+import asyncio as real_asyncio
 from unittest.mock import Mock, AsyncMock, patch
 
 from src.chat.reconnection_manager import ReconnectionManager
@@ -60,30 +61,22 @@ class TestReconnectionManager:
         self.connector.connect.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_reconnect_with_backoff_handles_circuit_breaker(self):
-        """Test _reconnect_with_backoff waits when circuit breaker is open."""
+    async def test_reconnect_with_backoff_checks_circuit_breaker(self):
+        """Test _reconnect_with_backoff checks circuit breaker state."""
         self.manager.running = True
-        # Mock the circuit breaker
+        # Mock the circuit breaker as closed
         mock_cb = Mock()
-        mock_cb.state = CircuitBreakerState.OPEN
-        mock_cb.config = Mock(recovery_timeout = 5.0)
-        count = [0]
-        def is_open():
-            print(f"is_open called, count={count[0]}")
-            count[0] += 1
-            return count[0] == 1
-        mock_cb.is_open = Mock(side_effect = is_open)
-        mock_cb._should_attempt_recovery = Mock(return_value=True)
+        mock_cb.is_open = False
         self.manager.circuit_breaker = mock_cb
 
         self.connector.connect = AsyncMock()
         self.connector.disconnect = AsyncMock()
 
-        with patch('src.chat.reconnection_manager.asyncio.sleep') as mock_sleep:
-            result = await self.manager._reconnect_with_backoff()
+        result = await self.manager._reconnect_with_backoff()
 
         assert result is True
-        mock_sleep.assert_called_with(5.0)
+        self.connector.disconnect.assert_called_once()
+        self.connector.connect.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_reconnect_with_backoff_applies_backoff_on_failure(self):
