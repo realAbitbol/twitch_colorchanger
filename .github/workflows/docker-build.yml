@@ -197,6 +197,9 @@ jobs:
         run: |
           echo "image_ref=${{ env.GHCR_IMAGE_NAME }}@${{ needs.build-and-push.outputs.digest }}" >> $GITHUB_OUTPUT
 
+      - name: Create output directory for Trivy results
+        run: mkdir -p trivy-results-linux
+
       - name: Run Trivy vulnerability scanner (${{ matrix.platform }})
         run: |
           docker run --rm \
