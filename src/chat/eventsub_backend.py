@@ -128,7 +128,6 @@ class EventSubChatBackend:
         self._subscription_coordinator: SubscriptionCoordinator | None = None
         self._message_coordinator: MessageCoordinator | None = None
         self._reconnection_coordinator: ReconnectionCoordinator | None = None
-        self._cleanup_coordinator = None
 
     async def __aenter__(self) -> EventSubChatBackend:
         """Async context manager entry."""
