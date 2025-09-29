@@ -28,10 +28,14 @@ class MessageCoordinator:
             try:
                 data = json.loads(msg.data)
                 msg_type = data.get("type")
+                if msg_type is not None and msg_type != "session_keepalive":
+                    logging.debug(f"📨 Received WebSocket message type: {msg_type}, updated _last_activity to {self.backend._last_activity}")
                 if msg_type == "session_reconnect":
                     if self.backend._reconnection_coordinator is None:
                         raise AssertionError("ReconnectionCoordinator not initialized") from None
                     await self.backend._reconnection_coordinator.handle_session_reconnect(data)
+                    return True
+                elif msg_type == "session_keepalive":
                     return True
             except json.JSONDecodeError:
                 logging.warning(f"Failed to parse WebSocket message: {msg.data}")
@@ -95,7 +99,7 @@ class MessageCoordinator:
 
                     # If connection is stale, trigger reconnect
                     if time_since_activity > self.backend._stale_threshold:
-                        logging.warning(f"Connection stale ({time_since_activity:.1f}s), triggering reconnect")
+                        logging.warning(f"🔄 Connection stale ({time_since_activity:.1f}s > {self.backend._stale_threshold}s), last_activity={self.backend._last_activity}, current_time={now}, triggering reconnect")
                         if self.backend._reconnection_coordinator is None:
                             raise AssertionError("ReconnectionCoordinator not initialized") from None
                         if not await self.backend._reconnection_coordinator.handle_reconnect():

@@ -82,14 +82,14 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         self._cleanup_registered = False
 
     async def subscribe_channel_chat(self, channel_id: str, user_id: str) -> bool:
-        """Subscribe to chat messages for a specific channel.
+        """Subscribe to chat messages for a specific user in a channel.
 
-        Creates an EventSub subscription for channel.chat.message events filtered
-        for the specified user ID. Implements rate limiting and error handling.
+        Creates an EventSub subscription for channel.chat.message events for a specific user
+        in the channel. Implements rate limiting and error handling.
 
         Args:
             channel_id (str): The broadcaster user ID of the channel.
-            user_id (str): The user ID to filter messages for (typically the bot's ID).
+            user_id (str): The user ID to filter messages for.
 
         Returns:
             bool: True if subscription was successful, False otherwise.
@@ -648,7 +648,7 @@ class SubscriptionManager(SubscriptionManagerProtocol):
 
         Args:
             channel_id (str): The broadcaster user ID.
-            user_id (str): The user ID to filter for.
+            user_id (str): The user ID to filter messages for.
 
         Returns:
             dict[str, Any]: The subscription request body.

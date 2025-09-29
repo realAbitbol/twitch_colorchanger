@@ -84,6 +84,30 @@ class TestMessageCoordinator:
             await self.coordinator.handle_message(mock_msg)
 
     @pytest.mark.asyncio
+    async def test_handle_message_session_keepalive_updates_activity(self):
+        """Test handle_message handles session_keepalive messages for activity tracking."""
+        # Arrange
+        mock_msg = Mock()
+        mock_msg.type = aiohttp.WSMsgType.TEXT
+        mock_msg.data = '{"type": "session_keepalive"}'
+
+        async def mock_process_message(data):
+            pass
+
+        mock_msg_processor = Mock()
+        mock_msg_processor.process_message = Mock(side_effect=mock_process_message)
+        self.mock_backend._msg_processor = mock_msg_processor
+
+        # Act
+        result = await self.coordinator.handle_message(mock_msg)
+
+        # Assert
+        assert result is True
+        assert self.mock_backend._last_activity is not None
+        # process_message should not be called for keepalive
+        mock_msg_processor.process_message.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_handle_message_invalid_json_logs_warning(self):
         """Test handle_message logs warning for invalid JSON."""
         # Arrange

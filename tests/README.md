@@ -32,10 +32,10 @@ tests/
 │   ├── integration_test_template.py
 │   └── e2e_test_template.py
 ├── unit/              # Unit tests (one file per module)
-├── integration/       # Integration tests
-├── e2e/              # End-to-end tests
 └── README.md         # This file
 ```
+
+**Note**: `integration/` and `e2e/` directories are planned for future phases.
 
 ## Running Tests
 

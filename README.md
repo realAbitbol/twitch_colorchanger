@@ -105,7 +105,7 @@ The bot requires minimal dependencies for optimal performance:
 
 - **Core**: `aiohttp>=3.12.0,<4.0.0` - Async HTTP client for Twitch API communication
 
-All dependencies are automatically installed via `requirements.txt`.
+All dependencies are automatically installed via `pyproject.toml`.
 
 ---
 
@@ -238,7 +238,7 @@ cd twitch_colorchanger
 # Install dependencies
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -e .
 
 # Run the bot
 python -m src.main
@@ -576,7 +576,7 @@ If you prefer to manage your own virtual environment:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate.bat
-pip install -r requirements.txt
+pip install -e .
 python -m src.main
 ```
 
@@ -685,7 +685,7 @@ python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 # Install development dependencies
-pip install -r requirements-dev.txt
+pip install -e ".[dev]"
 
 # Set up pre-commit hooks (recommended)
 pre-commit install
