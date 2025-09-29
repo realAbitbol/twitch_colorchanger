@@ -228,111 +228,16 @@ class TestReconnectionCoordinator:
         mock_logging.error.assert_called_once_with("WebSocket manager reports unhealthy connection")
 
     @pytest.mark.asyncio
-    async def test_validate_connection_health_success_with_message(self):
-        """Test validate_connection_health succeeds when receiving a valid message."""
+    async def test_validate_connection_health_success(self):
+        """Test validate_connection_health succeeds when WebSocket manager is healthy."""
         # Arrange
         mock_ws_manager = Mock()
         mock_ws_manager.is_healthy.return_value = True
-
-        mock_msg = Mock()
-        mock_msg.type = aiohttp.WSMsgType.TEXT
-        mock_ws_manager.receive_message = AsyncMock(return_value=mock_msg)
-
         self.mock_backend._ws_manager = mock_ws_manager
 
-        # Mock message coordinator to handle the message
-        mock_message_coordinator = AsyncMock()
-        self.mock_backend._message_coordinator = mock_message_coordinator
-
         # Act
-        with patch('asyncio.wait_for', new_callable=AsyncMock) as mock_wait_for:
-            mock_wait_for.return_value = mock_msg
-            with patch('src.chat.reconnection_coordinator.logging') as mock_logging:
-                result = await self.coordinator.validate_connection_health()
+        result = await self.coordinator.validate_connection_health()
 
         # Assert
         assert result is True
-        mock_logging.debug.assert_called()
-        mock_message_coordinator.handle_message.assert_called_once_with(mock_msg)
 
-    @pytest.mark.asyncio
-    async def test_validate_connection_health_handles_error_message(self):
-        """Test validate_connection_health fails when receiving ERROR message."""
-        # Arrange
-        mock_ws_manager = Mock()
-        mock_ws_manager.is_healthy.return_value = True
-
-        mock_msg = Mock()
-        mock_msg.type = aiohttp.WSMsgType.ERROR
-        mock_ws_manager.receive_message = AsyncMock(return_value=mock_msg)
-
-        self.mock_backend._ws_manager = mock_ws_manager
-
-        # Act
-        with patch('asyncio.wait_for', new_callable=AsyncMock) as mock_wait_for:
-            mock_wait_for.return_value = mock_msg
-            with patch('src.chat.reconnection_coordinator.logging') as mock_logging:
-                result = await self.coordinator.validate_connection_health()
-
-        # Assert
-        assert result is False
-        mock_logging.error.assert_called_once_with("WebSocket connection has error during health validation")
-
-    @pytest.mark.asyncio
-    async def test_validate_connection_health_handles_timeout(self):
-        """Test validate_connection_health succeeds on timeout (expected behavior)."""
-        # Arrange
-        mock_ws_manager = Mock()
-        mock_ws_manager.is_healthy.return_value = True
-        self.mock_backend._ws_manager = mock_ws_manager
-
-        # Act
-        with patch('asyncio.wait_for', side_effect=asyncio.TimeoutError), \
-             patch('src.chat.reconnection_coordinator.logging') as mock_logging:
-            result = await self.coordinator.validate_connection_health()
-
-        # Assert
-        assert result is True
-        mock_logging.debug.assert_called_once_with("WebSocket health check timeout (expected) - connection is healthy")
-
-    @pytest.mark.asyncio
-    async def test_validate_connection_health_handles_exceptions(self):
-        """Test validate_connection_health fails on general exceptions."""
-        # Arrange
-        mock_ws_manager = Mock()
-        mock_ws_manager.is_healthy.return_value = True
-        self.mock_backend._ws_manager = mock_ws_manager
-
-        # Act
-        with patch('asyncio.wait_for', side_effect=Exception("Test error")), \
-             patch('src.chat.reconnection_coordinator.logging') as mock_logging:
-            result = await self.coordinator.validate_connection_health()
-
-        # Assert
-        assert result is False
-        mock_logging.error.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_validate_connection_health_success_with_message_no_coordinator(self):
-        """Test validate_connection_health succeeds and logs warning when message coordinator is not initialized."""
-        # Arrange
-        mock_ws_manager = Mock()
-        mock_ws_manager.is_healthy.return_value = True
-
-        mock_msg = Mock()
-        mock_msg.type = aiohttp.WSMsgType.TEXT
-        mock_ws_manager.receive_message = AsyncMock(return_value=mock_msg)
-
-        self.mock_backend._ws_manager = mock_ws_manager
-        self.mock_backend._message_coordinator = None  # Explicitly set to None
-
-        # Act
-        with patch('asyncio.wait_for', new_callable=AsyncMock) as mock_wait_for:
-            mock_wait_for.return_value = mock_msg
-            with patch('src.chat.reconnection_coordinator.logging') as mock_logging:
-                result = await self.coordinator.validate_connection_health()
-
-        # Assert
-        assert result is True
-        mock_logging.warning.assert_called_once_with("MessageCoordinator not initialized, message discarded during health check")
-        mock_logging.debug.assert_called()

@@ -3,7 +3,7 @@ Unit tests for HookManager.
 """
 
 import asyncio
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -105,9 +105,7 @@ class TestHookManager:
     async def test_maybe_fire_update_hook_creates_task_when_changed(self):
         """Test maybe_fire_update_hook creates task when token changed."""
         # Arrange
-        async def mock_hook():
-            pass
-        hook_mock = Mock(side_effect=mock_hook)
+        hook_mock = AsyncMock()
         await self.hook_manager.register_update_hook("testuser", hook_mock)
 
         # Act
@@ -143,9 +141,7 @@ class TestHookManager:
     async def test_maybe_fire_invalidation_hook_creates_task(self):
         """Test maybe_fire_invalidation_hook creates task for invalidation."""
         # Arrange
-        async def mock_hook():
-            pass
-        hook_mock = Mock(side_effect=mock_hook)
+        hook_mock = AsyncMock()
         await self.hook_manager.register_invalidation_hook("testuser", hook_mock)
 
         # Act
@@ -285,14 +281,12 @@ class TestHookManager:
     async def test_maybe_fire_update_hook_task_creation_failure_logs_error(self):
         """Test maybe_fire_update_hook logs error when task creation fails."""
         # Arrange
-        async def mock_hook():
-            pass
-        test_hook = Mock(side_effect=mock_hook)
+        test_hook = AsyncMock()
         await self.hook_manager.register_update_hook("testuser", test_hook)
 
         # Act
         with patch.object(self.hook_manager, '_create_retained_task', side_effect=ValueError("Task creation failed")), \
-             patch('src.auth_token.hook_manager.logging') as mock_logging:
+              patch('src.auth_token.hook_manager.logging') as mock_logging:
             await self.hook_manager.maybe_fire_update_hook("testuser", token_changed=True)
 
         # Assert
@@ -307,14 +301,12 @@ class TestHookManager:
     async def test_maybe_fire_invalidation_hook_task_creation_failure_logs_error(self):
         """Test maybe_fire_invalidation_hook logs error when task creation fails."""
         # Arrange
-        async def mock_hook():
-            pass
-        test_hook = Mock(side_effect=mock_hook)
+        test_hook = AsyncMock()
         await self.hook_manager.register_invalidation_hook("testuser", test_hook)
 
         # Act
         with patch.object(self.hook_manager, '_create_retained_task', side_effect=RuntimeError("Task creation failed")), \
-             patch('src.auth_token.hook_manager.logging') as mock_logging:
+              patch('src.auth_token.hook_manager.logging') as mock_logging:
             await self.hook_manager.maybe_fire_invalidation_hook("testuser")
 
         # Assert

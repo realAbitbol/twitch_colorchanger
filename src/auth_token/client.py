@@ -213,6 +213,11 @@ class TokenClient:
                     logging.info(
                         f"☑️ Token refreshed for user {username} (lifetime {human_expires})"
                     )
+                    # Validate the refreshed token before returning
+                    valid, _ = await self._validate_remote(username, new_access)
+                    if not valid:
+                        logging.error(f"Refreshed token validation failed for user {username}")
+                        raise OAuthError("Refreshed token is invalid")
                     return TokenResult(
                         TokenOutcome.REFRESHED, new_access, new_refresh, expiry
                     )

@@ -274,10 +274,6 @@ class EventSubChatBackend:
             await self._connect_websocket()
             await self._setup_subscription_manager()
 
-            # Clean up stale subscriptions from previous sessions
-            if self._sub_manager:
-                await self._sub_manager.cleanup_stale_subscriptions()
-
             if not await self._subscription_coordinator.subscribe_primary_channel(user_ids):
                 return False
 

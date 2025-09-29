@@ -27,7 +27,7 @@ class TestConnectionStateManager:
         assert self.manager.pending_reconnect_session_id is None
         assert self.manager.pending_challenge is None
         assert self.manager.last_sequence is None
-        assert isinstance(self.manager.last_activity, float)
+        assert isinstance(self.manager.last_activity, list)
 
     def test_is_connected_returns_true_when_connected(self):
         """Test is_connected returns True when WebSocket is connected."""
@@ -83,7 +83,7 @@ class TestConnectionStateManager:
         self.connector.ws = mock_ws
         self.manager.connection_state = ConnectionState.CONNECTED
         self.manager.session_id = "session123"
-        self.manager.last_activity = time.monotonic()  # Recent activity
+        self.manager.last_activity = [time.monotonic()]  # Recent activity
 
         assert self.manager.is_healthy() is True
 
@@ -94,7 +94,7 @@ class TestConnectionStateManager:
         self.connector.ws = mock_ws
         self.manager.connection_state = ConnectionState.CONNECTED
         self.manager.session_id = "session123"
-        self.manager.last_activity = time.monotonic() - 120  # 2 minutes ago
+        self.manager.last_activity = [time.monotonic() - 120]  # 2 minutes ago
 
         # The method returns False for stale connections
         assert self.manager.is_healthy() is False
@@ -108,7 +108,7 @@ class TestConnectionStateManager:
         self.connector.ws = mock_ws
         self.manager.connection_state = ConnectionState.CONNECTED
         self.manager.session_id = "session123"
-        self.manager.last_activity = 100.0 - 60.0  # Exactly 60 seconds ago
+        self.manager.last_activity = [100.0 - 60.0]  # Exactly 60 seconds ago
 
         assert self.manager.is_healthy() is True
 
@@ -121,7 +121,7 @@ class TestConnectionStateManager:
         self.connector.ws = mock_ws
         self.manager.connection_state = ConnectionState.CONNECTED
         self.manager.session_id = "session123"
-        self.manager.last_activity = 100.0 - 61.0  # 61 seconds ago
+        self.manager.last_activity = [100.0 - 61.0]  # 61 seconds ago
 
         assert self.manager.is_healthy() is False
 

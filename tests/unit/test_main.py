@@ -15,10 +15,10 @@ class TestMain:
     @pytest.mark.asyncio
     async def test_main_success(self):
         """Test main function success path."""
-        async def mock_setup(loaded_config, config_file):
+        def mock_setup(loaded_config, config_file):
             return []
 
-        async def mock_run_bots(users_config_dicts, config_file):
+        def mock_run_bots(users_config_dicts, config_file):
             pass
 
         with patch('src.main.get_configuration') as mock_get_config, \

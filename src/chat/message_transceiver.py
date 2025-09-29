@@ -23,15 +23,15 @@ class MessageTransceiver:
 
     Attributes:
         connector (WebSocketConnector): The WebSocket connector instance.
-        last_activity (float): Timestamp of last activity.
+        last_activity (list[float]): Reference to last activity timestamp.
     """
 
-    def __init__(self, connector: WebSocketConnector, last_activity: float) -> None:
+    def __init__(self, connector: WebSocketConnector, last_activity: list[float]) -> None:
         """Initialize the Message Transceiver.
 
         Args:
             connector (WebSocketConnector): WebSocket connector.
-            last_activity (float): Reference to last activity timestamp.
+            last_activity (list[float]): Reference to last activity timestamp.
         """
         self.connector = connector
         self.last_activity = last_activity
@@ -52,7 +52,7 @@ class MessageTransceiver:
 
         try:
             await self.connector.ws.send_json(data)
-            self.last_activity = time.monotonic()
+            self.last_activity[0] = time.monotonic()
         except Exception as e:
             raise EventSubConnectionError(
                 f"WebSocket send failed: {str(e)}", operation_type="send"
@@ -76,7 +76,7 @@ class MessageTransceiver:
             msg = await asyncio.wait_for(
                 self.connector.ws.receive(), timeout=WEBSOCKET_MESSAGE_TIMEOUT_SECONDS
             )
-            self.last_activity = time.monotonic()
+            self.last_activity[0] = time.monotonic()
             return msg
         except TimeoutError:
             raise EventSubConnectionError(

@@ -68,7 +68,7 @@ class TestBackgroundTaskManager:
         """Test stop cancels background task when running."""
         # Arrange
         await self.task_manager.start()
-        mock_task = AsyncMock()
+        mock_task = Mock()
         self.task_manager.task = mock_task
 
         # Act
@@ -105,9 +105,6 @@ class TestBackgroundTaskManager:
         with patch.object(self.task_manager, '_process_single_background', new_callable=AsyncMock) as mock_process:
             async def mock_wait_for(coro, timeout=None):  # noqa: ASYNC109
                 self.task_manager.running = False
-                if hasattr(coro, '__await__'):
-                    task = asyncio.create_task(coro)
-                    task.cancel()
                 return None
 
             with patch('asyncio.wait_for', mock_wait_for):
@@ -491,9 +488,6 @@ class TestBackgroundTaskManager:
         with patch.object(self.task_manager, '_process_single_background', new_callable=AsyncMock):
             async def mock_wait_for(coro, timeout=None):  # noqa: ASYNC109
                 self.task_manager.running = False
-                if hasattr(coro, '__await__'):
-                    task = asyncio.create_task(coro)
-                    task.cancel()
                 return None
 
             with patch('asyncio.wait_for', mock_wait_for):

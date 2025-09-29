@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING, Any
-
-import aiohttp
 
 if TYPE_CHECKING:
     from .eventsub_backend import EventSubChatBackend
@@ -69,6 +67,9 @@ class ReconnectionCoordinator:
             logging.error("Connection health validation failed after reconnection")
             return False
 
+        # Reset last activity timestamp after successful reconnection
+        self.backend._ws_manager.state_manager.last_activity[0] = time.monotonic()
+
         new_session_id = getattr(self.backend._ws_manager, "session_id", None)
         logging.debug(f"Reconnect successful: new WS session_id={new_session_id}")
 
@@ -114,36 +115,4 @@ class ReconnectionCoordinator:
             logging.error("WebSocket manager reports unhealthy connection")
             return False
 
-        # Additional validation: test actual message reception with timeout
-        try:
-            # Try to receive a message with a short timeout to test if connection is responsive
-            msg = await asyncio.wait_for(
-                self.backend._ws_manager.receive_message(),
-                timeout=3.0  # 3 second timeout for health check
-            )
-
-            # If we get a message, we've validated the connection is working
-            logging.debug(f"Health check received message type: {msg.type}")
-
-            # Any message type except ERROR indicates the connection is responsive
-            if msg.type == aiohttp.WSMsgType.ERROR:
-                logging.error("WebSocket connection has error during health validation")
-                return False
-
-            # Process the received message to avoid message loss
-            if self.backend._message_coordinator is not None:
-                await self.backend._message_coordinator.handle_message(msg)
-            else:
-                logging.warning("MessageCoordinator not initialized, message discarded during health check")
-
-            # Connection is healthy and responsive
-            logging.debug("WebSocket connection health validation passed")
-            return True
-
-        except TimeoutError:
-            # Timeout is expected for health check - means connection is alive but no messages
-            logging.debug("WebSocket health check timeout (expected) - connection is healthy")
-            return True
-        except Exception as e:
-            logging.error(f"WebSocket health validation failed: {str(e)}")
-            return False
+        return True

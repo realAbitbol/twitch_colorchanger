@@ -29,7 +29,7 @@ class ConnectionStateManager:
         pending_reconnect_session_id (str | None): Session ID for reconnect.
         pending_challenge (str | None): Pending challenge for handshake.
         last_sequence (int | None): Last received message sequence number.
-        last_activity (float): Timestamp of last WebSocket activity.
+        last_activity (list[float]): Timestamp of last WebSocket activity.
     """
 
     def __init__(self, connector: WebSocketConnector) -> None:
@@ -44,7 +44,7 @@ class ConnectionStateManager:
         self.pending_reconnect_session_id: str | None = None
         self.pending_challenge: str | None = None
         self.last_sequence: int | None = None
-        self.last_activity = time.monotonic()
+        self.last_activity = [time.monotonic()]
 
     @property
     def is_connected(self) -> bool:
@@ -75,7 +75,7 @@ class ConnectionStateManager:
         # Check if we've received activity recently (within last 60 seconds)
         # This helps detect stale connections
         current_time = time.monotonic()
-        time_since_activity = current_time - self.last_activity
+        time_since_activity = current_time - self.last_activity[0]
 
         # If no activity for more than 60 seconds, consider it unhealthy
         if time_since_activity > 60.0:

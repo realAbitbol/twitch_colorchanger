@@ -233,10 +233,10 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         # Force cleanup if connection is stale
         if self.connector.ws and not self.connector.ws.closed:
             current_time = time.monotonic()
-            if current_time - self.state_manager.last_activity > 300.0:  # 5 minutes
+            if current_time - self.state_manager.last_activity[0] > 300.0:  # 5 minutes
                 logging.info("🧹 Cleaning up stale WebSocket connection")
                 await self.connector.cleanup_connection()
-                self.state_manager.last_activity = time.monotonic()
+                self.state_manager.last_activity[0] = time.monotonic()
 
         # Clean up connection pool
         await self._cleanup_stale_connections()
@@ -250,7 +250,7 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         stale_connections = [
             conn for conn in self._connection_pool.copy()
             if (hasattr(conn, 'state_manager') and conn.state_manager and
-                current_time - conn.state_manager.last_activity > 600.0)  # 10 minutes
+                current_time - conn.state_manager.last_activity[0] > 600.0)  # 10 minutes
         ]
 
         # Remove and cleanup stale connections

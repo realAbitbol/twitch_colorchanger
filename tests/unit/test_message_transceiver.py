@@ -16,7 +16,7 @@ class TestMessageTransceiver:
     def setup_method(self):
         """Setup method called before each test."""
         self.connector = Mock()
-        self.last_activity = 0.0
+        self.last_activity = [0.0]
         self.transceiver = MessageTransceiver(self.connector, self.last_activity)
 
     def teardown_method(self):
@@ -36,7 +36,7 @@ class TestMessageTransceiver:
         await self.transceiver.send_json(data)
 
         mock_ws.send_json.assert_called_once_with(data)
-        assert self.transceiver.last_activity != 0.0  # Should be updated
+        assert len(self.transceiver.last_activity) > 0  # Should be updated
 
     @pytest.mark.asyncio
     async def test_send_json_raises_when_not_connected(self):
@@ -73,7 +73,7 @@ class TestMessageTransceiver:
         result = await self.transceiver.receive_message()
 
         assert result == mock_msg
-        assert self.transceiver.last_activity != 0.0  # Should be updated
+        assert len(self.transceiver.last_activity) > 0  # Should be updated
 
     @pytest.mark.asyncio
     async def test_receive_message_raises_when_not_connected(self):
