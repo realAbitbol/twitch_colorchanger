@@ -9,6 +9,7 @@ import logging
 import aiohttp
 
 from .auth_token.manager import TokenManager
+from .chat.cleanup_coordinator import CleanupCoordinator
 from .config.async_persistence import cancel_pending_flush
 from .utils.resource_monitor import get_resource_monitor, log_resource_usage
 
@@ -22,6 +23,7 @@ class ApplicationContext:
     # Class / instance attribute type declarations (helps mypy)
     session: aiohttp.ClientSession | None
     token_manager: TokenManager | None
+    cleanup_coordinator: CleanupCoordinator | None
     _started: bool
     _lock: asyncio.Lock
 
@@ -29,6 +31,7 @@ class ApplicationContext:
         # Core resources
         self.session = None
         self.token_manager = None
+        self.cleanup_coordinator = None
         # Lifecycle flags
         self._started = False
         self._lock = asyncio.Lock()
@@ -53,6 +56,7 @@ class ApplicationContext:
         ctx.session = aiohttp.ClientSession()
         logging.debug("🔗 HTTP session created")
         ctx.token_manager = TokenManager(ctx.session)
+        ctx.cleanup_coordinator = CleanupCoordinator()
         # Register globally for atexit fallback
         global GLOBAL_CONTEXT  # noqa: PLW0603
         GLOBAL_CONTEXT = ctx
@@ -94,6 +98,7 @@ class ApplicationContext:
         async with self._lock:
             logging.info("🔻 Application context shutdown initiated")
             await self._stop_token_manager()
+            await self._shutdown_cleanup_coordinator()
             await cancel_pending_flush()
             await self._close_http_session()
 
@@ -127,6 +132,21 @@ class ApplicationContext:
             logging.error(f"💥 Error stopping token manager: {str(e)}")
         finally:
             self.token_manager = None
+
+    async def _shutdown_cleanup_coordinator(self) -> None:
+        """Shutdown the cleanup coordinator gracefully.
+
+        Attempts to shutdown the cleanup coordinator and handles any exceptions
+        that may occur during shutdown, logging errors appropriately.
+        """
+        if not self.cleanup_coordinator:
+            return
+        try:
+            await self.cleanup_coordinator.shutdown()
+        except (RuntimeError, OSError, ValueError) as e:
+            logging.error(f"💥 Error shutting down cleanup coordinator: {str(e)}")
+        finally:
+            self.cleanup_coordinator = None
 
     async def _close_http_session(self) -> None:
         """Close the HTTP session gracefully.

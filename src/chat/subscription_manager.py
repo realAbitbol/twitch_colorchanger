@@ -11,6 +11,7 @@ from typing import Any
 
 from ..api.twitch import TwitchAPI
 from ..errors.eventsub import AuthenticationError, SubscriptionError
+from .cleanup_coordinator import CleanupCoordinator
 from .protocols import SubscriptionManagerProtocol
 
 EVENTSUB_SUBSCRIPTIONS = "eventsub/subscriptions"
@@ -43,6 +44,7 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         token: str,
         client_id: str,
         token_manager: Any = None,
+        cleanup_coordinator: CleanupCoordinator | None = None,
     ):
         """Initialize the SubscriptionManager.
 
@@ -52,6 +54,7 @@ class SubscriptionManager(SubscriptionManagerProtocol):
             token (str): OAuth access token for API requests.
             client_id (str): Twitch application client ID.
             token_manager: Optional token manager for refresh on 401.
+            cleanup_coordinator: Optional cleanup coordinator for coordinated cleanup.
 
         Raises:
             ValueError: If any required parameter is None or empty.
@@ -70,12 +73,13 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         self._token = token
         self._client_id = client_id
         self._token_manager = token_manager
+        self._cleanup_coordinator = cleanup_coordinator
         self._active_subscriptions: dict[str, str] = {}  # sub_id -> channel_id
         self._rate_limiter = asyncio.Semaphore(
             10
         )  # Limit to 10 concurrent subscriptions
         self._token_lock = asyncio.Lock()  # Lock for atomic token updates
-        self._cleanup_task = asyncio.create_task(self._periodic_cleanup_loop())
+        self._cleanup_registered = False
 
     async def subscribe_channel_chat(self, channel_id: str, user_id: str) -> bool:
         """Subscribe to chat messages for a specific channel.
@@ -384,25 +388,32 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         self._token = new_access_token
         logging.info("🔄 EventSub access token updated")
 
-    async def _periodic_cleanup_loop(self) -> None:
-        """Periodic cleanup loop for stale EventSub subscriptions.
+    async def register_cleanup_task(self) -> bool:
+        """Register the cleanup task with the coordinator.
 
-        Runs indefinitely, performing cleanup every 6 hours to ensure
-        long-term reliability by removing any missed stale subscriptions.
+        Returns:
+            bool: True if elected as active cleanup manager, False otherwise.
         """
-        interval = 6 * 3600  # 6 hours in seconds
-        while True:
-            try:
-                logging.info("🧹 Starting periodic stale subscription cleanup")
-                await self.cleanup_stale_subscriptions()
-                logging.info("✅ Periodic stale subscription cleanup completed")
-            except Exception as e:
-                logging.warning(f"⚠️ Error during periodic cleanup: {str(e)}")
-            try:
-                await asyncio.sleep(interval)
-            except asyncio.CancelledError:
-                logging.debug("Periodic cleanup loop cancelled")
-                raise
+        if not self._cleanup_coordinator:
+            logging.debug("No cleanup coordinator available, skipping registration")
+            return False
+
+        if self._cleanup_registered:
+            logging.debug("Cleanup task already registered")
+            return False
+
+        elected = await self._cleanup_coordinator.register_cleanup_task(
+            self.cleanup_stale_subscriptions
+        )
+        self._cleanup_registered = True
+
+        if elected:
+            logging.info("🧹 Elected as active cleanup manager")
+        else:
+            logging.info("🧹 Registered as passive cleanup manager")
+
+        return elected
+
 
     async def __aenter__(self) -> "SubscriptionManager":
         """Async context manager entry."""
@@ -410,12 +421,11 @@ class SubscriptionManager(SubscriptionManagerProtocol):
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit with cleanup."""
-        if self._cleanup_task and not self._cleanup_task.done():
-            self._cleanup_task.cancel()
-            try:
-                await self._cleanup_task
-            except asyncio.CancelledError:
-                pass
+        if self._cleanup_coordinator and self._cleanup_registered:
+            await self._cleanup_coordinator.unregister_cleanup_task(
+                self.cleanup_stale_subscriptions
+            )
+            self._cleanup_registered = False
         await self.unsubscribe_all()
 
     async def _handle_subscription_request(

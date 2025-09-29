@@ -11,6 +11,7 @@ import aiohttp
 from ..api.twitch import TwitchAPI
 from ..chat.cache_manager import CacheManager
 from ..chat.channel_resolver import ChannelResolver
+from ..chat.cleanup_coordinator import CleanupCoordinator
 from ..chat.connection_coordinator import ConnectionCoordinator
 from ..chat.message_coordinator import MessageCoordinator
 from ..chat.message_processor import MessageProcessor
@@ -66,6 +67,7 @@ class EventSubChatBackend:
         channel_resolver: ChannelResolver | None = None,
         token_manager: TokenManager | None = None,
         cache_manager: CacheManager | None = None,
+        cleanup_coordinator: CleanupCoordinator | None = None,
     ) -> None:
         """Initialize the EventSub chat backend with dependency injection.
 
@@ -77,6 +79,7 @@ class EventSubChatBackend:
             channel_resolver (ChannelResolver | None): Channel resolver instance.
             token_manager (TokenManager | None): Token manager instance.
             cache_manager (CacheManager | None): Cache manager instance.
+            cleanup_coordinator (CleanupCoordinator | None): Cleanup coordinator instance.
         """
         # Configure timeouts for reliability: total 30s, connect 10s, read 20s
         # Balances responsiveness with resilience for unattended operation
@@ -91,6 +94,7 @@ class EventSubChatBackend:
         self._channel_resolver = channel_resolver
         self._token_manager = token_manager
         self._cache_manager = cache_manager
+        self._cleanup_coordinator = cleanup_coordinator
 
         # Handlers
         self._message_handler: MessageHandler | None = None
@@ -124,6 +128,7 @@ class EventSubChatBackend:
         self._subscription_coordinator: SubscriptionCoordinator | None = None
         self._message_coordinator: MessageCoordinator | None = None
         self._reconnection_coordinator: ReconnectionCoordinator | None = None
+        self._cleanup_coordinator = None
 
     async def __aenter__(self) -> EventSubChatBackend:
         """Async context manager entry."""
@@ -201,7 +206,10 @@ class EventSubChatBackend:
                 token=self._token or "",
                 client_id=self._client_id or "",
                 token_manager=self._token_manager,
+                cleanup_coordinator=self._cleanup_coordinator,
             )
+            # Register cleanup task with coordinator
+            await self._sub_manager.register_cleanup_task()
         else:
             await self._sub_manager.update_session_id(self._ws_manager.session_id)
 

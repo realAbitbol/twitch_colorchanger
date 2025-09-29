@@ -163,7 +163,10 @@ class ConnectionManager:
         if self.bot.access_token is None:
             logging.error(f"❌ Access token not available user={self.bot.username}")
             return False
-        self.chat_backend = EventSubChatBackend(http_session=self.bot.context.session)
+        self.chat_backend = EventSubChatBackend(
+            http_session=self.bot.context.session,
+            cleanup_coordinator=self.bot.context.cleanup_coordinator,
+        )
         backend = self.chat_backend
         # Route all messages through the message processor
         backend.set_message_handler(self.bot.message_processor.handle_message)
