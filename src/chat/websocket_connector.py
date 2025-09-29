@@ -91,7 +91,8 @@ class WebSocketConnector:
         """Clean up the current WebSocket connection and resources."""
         if self.ws:
             if self.ws.closed:
-                logging.info(f"🔌 WebSocket already closed by server: code={self.ws.close_code}, reason={self.ws.close_reason}")
+                close_reason = getattr(self.ws, 'close_reason', 'unknown')
+                logging.info(f"🔌 WebSocket already closed by server: code={self.ws.close_code}, reason={close_reason}")
             else:
                 try:
                     await self.ws.close(code=1000)
