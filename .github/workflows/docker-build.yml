@@ -49,8 +49,8 @@ jobs:
           context: .
           platforms: ${{ matrix.platform }}
           push: false
-          cache-from: type=gha,scope=build-${{ matrix.platform }}-${{ hashFiles('pyproject.toml', 'Dockerfile') }}
-          cache-to: type=gha,mode=max,scope=build-${{ matrix.platform }}-${{ hashFiles('pyproject.toml', 'Dockerfile') }}
+          cache-from: type=gha,scope=build-multi-${{ hashFiles('pyproject.toml', 'Dockerfile') }}
+          cache-to: type=gha,mode=max,scope=build-multi-${{ hashFiles('pyproject.toml', 'Dockerfile') }}
 
       - name: Generate test summary
         run: |
