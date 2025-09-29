@@ -5,11 +5,10 @@ from __future__ import annotations
 import asyncio
 import gc
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any
-
-import psutil
 
 
 @dataclass
@@ -85,7 +84,6 @@ class ResourceMonitor:
 
     def __init__(self):
         self.metrics = ResourceMetrics()
-        self._process = psutil.Process()
         self._monitoring = False
         self._monitor_task: asyncio.Task[Any] | None = None
 
@@ -154,19 +152,30 @@ class ResourceMonitor:
     def _take_snapshot(self) -> ResourceSnapshot:
         """Take a snapshot of current resource usage."""
         try:
-            memory_info = self._process.memory_info()
-            memory_mb = memory_info.rss / 1024 / 1024
+            # Get memory usage from /proc/self/statm
+            try:
+                with open('/proc/self/statm') as f:
+                    statm = f.read().split()
+                resident_pages = int(statm[1])
+                page_size = os.sysconf('SC_PAGE_SIZE')
+                memory_mb = resident_pages * page_size / 1024 / 1024
+            except (OSError, ValueError):
+                memory_mb = 0.0
 
             # Count open files (approximate)
             try:
-                open_files = len(self._process.open_files())
-            except (psutil.AccessDenied, AttributeError):
+                open_files = len(os.listdir('/proc/self/fd'))
+            except OSError:
                 open_files = 0
 
             # Count network connections (approximate)
             try:
-                connections = len(self._process.connections())
-            except (psutil.AccessDenied, AttributeError):
+                with open('/proc/net/tcp') as f:
+                    tcp_lines = f.readlines()
+                with open('/proc/net/tcp6') as f:
+                    tcp6_lines = f.readlines()
+                connections = len(tcp_lines) + len(tcp6_lines) - 2  # minus headers
+            except OSError:
                 connections = 0
 
             # Count asyncio tasks (approximate)
