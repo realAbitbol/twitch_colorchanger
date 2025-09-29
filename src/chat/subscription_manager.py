@@ -75,6 +75,7 @@ class SubscriptionManager(SubscriptionManagerProtocol):
             10
         )  # Limit to 10 concurrent subscriptions
         self._token_lock = asyncio.Lock()  # Lock for atomic token updates
+        self._cleanup_task = asyncio.create_task(self._periodic_cleanup_loop())
 
     async def subscribe_channel_chat(self, channel_id: str, user_id: str) -> bool:
         """Subscribe to chat messages for a specific channel.
@@ -137,6 +138,57 @@ class SubscriptionManager(SubscriptionManagerProtocol):
             raise SubscriptionError(
                 f"Verification error: {str(e)}", operation_type="verify"
             ) from e
+
+    async def cleanup_stale_subscriptions(self) -> None:
+        """Clean up stale EventSub subscriptions from previous sessions.
+
+        Queries all existing EventSub subscriptions from Twitch API, filters for
+        'channel.chat.message' type subscriptions with mismatched session IDs,
+        and deletes them. This prevents accumulation of stale subscriptions.
+
+        Handles API errors gracefully without failing startup. Logs the number
+        of subscriptions found, deleted, and any errors encountered.
+
+        Raises:
+            None: Errors are logged but do not propagate to prevent startup failure.
+        """
+        try:
+            data, status, _ = await self._api.request(
+                "GET",
+                EVENTSUB_SUBSCRIPTIONS,
+                access_token=self._token,
+                client_id=self._client_id,
+            )
+
+            if status == 401:
+                data, status = await self._refresh_token_and_retry_get()
+                if status == 401:
+                    logging.warning("⚠️ Cannot cleanup stale subscriptions: authentication failed")
+                    return
+
+            if status != 200:
+                logging.warning(f"⚠️ Cannot cleanup stale subscriptions: HTTP {status}")
+                return
+
+            stale_sub_ids = self._extract_stale_subscription_ids(data)
+            logging.info(f"🧹 Found {len(stale_sub_ids)} stale subscriptions to cleanup")
+
+            deleted_count = 0
+            error_count = 0
+            for sub_id in stale_sub_ids:
+                try:
+                    await self._unsubscribe_single(sub_id)
+                    deleted_count += 1
+                    logging.debug(f"✅ Cleaned up stale subscription {sub_id}")
+                except Exception as e:
+                    error_count += 1
+                    logging.warning(f"⚠️ Failed to cleanup stale subscription {sub_id}: {str(e)}")
+
+            if stale_sub_ids:
+                logging.info(f"🧹 Cleanup completed: {deleted_count} deleted, {error_count} errors")
+
+        except Exception as e:
+            logging.warning(f"⚠️ Error during stale subscription cleanup: {str(e)}")
 
     async def unsubscribe_all(self) -> None:
         """Unsubscribe from all active subscriptions.
@@ -251,8 +303,53 @@ class SubscriptionManager(SubscriptionManagerProtocol):
 
         return sub_ids
 
-    def update_session_id(self, new_session_id: str) -> None:
+    def _extract_stale_subscription_ids(self, data: Any) -> list[str]:
+        """Extract subscription IDs for stale subscriptions from API response data.
+
+        Filters for 'channel.chat.message' type subscriptions where the transport
+        session_id does not match the current session_id.
+
+        Args:
+            data (Any): The API response data.
+
+        Returns:
+            list[str]: List of subscription IDs for stale subscriptions.
+        """
+        if not isinstance(data, dict):
+            return []
+
+        rows = data.get("data")
+        if not isinstance(rows, list):
+            return []
+
+        stale_sub_ids = []
+        for entry in rows:
+            if not isinstance(entry, dict):
+                continue
+
+            # Only process channel.chat.message subscriptions
+            if entry.get("type") != EVENTSUB_CHAT_MESSAGE:
+                continue
+
+            transport = entry.get("transport", {})
+            if not isinstance(transport, dict):
+                continue
+
+            # Check if session_id matches current session
+            session_id = transport.get("session_id")
+            if isinstance(session_id, str) and session_id != self._session_id:
+                sub_id = entry.get("id")
+                if isinstance(sub_id, str):
+                    stale_sub_ids.append(sub_id)
+
+        return stale_sub_ids
+
+    async def update_session_id(self, new_session_id: str) -> None:
         """Update the session ID for new subscriptions.
+
+        Performs synchronous cleanup of subscriptions from the old session
+        before updating to the new session ID. This ensures stale subscriptions
+        are removed before new ones can be created.
 
         Args:
             new_session_id (str): The new EventSub session ID.
@@ -266,7 +363,9 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         # Clean up subscriptions from the old session before updating
         old_session_id = self._session_id
         if old_session_id != new_session_id:
-            asyncio.create_task(self._cleanup_old_session_subscriptions(old_session_id))
+            logging.info(f"🧹 Starting synchronous cleanup of subscriptions from old session {old_session_id}")
+            await self._cleanup_old_session_subscriptions(old_session_id)
+            logging.info(f"✅ Completed cleanup of old session {old_session_id}")
 
         self._session_id = new_session_id
         logging.info(f"🔄 EventSub session ID updated to {new_session_id}")
@@ -285,12 +384,38 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         self._token = new_access_token
         logging.info("🔄 EventSub access token updated")
 
+    async def _periodic_cleanup_loop(self) -> None:
+        """Periodic cleanup loop for stale EventSub subscriptions.
+
+        Runs indefinitely, performing cleanup every 6 hours to ensure
+        long-term reliability by removing any missed stale subscriptions.
+        """
+        interval = 6 * 3600  # 6 hours in seconds
+        while True:
+            try:
+                logging.info("🧹 Starting periodic stale subscription cleanup")
+                await self.cleanup_stale_subscriptions()
+                logging.info("✅ Periodic stale subscription cleanup completed")
+            except Exception as e:
+                logging.warning(f"⚠️ Error during periodic cleanup: {str(e)}")
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                logging.debug("Periodic cleanup loop cancelled")
+                raise
+
     async def __aenter__(self) -> "SubscriptionManager":
         """Async context manager entry."""
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit with cleanup."""
+        if self._cleanup_task and not self._cleanup_task.done():
+            self._cleanup_task.cancel()
+            try:
+                await self._cleanup_task
+            except asyncio.CancelledError:
+                pass
         await self.unsubscribe_all()
 
     async def _handle_subscription_request(

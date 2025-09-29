@@ -73,7 +73,7 @@ class SubscriptionManagerProtocol(Protocol):
         """Get list of channel IDs with active subscriptions."""
         ...
 
-    def update_session_id(self, new_session_id: str) -> None:
+    async def update_session_id(self, new_session_id: str) -> None:
         """Update the session ID for new subscriptions."""
         ...
 

@@ -190,7 +190,7 @@ class EventSubChatBackend:
         if self._ws_manager:
             await self._ws_manager.connect()
 
-    def _setup_subscription_manager(self) -> None:
+    async def _setup_subscription_manager(self) -> None:
         """Setup subscription manager after WebSocket connection."""
         if not self._ws_manager or not self._ws_manager.session_id:
             return
@@ -203,7 +203,7 @@ class EventSubChatBackend:
                 token_manager=self._token_manager,
             )
         else:
-            self._sub_manager.update_session_id(self._ws_manager.session_id)
+            await self._sub_manager.update_session_id(self._ws_manager.session_id)
 
 
     def set_token_invalid_callback(self, callback) -> None:
@@ -265,7 +265,11 @@ class EventSubChatBackend:
                 return False
 
             await self._connect_websocket()
-            self._setup_subscription_manager()
+            await self._setup_subscription_manager()
+
+            # Clean up stale subscriptions from previous sessions
+            if self._sub_manager:
+                await self._sub_manager.cleanup_stale_subscriptions()
 
             if not await self._subscription_coordinator.subscribe_primary_channel(user_ids):
                 return False

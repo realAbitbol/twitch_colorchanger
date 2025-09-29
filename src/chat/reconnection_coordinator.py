@@ -74,7 +74,7 @@ class ReconnectionCoordinator:
 
         if self.backend._sub_manager and new_session_id:
             try:
-                self.backend._sub_manager.update_session_id(new_session_id)
+                await self.backend._sub_manager.update_session_id(new_session_id)
             except Exception as e:
                 logging.error(f"Failed to update session_id: {e}")
                 return False

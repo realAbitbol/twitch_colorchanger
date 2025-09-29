@@ -160,7 +160,7 @@ class TestReconnectionCoordinator:
         self.mock_backend._ws_manager = mock_ws_manager
 
         mock_sub_manager = Mock()
-        mock_sub_manager.update_session_id = Mock(side_effect=lambda *args, **kwargs: None)
+        mock_sub_manager.update_session_id = AsyncMock()
         mock_sub_manager.unsubscribe_all = AsyncMock()
         self.mock_backend._sub_manager = mock_sub_manager
 
