@@ -198,7 +198,7 @@ jobs:
           echo "image_ref=${{ env.GHCR_IMAGE_NAME }}@${{ needs.build-and-push.outputs.digest }}" >> $GITHUB_OUTPUT
 
       - name: Create output directory for Trivy results
-        run: mkdir -p trivy-results-linux
+        run: mkdir -p $(dirname "trivy-results-linux/${{ matrix.platform }}.sarif")
 
       - name: Run Trivy vulnerability scanner (${{ matrix.platform }})
         run: |
@@ -207,10 +207,10 @@ jobs:
             aquasec/trivy:latest image \
             --platform ${{ matrix.platform }} \
             --format sarif \
-            --output /workspace/trivy-results-${{ matrix.platform }}.sarif \
+            --output /workspace/trivy-results-linux/${{ matrix.platform }}.sarif \
             ${{ steps.scanref.outputs.image_ref }}
 
       - name: Upload Trivy scan results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: 'trivy-results-${{ matrix.platform }}.sarif'
+          sarif_file: 'trivy-results-linux/${{ matrix.platform }}.sarif'
