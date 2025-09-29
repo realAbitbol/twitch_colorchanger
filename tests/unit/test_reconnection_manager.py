@@ -25,9 +25,9 @@ class TestReconnectionManager:
         pass
 
     @pytest.mark.asyncio
-    async def test_reconnect_calls_reconnect_with_backoff(self):
-        """Test reconnect delegates to _reconnect_with_backoff."""
-        with patch.object(self.manager, '_reconnect_with_backoff', new_callable=AsyncMock) as mock_reconnect:
+    async def test_reconnect_calls_reconnect_once(self):
+        """Test reconnect delegates to _reconnect_once."""
+        with patch.object(self.manager, '_reconnect_once', new_callable=AsyncMock) as mock_reconnect:
             mock_reconnect.return_value = True
             result = await self.manager.reconnect()
 
@@ -35,34 +35,20 @@ class TestReconnectionManager:
         mock_reconnect.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_reconnect_with_backoff_success(self):
-        """Test _reconnect_with_backoff succeeds on first attempt."""
-        self.manager.running = True
+    async def test_reconnect_once_success(self):
+        """Test _reconnect_once succeeds."""
         self.connector.connect = AsyncMock()
         self.connector.disconnect = AsyncMock()
 
-        with patch('src.chat.reconnection_manager.asyncio.sleep'):
-            result = await self.manager._reconnect_with_backoff()
+        result = await self.manager._reconnect_once()
 
         assert result is True
         self.connector.disconnect.assert_called_once()
         self.connector.connect.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_reconnect_with_backoff_respects_stop_event(self):
-        """Test _reconnect_with_backoff stops when stop event is set."""
-        self.stop_event.set()
-
-        result = await self.manager._reconnect_with_backoff()
-
-        assert result is False
-        self.connector.disconnect.assert_not_called()
-        self.connector.connect.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_reconnect_with_backoff_checks_circuit_breaker(self):
-        """Test _reconnect_with_backoff checks circuit breaker state."""
-        self.manager.running = True
+    async def test_reconnect_once_checks_circuit_breaker(self):
+        """Test _reconnect_once checks circuit breaker state."""
         # Mock the circuit breaker as closed
         mock_cb = Mock()
         mock_cb.is_open = False
@@ -71,37 +57,25 @@ class TestReconnectionManager:
         self.connector.connect = AsyncMock()
         self.connector.disconnect = AsyncMock()
 
-        result = await self.manager._reconnect_with_backoff()
+        result = await self.manager._reconnect_once()
 
         assert result is True
         self.connector.disconnect.assert_called_once()
         self.connector.connect.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_reconnect_with_backoff_applies_backoff_on_failure(self):
-        """Test _reconnect_with_backoff applies exponential backoff on failures."""
-        self.manager.running = True
-        def mock_connect():
-            if not hasattr(mock_connect, 'count'):
-                mock_connect.count = 0
-            mock_connect.count += 1
-            if mock_connect.count == 1:
-                raise Exception("Fail")
-            async def success():
-                return None
-            return success()
+    async def test_reconnect_once_circuit_breaker_open(self):
+        """Test _reconnect_once returns False when circuit breaker is open."""
+        # Mock the circuit breaker as open
+        mock_cb = Mock()
+        mock_cb.is_open = True
+        self.manager.circuit_breaker = mock_cb
 
-        self.connector.connect.side_effect = mock_connect
-        self.connector.disconnect = AsyncMock()
+        result = await self.manager._reconnect_once()
 
-        with patch('src.chat.reconnection_manager.asyncio.sleep', new_callable=AsyncMock) as mock_sleep:
-            result = await self.manager._reconnect_with_backoff()
-
-        assert result is True
-        # Should have slept for backoff + jitter
-        assert mock_sleep.call_count >= 1
-        # Backoff should have been reset on success
-        assert self.manager.backoff == 1.0
+        assert result is False
+        self.connector.disconnect.assert_not_called()
+        self.connector.connect.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_handle_challenge_success(self):

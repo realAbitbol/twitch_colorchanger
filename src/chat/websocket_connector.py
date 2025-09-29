@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 import aiohttp
 
@@ -44,6 +45,7 @@ class WebSocketConnector:
         self.ws_url = ws_url
         self.ws: aiohttp.ClientWebSocketResponse | None = None
 
+
     async def connect(self) -> None:
         """Establish WebSocket connection.
 
@@ -60,6 +62,7 @@ class WebSocketConnector:
                 "Client-Id": self.client_id,
                 "Authorization": f"Bearer {self.token}",
             }
+            logging.info(f"🔌 WebSocket connecting to {self.ws_url} at {time.time():.2f}, sending headers with Bearer token (length: {len(self.token)})")
             self.ws = await self.session.ws_connect(
                 self.ws_url,
                 heartbeat=WEBSOCKET_HEARTBEAT_SECONDS,
@@ -86,10 +89,13 @@ class WebSocketConnector:
 
     async def _cleanup_connection(self) -> None:
         """Clean up the current WebSocket connection and resources."""
-        if self.ws and not self.ws.closed:
-            try:
-                await self.ws.close(code=1000)
-                logging.info("🔌 WebSocket disconnected")
-            except Exception as e:
-                logging.warning(f"⚠️ WebSocket close error: {str(e)}")
+        if self.ws:
+            if self.ws.closed:
+                logging.info(f"🔌 WebSocket already closed by server: code={self.ws.close_code}, reason={self.ws.close_reason}")
+            else:
+                try:
+                    await self.ws.close(code=1000)
+                    logging.info("🔌 WebSocket disconnected")
+                except Exception as e:
+                    logging.warning(f"⚠️ WebSocket close error: {str(e)}")
         self.ws = None

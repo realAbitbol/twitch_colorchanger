@@ -303,6 +303,8 @@ class EventSubChatBackend:
         if not new_token:
             return
         self._token = new_token
+        if self._ws_manager:
+            self._ws_manager.update_access_token(new_token)
         if self._sub_manager:
             self._sub_manager.update_access_token(new_token)
         if self._token_manager:

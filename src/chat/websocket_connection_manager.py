@@ -204,6 +204,20 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         """
         self.state_manager.update_url(new_url)
 
+    def update_access_token(self, new_token: str) -> None:
+        """Update the access token and reconnect if connected.
+
+        Args:
+            new_token (str): The new access token.
+        """
+        if not new_token:
+            return
+        self.token = new_token
+        self.connector.token = new_token
+        # If currently connected, trigger reconnection to use new token
+        if self.is_connected:
+            asyncio.create_task(self.reconnect())
+
     async def disconnect(self) -> None:
         """Disconnect from WebSocket and cleanup resources.
 

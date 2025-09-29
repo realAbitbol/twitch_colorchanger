@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import secrets
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -13,6 +15,9 @@ class ReconnectionCoordinator:
 
     def __init__(self, backend: EventSubChatBackend) -> None:
         self.backend = backend
+        self.backoff = 5.0  # Initial backoff: 5 seconds
+        self.max_backoff = 60.0  # Maximum backoff: 60 seconds
+        self.max_attempts = 3  # Maximum reconnection attempts
 
     async def handle_session_reconnect(self, data: dict[str, Any]) -> None:
         """Handle session reconnect message from Twitch.
@@ -42,7 +47,7 @@ class ReconnectionCoordinator:
             logging.error(f"Failed to handle session reconnect: {str(e)}")
 
     async def handle_reconnect(self) -> bool:
-        """Handle reconnection logic with connection health validation.
+        """Handle reconnection logic with exponential backoff and connection health validation.
 
         Returns:
             bool: True if reconnection successful and healthy, False otherwise.
@@ -50,55 +55,112 @@ class ReconnectionCoordinator:
         if not self.backend._ws_manager:
             return False
 
-        old_session_id = getattr(self.backend._ws_manager, "session_id", None)
-        logging.debug(f"Reconnect: old WS session_id={old_session_id}")
+        attempt = 0
+        while attempt < self.max_attempts:
+            attempt += 1
+            start_time = time.time()
+            logging.info(f"🔄 Starting WebSocket reconnection attempt {attempt} at {start_time:.2f}")
 
-        try:
-            success = await self.backend._ws_manager.reconnect()
-        except Exception as e:
-            logging.error(f"Reconnect failed: {e}")
-            return False
+            old_session_id = getattr(self.backend._ws_manager, "session_id", None)
+            logging.debug(f"Reconnect: old WS session_id={old_session_id}")
 
-        if not success:
-            return False
-
-        # Validate connection health after reconnection
-        if not await self.validate_connection_health():
-            logging.error("Connection health validation failed after reconnection")
-            return False
-
-        # Reset last activity timestamp after successful reconnection
-        self.backend._ws_manager.state_manager.last_activity[0] = time.monotonic()
-
-        new_session_id = getattr(self.backend._ws_manager, "session_id", None)
-        logging.debug(f"Reconnect successful: new WS session_id={new_session_id}")
-
-        if self.backend._sub_manager and new_session_id:
             try:
-                await self.backend._sub_manager.update_session_id(new_session_id)
+                success = await self.backend._ws_manager.reconnect()
             except Exception as e:
-                logging.error(f"Failed to update session_id: {e}")
+                duration = time.time() - start_time
+                logging.error(f"🔄 Reconnection attempt {attempt} failed after {duration:.2f}s: {e}")
+
+                if attempt < self.max_attempts:
+                    # Apply backoff
+                    sleep_time = self.backoff + self._jitter(0, 0.25 * self.backoff)
+                    await asyncio.sleep(sleep_time)
+                    self.backoff = min(self.backoff * 2, self.max_backoff)
+                continue
+
+            if not success:
+                duration = time.time() - start_time
+                logging.error(f"🔄 WebSocket reconnection attempt {attempt} failed after {duration:.2f}s")
+
+                if attempt < self.max_attempts:
+                    # Apply backoff
+                    sleep_time = self.backoff + self._jitter(0, 0.25 * self.backoff)
+                    await asyncio.sleep(sleep_time)
+                    self.backoff = min(self.backoff * 2, self.max_backoff)
+                continue
+
+            # Validate connection health after reconnection
+            if not await self.validate_connection_health():
+                duration = time.time() - start_time
+                logging.error(f"🔄 Connection health validation failed after reconnection attempt {attempt} ({duration:.2f}s)")
+
+                if attempt < self.max_attempts:
+                    # Apply backoff
+                    sleep_time = self.backoff + self._jitter(0, 0.25 * self.backoff)
+                    await asyncio.sleep(sleep_time)
+                    self.backoff = min(self.backoff * 2, self.max_backoff)
+                continue
+
+            # Reset last activity timestamp after successful reconnection
+            self.backend._ws_manager.state_manager.last_activity[0] = time.monotonic()
+
+            # Reset backoff on success
+            self.backoff = 5.0
+
+            new_session_id = getattr(self.backend._ws_manager, "session_id", None)
+            logging.debug(f"Reconnect successful: new WS session_id={new_session_id}")
+
+            if self.backend._sub_manager and new_session_id:
+                try:
+                    await self.backend._sub_manager.update_session_id(new_session_id)
+                except Exception as e:
+                    duration = time.time() - start_time
+                    logging.error(f"🔄 Failed to update session_id after {duration:.2f}s: {e}")
+                    return False
+
+            if self.backend._sub_manager:
+                try:
+                    await self.backend._sub_manager.unsubscribe_all()
+                except Exception as e:
+                    duration = time.time() - start_time
+                    logging.error(f"🔄 Failed to unsubscribe all after {duration:.2f}s: {e}")
+                    return False
+
+            if self.backend._subscription_coordinator is None:
+                raise AssertionError("SubscriptionCoordinator not initialized")
+            try:
+                resub_success = await self.backend._subscription_coordinator.resubscribe_all_channels()
+            except Exception as e:
+                duration = time.time() - start_time
+                logging.error(f"🔄 Failed to resubscribe all channels after {duration:.2f}s: {e}")
                 return False
 
-        if self.backend._sub_manager:
-            try:
-                await self.backend._sub_manager.unsubscribe_all()
-            except Exception as e:
-                logging.error(f"Failed to unsubscribe all: {e}")
+            if not resub_success:
+                duration = time.time() - start_time
+                logging.error(f"🔄 Resubscription failed after {duration:.2f}s")
                 return False
 
-        if self.backend._subscription_coordinator is None:
-            raise AssertionError("SubscriptionCoordinator not initialized")
-        try:
-            resub_success = await self.backend._subscription_coordinator.resubscribe_all_channels()
-        except Exception as e:
-            logging.error(f"Failed to resubscribe all channels: {e}")
-            return False
+            duration = time.time() - start_time
+            logging.info(f"🔄 WebSocket reconnection successful on attempt {attempt}, completed in {duration:.2f}s")
+            return True
 
-        if not resub_success:
-            return False
+        logging.error(f"🔄 Reconnection failed after {self.max_attempts} attempts")
+        return False
 
-        return True
+    def _jitter(self, a: float, b: float) -> float:
+        """Generate jitter for backoff timing.
+
+        Args:
+            a (float): Minimum value.
+            b (float): Maximum value.
+
+        Returns:
+            float: Random value between a and b.
+        """
+        if b <= a:
+            return a
+        span = b - a
+        r = secrets.randbelow(1000) / 1000.0
+        return a + r * span
 
     async def validate_connection_health(self) -> bool:
         """Validate that the WebSocket connection is healthy after reconnection.

@@ -55,7 +55,7 @@ class TestWebSocketConnector:
 
         assert self.connector.ws == mock_ws
         self.session.ws_connect.assert_called_once()
-        mock_logging.info.assert_called_once()
+        assert mock_logging.info.call_count == 2
 
     @pytest.mark.asyncio
     async def test_connect_calls_cleanup_first(self):

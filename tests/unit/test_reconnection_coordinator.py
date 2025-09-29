@@ -126,11 +126,12 @@ class TestReconnectionCoordinator:
         self.mock_backend._ws_manager = mock_ws_manager
 
         # Act
-        result = await self.coordinator.handle_reconnect()
+        with patch('asyncio.sleep', new_callable=AsyncMock):
+            result = await self.coordinator.handle_reconnect()
 
         # Assert
         assert result is False
-        mock_ws_manager.reconnect.assert_called_once()
+        assert mock_ws_manager.reconnect.call_count == 3  # max_attempts
 
     @pytest.mark.asyncio
     async def test_handle_reconnect_health_validation_fails(self):
@@ -140,7 +141,8 @@ class TestReconnectionCoordinator:
         mock_ws_manager.reconnect.return_value = True
         self.mock_backend._ws_manager = mock_ws_manager
 
-        with patch.object(self.coordinator, 'validate_connection_health', new_callable=AsyncMock) as mock_validate:
+        with patch.object(self.coordinator, 'validate_connection_health', new_callable=AsyncMock) as mock_validate, \
+             patch('asyncio.sleep', new_callable=AsyncMock):
             mock_validate.return_value = False
 
             # Act
@@ -148,7 +150,7 @@ class TestReconnectionCoordinator:
 
         # Assert
         assert result is False
-        mock_validate.assert_called_once()
+        assert mock_validate.call_count == 3  # max_attempts
 
     @pytest.mark.asyncio
     async def test_handle_reconnect_success(self):
@@ -190,12 +192,13 @@ class TestReconnectionCoordinator:
         self.mock_backend._ws_manager = mock_ws_manager
 
         # Act
-        with patch('src.chat.reconnection_coordinator.logging') as mock_logging:
+        with patch('src.chat.reconnection_coordinator.logging') as mock_logging, \
+             patch('asyncio.sleep', new_callable=AsyncMock):
             result = await self.coordinator.handle_reconnect()
 
         # Assert
         assert result is False
-        mock_logging.error.assert_called()
+        assert mock_logging.error.call_count == 4  # max_attempts + final failure log
 
     @pytest.mark.asyncio
     async def test_validate_connection_health_no_ws_manager(self):

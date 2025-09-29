@@ -11,9 +11,7 @@ from typing import TYPE_CHECKING
 import aiohttp
 
 from ..constants import (
-    EVENTSUB_JITTER_FACTOR,
     EVENTSUB_MAX_BACKOFF_SECONDS,
-    EVENTSUB_RECONNECT_DELAY_SECONDS,
     WEBSOCKET_MESSAGE_TIMEOUT_SECONDS,
 )
 from ..errors.eventsub import EventSubConnectionError
@@ -48,64 +46,39 @@ class ReconnectionManager:
         self.circuit_breaker = get_circuit_breaker("websocket_connection")
 
     async def reconnect(self) -> bool:
-        """Request reconnection with backoff.
+        """Attempt a single reconnection.
 
         Returns:
-            bool: True if reconnected successfully, False if abandoned.
+            bool: True if reconnected successfully, False otherwise.
         """
-        return await self._reconnect_with_backoff()
+        return await self._reconnect_once()
 
-    async def _reconnect_with_backoff(self) -> bool:
-        """Reconnect with exponential backoff.
-
-        Attempts reconnection with increasing backoff times until successful
-        or stop event is set. Respects circuit breaker state.
+    async def _reconnect_once(self) -> bool:
+        """Attempt a single reconnection.
 
         Returns:
-            bool: True if reconnected successfully, False if abandoned.
+            bool: True if reconnected successfully, False otherwise.
         """
-        attempt = 0
-        while not self._stop_event.is_set():
-            attempt += 1
-
+        try:
             # Check if circuit breaker is open before attempting connection
             if self.circuit_breaker.is_open:
-                sleep_time = self.circuit_breaker.config.recovery_timeout
-                logging.info(
-                    f"⏸️ Circuit breaker open, waiting {sleep_time}s before retry"
-                )
-                await asyncio.sleep(sleep_time)
-                continue
+                logging.info("⏸️ Circuit breaker open, cannot reconnect")
+                return False
 
-            try:
-                # Cleanup previous connection
-                await self.connector.disconnect()
+            # Cleanup previous connection
+            await self.connector.disconnect()
 
-                # Wait before reconnect
-                await asyncio.sleep(EVENTSUB_RECONNECT_DELAY_SECONDS)
+            logging.info(f"🔄 Reconnect attempt to {self.connector.ws_url}")
 
-                logging.info(f"🔄 Reconnect attempt {attempt} to {self.connector.ws_url}")
+            # Attempt connection
+            await self.connector.connect()
 
-                # Attempt connection
-                await self.connector.connect()
+            logging.info("✅ Reconnect successful")
+            return True
 
-                # Reset backoff on success
-                self.backoff = 1.0
-                logging.info(f"✅ Reconnect successful on attempt {attempt}")
-                return True
-
-            except Exception as e:
-                logging.error(f"❌ Reconnect failed attempt {attempt}: {str(e)}")
-
-                # Apply backoff
-                sleep_time = self.backoff + self._jitter(
-                    0, EVENTSUB_JITTER_FACTOR * self.backoff
-                )
-                await asyncio.sleep(sleep_time)
-                self.backoff = min(self.backoff * 2, self.max_backoff)
-
-        logging.error("❌ Reconnect abandoned")
-        return False
+        except Exception as e:
+            logging.error(f"❌ Reconnect failed: {str(e)}")
+            return False
 
     async def handle_challenge(self, pending_challenge: str | None) -> None:
         """Handle challenge/response handshake.

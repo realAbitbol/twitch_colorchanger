@@ -77,6 +77,7 @@ class MessageTransceiver:
                 self.connector.ws.receive(), timeout=WEBSOCKET_MESSAGE_TIMEOUT_SECONDS
             )
             self.last_activity[0] = time.monotonic()
+
             return msg
         except TimeoutError:
             raise EventSubConnectionError(
