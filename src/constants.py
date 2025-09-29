@@ -104,7 +104,7 @@ HTTP_REQUEST_TIMEOUT_SECONDS = _get_env_int(
     "HTTP_REQUEST_TIMEOUT_SECONDS", 30
 )  # Default HTTP request timeout
 WEBSOCKET_MESSAGE_TIMEOUT_SECONDS = _get_env_int(
-    "WEBSOCKET_MESSAGE_TIMEOUT_SECONDS", 10
+    "WEBSOCKET_MESSAGE_TIMEOUT_SECONDS", 45
 )  # WebSocket message timeout
 
 # Retry/backoff constants
