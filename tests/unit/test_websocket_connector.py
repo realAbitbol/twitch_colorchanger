@@ -56,10 +56,10 @@ class TestWebSocketConnector:
             self.connector.ws_url,
             extra_headers={"Client-Id": self.connector.client_id, "Authorization": f"Bearer {self.connector.token}"},
             subprotocols=("twitch-eventsub-ws",),
-            ping_interval=None,
+            ping_interval=30,
             create_protocol=TwitchEventSubProtocol,
         )
-        assert mock_logging.info.call_count == 2
+        assert mock_logging.info.call_count == 3
 
     @pytest.mark.asyncio
     async def test_connect_calls_cleanup_first(self):
