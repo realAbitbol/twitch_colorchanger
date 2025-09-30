@@ -288,6 +288,10 @@ class TestWebSocketPipelineIntegration:
 
         message_coordinator.backend._reconnection_coordinator = Mock()
         message_coordinator.backend._reconnection_coordinator.handle_session_reconnect = AsyncMock()
+        message_coordinator.backend._reconnection_coordinator.handle_reconnect = AsyncMock()
+        message_coordinator.backend._ws_manager = Mock()
+        message_coordinator.backend._ws_manager.update_url = Mock()
+        message_coordinator.backend._ws_manager.reconnect = AsyncMock()
 
         # Act
         result = await message_coordinator.handle_message(message)

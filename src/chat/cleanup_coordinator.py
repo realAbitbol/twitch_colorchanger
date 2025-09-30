@@ -89,7 +89,6 @@ class CleanupCoordinator:
             cleanup_func: The cleanup function to unregister.
         """
         async with self._lock:
-            was_active = cleanup_func in self._registered_tasks
             self._registered_tasks.discard(cleanup_func)
 
             # If this was the active task, cancel it and elect a new one if available

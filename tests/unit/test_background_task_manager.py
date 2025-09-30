@@ -107,7 +107,7 @@ class TestBackgroundTaskManager:
                 self.task_manager.running = False
                 return None
 
-            with patch('asyncio.wait_for', mock_wait_for):
+            with patch('asyncio.wait_for', mock_wait_for), patch('asyncio.sleep', new_callable=AsyncMock):
                 # Stop after one iteration
                 self.task_manager.running = True
 
@@ -490,7 +490,7 @@ class TestBackgroundTaskManager:
                 self.task_manager.running = False
                 return None
 
-            with patch('asyncio.wait_for', mock_wait_for):
+            with patch('asyncio.wait_for', mock_wait_for), patch('asyncio.sleep', new_callable=AsyncMock):
                 # Stop after one iteration
                 self.task_manager.running = True
 
