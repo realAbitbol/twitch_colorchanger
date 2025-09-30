@@ -67,6 +67,8 @@ class CircuitBreaker:
         self,
         func: Callable[[], T | Any],
         *args: Any,
+        allow_on_open: bool = False,
+        suppress_warnings: bool = False,
         **kwargs: Any,
     ) -> T:
         """Execute function through circuit breaker.
@@ -74,13 +76,15 @@ class CircuitBreaker:
         Args:
             func: Function to execute
             *args: Positional arguments for function
+            allow_on_open: If True, allow execution even when circuit breaker is OPEN
+            suppress_warnings: If True, suppress circuit breaker state change warnings
             **kwargs: Keyword arguments for function
 
         Returns:
             Function result if successful
 
         Raises:
-            CircuitBreakerOpenException: If circuit breaker is OPEN
+            CircuitBreakerOpenException: If circuit breaker is OPEN and allow_on_open is False
             Exception: If function execution fails
         """
         self.last_used = time.monotonic()
@@ -90,10 +94,11 @@ class CircuitBreaker:
                 if self._should_attempt_recovery():
                     self.state = CircuitBreakerState.HALF_OPEN
                     self.success_count = 0
-                    logging.info(
-                        f"🔄 Circuit breaker '{self.config.name}' transitioning to HALF_OPEN"
-                    )
-                else:
+                    if not suppress_warnings:
+                        logging.info(
+                            f"🔄 Circuit breaker '{self.config.name}' transitioning to HALF_OPEN"
+                        )
+                elif not allow_on_open:
                     raise CircuitBreakerOpenException(
                         f"Circuit breaker '{self.config.name}' is OPEN"
                     )
@@ -120,7 +125,7 @@ class CircuitBreaker:
         except Exception:
             # Record failure with lock
             async with self._lock:
-                self._record_failure()
+                self._record_failure(suppress_warnings=suppress_warnings)
             raise
 
     def _should_attempt_recovery(self) -> bool:
@@ -129,22 +134,25 @@ class CircuitBreaker:
             return True
         return (time.monotonic() - self.last_failure_time) >= self.config.recovery_timeout
 
-    def _record_failure(self) -> None:
+    def _record_failure(self, suppress_warnings: bool = False) -> None:
         """Record a failure and potentially open the circuit."""
         self.failure_count += 1
         self.last_failure_time = time.monotonic()
 
         if self.failure_count >= self.config.failure_threshold:
             self.state = CircuitBreakerState.OPEN
-            logging.warning(
-                f"🚨 Circuit breaker '{self.config.name}' opened after {self.failure_count} failures"
-            )
+            # Don't log warning if this is during cleanup operations
+            if not suppress_warnings:
+                logging.warning(
+                    f"🚨 Circuit breaker '{self.config.name}' opened after {self.failure_count} failures"
+                )
         elif self.state == CircuitBreakerState.HALF_OPEN:
             # Go back to OPEN on any failure in HALF_OPEN
             self.state = CircuitBreakerState.OPEN
-            logging.warning(
-                f"⚠️ Circuit breaker '{self.config.name}' returned to OPEN after failure in HALF_OPEN"
-            )
+            if not suppress_warnings:
+                logging.warning(
+                    f"⚠️ Circuit breaker '{self.config.name}' returned to OPEN after failure in HALF_OPEN"
+                )
 
     def _reset(self) -> None:
         """Reset circuit breaker to initial state."""

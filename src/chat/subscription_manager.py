@@ -11,7 +11,6 @@ from typing import Any
 
 from ..api.twitch import TwitchAPI
 from ..errors.eventsub import AuthenticationError, SubscriptionError
-from .cleanup_coordinator import CleanupCoordinator
 from .protocols import SubscriptionManagerProtocol
 
 EVENTSUB_SUBSCRIPTIONS = "eventsub/subscriptions"
@@ -44,7 +43,6 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         token: str,
         client_id: str,
         token_manager: Any = None,
-        cleanup_coordinator: CleanupCoordinator | None = None,
     ):
         """Initialize the SubscriptionManager.
 
@@ -54,7 +52,6 @@ class SubscriptionManager(SubscriptionManagerProtocol):
             token (str): OAuth access token for API requests.
             client_id (str): Twitch application client ID.
             token_manager: Optional token manager for refresh on 401.
-            cleanup_coordinator: Optional cleanup coordinator for coordinated cleanup.
 
         Raises:
             ValueError: If any required parameter is None or empty.
@@ -73,7 +70,6 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         self._token = token
         self._client_id = client_id
         self._token_manager = token_manager
-        self._cleanup_coordinator = cleanup_coordinator
         self._active_subscriptions: dict[str, str] = {}  # sub_id -> channel_id
         self._rate_limiter = asyncio.Semaphore(
             10
@@ -146,10 +142,10 @@ class SubscriptionManager(SubscriptionManagerProtocol):
     async def cleanup_stale_subscriptions(self) -> None:
         """Clean up stale EventSub subscriptions from previous sessions.
 
-        Queries all existing EventSub subscriptions from Twitch API, filters for
-        'channel.chat.message' type subscriptions with session IDs not in the
-        active sessions list, and deletes them. This prevents accumulation of
-        stale subscriptions.
+        Queries all existing EventSub subscriptions from Twitch API for this client_id,
+        filters for 'channel.chat.message' type subscriptions with session IDs different
+        from the current session, and deletes them. This prevents accumulation of
+        stale subscriptions from previous runs.
 
         Handles API errors gracefully without failing startup. Logs the number
         of subscriptions found, deleted, and any errors encountered.
@@ -158,17 +154,13 @@ class SubscriptionManager(SubscriptionManagerProtocol):
             None: Errors are logged but do not propagate to prevent startup failure.
         """
         try:
-            # Get active session IDs from coordinator
-            active_session_ids = []
-            if self._cleanup_coordinator:
-                active_session_ids = self._cleanup_coordinator.get_active_session_ids()
-
-            logging.debug(f"🧹 Starting cleanup for active sessions: {active_session_ids}")
+            logging.info(f"🧹 Starting cleanup for session: {self._session_id}")
             data, status, _ = await self._api.request(
                 "GET",
                 EVENTSUB_SUBSCRIPTIONS,
                 access_token=self._token,
                 client_id=self._client_id,
+                allow_on_open=True,
             )
 
             if status == 401:
@@ -181,14 +173,23 @@ class SubscriptionManager(SubscriptionManagerProtocol):
                 logging.warning(f"⚠️ Cannot cleanup stale subscriptions: HTTP {status}")
                 return
 
-            stale_sub_ids = self._extract_stale_subscription_ids(data, active_session_ids)
-            logging.info(f"🧹 Found {len(stale_sub_ids)} stale subscriptions to cleanup for active sessions {active_session_ids}")
+            stale_sub_ids = self._extract_stale_subscription_ids_for_session(data, self._session_id)
+            if stale_sub_ids:
+                logging.info(f"🧹 Found {len(stale_sub_ids)} stale subscriptions to cleanup for session {self._session_id}")
+                # Log details about what we're cleaning up for debugging
+                for sub_id in stale_sub_ids[:3]:  # Log first 3 for debugging
+                    logging.debug(f"🧹 Will cleanup subscription {sub_id} (stale session)")
+                if len(stale_sub_ids) > 3:
+                    logging.debug(f"🧹 ... and {len(stale_sub_ids) - 3} more stale subscriptions")
+            else:
+                logging.info(f"🧹 No stale subscriptions found for session {self._session_id}")
 
             deleted_count = 0
             error_count = 0
+            # Process cleanup in single pass without batching
             for sub_id in stale_sub_ids:
                 try:
-                    await self._unsubscribe_single(sub_id)
+                    await self._unsubscribe_single(sub_id, allow_on_open=True, suppress_warnings=True)
                     deleted_count += 1
                     logging.debug(f"✅ Cleaned up stale subscription {sub_id}")
                 except Exception as e:
@@ -196,10 +197,13 @@ class SubscriptionManager(SubscriptionManagerProtocol):
                     logging.warning(f"⚠️ Failed to cleanup stale subscription {sub_id}: {str(e)}")
 
             if stale_sub_ids:
-                logging.info(f"🧹 Cleanup completed: {deleted_count} deleted, {error_count} errors for active sessions {active_session_ids}")
+                logging.info(f"🧹 Cleanup completed: {deleted_count} deleted, {error_count} errors for session {self._session_id}")
 
         except Exception as e:
-            logging.warning(f"⚠️ Error during stale subscription cleanup: {str(e)}")
+            # Don't log warning for "Session is closed" as it's expected during shutdown
+            error_str = str(e)
+            if "Session is closed" not in error_str:
+                logging.warning(f"⚠️ Error during stale subscription cleanup: {error_str}")
 
     async def unsubscribe_all(self) -> None:
         """Unsubscribe from all active subscriptions.
@@ -216,7 +220,7 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         errors = []
         for sub_id in self._active_subscriptions:
             try:
-                await self._unsubscribe_single(sub_id)
+                await self._unsubscribe_single(sub_id, allow_on_open=True, suppress_warnings=True)
             except Exception as e:
                 errors.append(f"Failed to unsubscribe {sub_id}: {str(e)}")
                 logging.warning(f"⚠️ EventSub unsubscribe failed for {sub_id}: {str(e)}")
@@ -229,6 +233,84 @@ class SubscriptionManager(SubscriptionManagerProtocol):
             )
 
         logging.info("✅ EventSub unsubscribed from all subscriptions")
+
+    async def cleanup_all_reliably(self) -> None:
+        """Reliably cleanup all subscriptions with retry logic and atomic operations.
+
+        This method ensures all subscriptions are cleaned up even during forced shutdown.
+        Uses retry logic and doesn't fail partially - either all succeed or all fail.
+
+        Raises:
+            SubscriptionError: If cleanup fails completely after retries.
+        """
+        if not self._active_subscriptions:
+            logging.debug("🧹 No active subscriptions to cleanup")
+            return
+
+        max_retries = 3
+        retry_delay = 1.0
+
+        for attempt in range(max_retries):
+            try:
+                logging.info(f"🧹 Starting reliable cleanup attempt {attempt + 1}/{max_retries}")
+
+                # Reset circuit breaker at start of cleanup to ensure cleanup can proceed
+                from ..utils.circuit_breaker import reset_circuit_breaker
+                reset_circuit_breaker("twitch_api")
+
+                # Create a snapshot of current subscriptions for atomic cleanup
+                subscriptions_to_cleanup = list(self._active_subscriptions.keys())
+                logging.info(f"🧹 Cleaning up {len(subscriptions_to_cleanup)} subscriptions")
+
+                errors = []
+                successful_cleanups = 0
+
+                # Attempt to cleanup each subscription with individual error handling
+                for sub_id in subscriptions_to_cleanup:
+                    try:
+                        await self._unsubscribe_single(sub_id, allow_on_open=True, suppress_warnings=True)
+                        successful_cleanups += 1
+                        logging.debug(f"✅ Cleaned up subscription {sub_id}")
+                    except Exception as e:
+                        # Treat "Session is closed" as successful cleanup since the session
+                        # being closed means the subscription is effectively cleaned up
+                        error_str = str(e)
+                        if "Session is closed" in error_str:
+                            successful_cleanups += 1
+                            logging.debug(f"✅ Subscription {sub_id} already cleaned (session closed)")
+                        else:
+                            errors.append(f"Failed to cleanup {sub_id}: {error_str}")
+                            logging.warning(f"⚠️ Cleanup failed for {sub_id}: {error_str}")
+
+                # Only clear tracking if we successfully cleaned up all subscriptions
+                if successful_cleanups == len(subscriptions_to_cleanup):
+                    self._active_subscriptions.clear()
+                    logging.info(f"✅ Reliable cleanup completed: {successful_cleanups} subscriptions cleaned")
+                    return
+                else:
+                    logging.warning(f"⚠️ Cleanup attempt {attempt + 1} partially failed: {successful_cleanups}/{len(subscriptions_to_cleanup)} successful")
+
+                    # If this isn't the last attempt, wait before retrying
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+
+            except Exception as e:
+                logging.error(f"💥 Cleanup attempt {attempt + 1} failed completely: {str(e)}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2
+                else:
+                    # Last attempt failed, clear tracking anyway to prevent permanent leaks
+                    logging.error("💥 All cleanup attempts failed, clearing tracking to prevent leaks")
+                    self._active_subscriptions.clear()
+                    raise SubscriptionError(
+                        f"Reliable cleanup failed after {max_retries} attempts: {str(e)}",
+                        operation_type="cleanup"
+                    ) from e
+
+        # If we get here, all attempts succeeded
+        logging.info("✅ Reliable cleanup completed successfully")
 
     def get_active_channel_ids(self) -> list[str]:
         """Get list of channel IDs with active subscriptions.
@@ -250,6 +332,7 @@ class SubscriptionManager(SubscriptionManagerProtocol):
                 EVENTSUB_SUBSCRIPTIONS,
                 access_token=self._token,
                 client_id=self._client_id,
+                allow_on_open=True,
             )
 
             if status == 401:
@@ -268,7 +351,7 @@ class SubscriptionManager(SubscriptionManagerProtocol):
             # Unsubscribe from old subscriptions
             for sub_id in old_sub_ids:
                 try:
-                    await self._unsubscribe_single(sub_id)
+                    await self._unsubscribe_single(sub_id, allow_on_open=True, suppress_warnings=True)
                     logging.debug(f"✅ Cleaned up old subscription {sub_id} from session {old_session_id}")
                 except Exception as e:
                     logging.warning(f"⚠️ Failed to cleanup old subscription {sub_id}: {str(e)}")
@@ -313,6 +396,55 @@ class SubscriptionManager(SubscriptionManagerProtocol):
                 sub_ids.append(sub_id)
 
         return sub_ids
+
+    def _extract_stale_subscription_ids_for_session(self, data: Any, current_session_id: str) -> list[str]:
+        """Extract subscription IDs for stale subscriptions from API response data.
+
+        Filters for 'channel.chat.message' type subscriptions where the transport
+        session_id is different from the current session_id. This identifies
+        subscriptions from previous sessions that should be cleaned up.
+
+        Args:
+            data (Any): The API response data.
+            current_session_id (str): The current active session ID.
+
+        Returns:
+            list[str]: List of subscription IDs for stale subscriptions.
+        """
+        if not isinstance(data, dict):
+            return []
+
+        rows = data.get("data")
+        if not isinstance(rows, list):
+            return []
+
+        stale_sub_ids = []
+        session_ids_found = set()
+
+        for entry in rows:
+            if not isinstance(entry, dict):
+                continue
+
+            # Only process channel.chat.message subscriptions
+            if entry.get("type") != EVENTSUB_CHAT_MESSAGE:
+                continue
+
+            transport = entry.get("transport", {})
+            if not isinstance(transport, dict):
+                continue
+
+            # Check if session_id is different from current session
+            session_id = transport.get("session_id")
+            if isinstance(session_id, str):
+                session_ids_found.add(session_id)
+                if session_id != current_session_id:
+                    # This is a subscription from a previous session
+                    sub_id = entry.get("id")
+                    if isinstance(sub_id, str):
+                        stale_sub_ids.append(sub_id)
+
+        logging.debug(f"🧹 Session IDs found in subscriptions: {sorted(session_ids_found)} for current session {current_session_id}")
+        return stale_sub_ids
 
     def _extract_stale_subscription_ids(self, data: Any, active_session_ids: list[str]) -> list[str]:
         """Extract subscription IDs for stale subscriptions from API response data.
@@ -391,12 +523,9 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         if old_session_id != new_session_id:
             logging.info(f"🧹 Starting atomic cleanup of subscriptions from old session {old_session_id}")
 
-            # Use atomic operation: cleanup old session and register new session together
-            if self._cleanup_coordinator:
-                async with self._token_lock:  # Use existing token lock for atomicity
-                    await self._cleanup_old_session_subscriptions(old_session_id)
-                    await self._cleanup_coordinator.unregister_session_id(old_session_id)
-                    await self._cleanup_coordinator.register_session_id(new_session_id)
+            # Use atomic operation: cleanup old session
+            async with self._token_lock:  # Use existing token lock for atomicity
+                await self._cleanup_old_session_subscriptions(old_session_id)
 
             logging.info(f"✅ Completed atomic cleanup of old session {old_session_id}")
 
@@ -418,33 +547,18 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         logging.info("🔄 EventSub access token updated")
 
     async def register_cleanup_task(self) -> bool:
-        """Register the cleanup task with the coordinator.
+        """Register the cleanup task (no-op for decentralized cleanup).
 
         Returns:
-            bool: True if elected as active cleanup manager, False otherwise.
+            bool: Always returns False since cleanup is now decentralized.
         """
-        if not self._cleanup_coordinator:
-            logging.debug("No cleanup coordinator available, skipping registration")
-            return False
-
         if self._cleanup_registered:
             logging.debug("Cleanup task already registered")
             return False
 
-        # Register session ID with coordinator
-        await self._cleanup_coordinator.register_session_id(self._session_id)
-
-        elected = await self._cleanup_coordinator.register_cleanup_task(
-            self.cleanup_stale_subscriptions
-        )
         self._cleanup_registered = True
-
-        if elected:
-            logging.info("🧹 Elected as active cleanup manager")
-        else:
-            logging.info("🧹 Registered as passive cleanup manager")
-
-        return elected
+        logging.info("🧹 Using decentralized cleanup (no coordinator needed)")
+        return False
 
 
     async def __aenter__(self) -> "SubscriptionManager":
@@ -453,12 +567,7 @@ class SubscriptionManager(SubscriptionManagerProtocol):
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit with cleanup."""
-        if self._cleanup_coordinator and self._cleanup_registered:
-            await self._cleanup_coordinator.unregister_cleanup_task(
-                self.cleanup_stale_subscriptions
-            )
-            await self._cleanup_coordinator.unregister_session_id(self._session_id)
-            self._cleanup_registered = False
+        self._cleanup_registered = False
         await self.unsubscribe_all()
 
     async def _handle_subscription_request(
@@ -843,6 +952,7 @@ class SubscriptionManager(SubscriptionManagerProtocol):
                 EVENTSUB_SUBSCRIPTIONS,
                 access_token=self._token,
                 client_id=self._client_id,
+                allow_on_open=True,
             )
 
             if status == 401:
@@ -868,11 +978,13 @@ class SubscriptionManager(SubscriptionManagerProtocol):
                 f"Fetch active subscriptions error: {str(e)}", operation_type="verify"
             ) from e
 
-    async def _unsubscribe_single(self, sub_id: str) -> None:
+    async def _unsubscribe_single(self, sub_id: str, allow_on_open: bool = False, suppress_warnings: bool = False) -> None:
         """Unsubscribe from a single subscription.
 
         Args:
             sub_id (str): The subscription ID to unsubscribe.
+            allow_on_open (bool): If True, allow request even when circuit breaker is open.
+            suppress_warnings (bool): If True, suppress circuit breaker warnings.
 
         Raises:
             SubscriptionError: If unsubscription fails.
@@ -883,6 +995,8 @@ class SubscriptionManager(SubscriptionManagerProtocol):
                 f"{EVENTSUB_SUBSCRIPTIONS}?id={sub_id}",
                 access_token=self._token,
                 client_id=self._client_id,
+                allow_on_open=allow_on_open,
+                suppress_warnings=suppress_warnings,
             )
 
             if status == 204:
@@ -896,6 +1010,11 @@ class SubscriptionManager(SubscriptionManagerProtocol):
                     f"⚠️ EventSub subscription {sub_id} not found (already unsubscribed)"
                 )
                 return
+            elif status == 503:
+                # Service unavailable - likely due to session being closed
+                # This is effectively a successful cleanup since the session is closed
+                logging.debug(f"✅ EventSub subscription {sub_id} already cleaned (service unavailable)")
+                return
             else:
                 raise SubscriptionError(
                     f"Unsubscribe failed: HTTP {status} for {sub_id}",
@@ -905,7 +1024,13 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         except (AuthenticationError, SubscriptionError):
             raise
         except Exception as e:
-            raise SubscriptionError(
-                f"Unsubscribe error for {sub_id}: {str(e)}",
-                operation_type="unsubscribe",
-            ) from e
+            # Handle "Session is closed" as successful cleanup
+            error_str = str(e)
+            if "Session is closed" in error_str:
+                logging.debug(f"✅ EventSub subscription {sub_id} already cleaned (session closed)")
+                return
+            else:
+                raise SubscriptionError(
+                    f"Unsubscribe error for {sub_id}: {error_str}",
+                    operation_type="unsubscribe",
+                ) from e

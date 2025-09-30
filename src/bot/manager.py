@@ -132,8 +132,8 @@ class BotManager:  # pylint: disable=too-many-instance-attributes
     def _cancel_all_tasks(self) -> None:
         self.lifecycle._cancel_all_tasks()
 
-    def _close_all_bots(self) -> None:
-        self.lifecycle._close_all_bots()
+    async def _close_all_bots(self) -> None:
+        await self.lifecycle._close_all_bots()
 
     async def _wait_for_task_completion(self) -> None:
         await self.lifecycle._wait_for_task_completion()
@@ -203,9 +203,7 @@ async def run_bots(
             success = await manager._start_all_bots()
         if not success:
             return
-        # Signal that all bots are launched and ready
-        if context.cleanup_coordinator:
-            await context.cleanup_coordinator.signal_bots_ready()
+        # Bots are ready (cleanup coordinator no longer needed for decentralized cleanup)
         logging.info("🏃 Bots running - press Ctrl+C to stop")
         await _run_main_loop(manager)
     except asyncio.CancelledError:

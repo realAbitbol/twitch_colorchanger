@@ -65,6 +65,8 @@ class TwitchAPI:
         client_id: str,
         params: dict[str, Any] | None = None,
         json_body: dict[str, Any] | None = None,
+        allow_on_open: bool = False,
+        suppress_warnings: bool = False,
     ) -> tuple[dict[str, Any], int, dict[str, str]]:
         """Perform a raw HTTP request to the Twitch Helix API.
 
@@ -75,6 +77,7 @@ class TwitchAPI:
             client_id (str): Twitch application client ID.
             params (dict[str, Any] | None): Query parameters for the request.
             json_body (dict[str, Any] | None): JSON body for the request.
+            allow_on_open (bool): If True, allow request even when circuit breaker is open.
 
         Returns:
             tuple[dict[str, Any], int, dict[str, str]]: A tuple containing the JSON response data, HTTP status code, and response headers.
@@ -83,7 +86,7 @@ class TwitchAPI:
             aiohttp.ClientError: If network request fails.
             TimeoutError: If request times out.
             ValueError: If response parsing fails.
-            CircuitBreakerOpenException: If circuit breaker is open.
+            CircuitBreakerOpenException: If circuit breaker is open and allow_on_open is False.
         """
         async def _perform_request() -> tuple[dict[str, Any], int, dict[str, str]]:
             """Internal request logic wrapped by circuit breaker."""
@@ -124,9 +127,10 @@ class TwitchAPI:
                 return data, resp.status, dict(resp.headers)
 
         try:
-            return await self.circuit_breaker.call(_perform_request)
+            return await self.circuit_breaker.call(_perform_request, allow_on_open=allow_on_open, suppress_warnings=suppress_warnings)
         except CircuitBreakerOpenException:
-            logging.error(f"🚨 Twitch API request blocked by circuit breaker: {method} {endpoint}")
+            if not suppress_warnings:
+                logging.error(f"🚨 Twitch API request blocked by circuit breaker: {method} {endpoint}")
             # Return a failed response tuple when circuit breaker is open
             return {}, 503, {"X-Circuit-Breaker": "OPEN"}
 

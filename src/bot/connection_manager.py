@@ -45,8 +45,12 @@ class ConnectionManager:
         logging.debug(f"🔀 Using EventSub chat backend user={self.bot.username}")
         await self._log_scopes_if_possible()
         normalized_channels = await self._normalize_channels_if_needed()
+
         if not await self._init_and_connect_backend(normalized_channels):
             return False
+
+        # Schedule first cleanup 3 minutes after startup instead of immediately
+        asyncio.create_task(self._schedule_delayed_first_cleanup())
         self._normalized_channels_cache = normalized_channels
         return True
 
@@ -166,7 +170,6 @@ class ConnectionManager:
             return False
         self.chat_backend = EventSubChatBackend(
             http_session=self.bot.context.session,
-            cleanup_coordinator=self.bot.context.cleanup_coordinator,
         )
         backend = self.chat_backend
         # Route all messages through the message processor
@@ -317,6 +320,10 @@ class ConnectionManager:
                     self.listener_task = asyncio.create_task(backend2.listen())
                     self.listener_task.add_done_callback(cb)
                 await self.listener_task
+
+                # Schedule cleanup 3 minutes after reconnection to avoid interfering with new subscriptions
+                asyncio.create_task(self._schedule_post_reconnect_cleanup())
+
                 self._total_reconnect_attempts = 0  # Reset on successful reconnection
                 return
             except Exception as e2:  # noqa: BLE001
@@ -327,13 +334,85 @@ class ConnectionManager:
         """Disconnect the chat backend if connected.
 
         Attempts to gracefully disconnect the EventSub backend.
+        Also performs comprehensive subscription cleanup before disconnecting.
         """
         backend = self.chat_backend
         if backend is not None:
             try:
+                # Clean up active subscriptions first
+                await self._cleanup_active_subscriptions()
+                # Then clean up stale subscriptions
+                await self._cleanup_stale_subscriptions()
                 await backend.disconnect()
             except Exception as e:
                 logging.warning(f"Disconnect error: {str(e)}")
+
+    async def _cleanup_active_subscriptions(self) -> None:
+        """Clean up all active EventSub subscriptions for this bot.
+
+        This method is called during shutdown to ensure all active subscriptions
+        are properly cleaned up before disconnecting.
+        """
+        if not self.chat_backend:
+            logging.debug(f"🧹 No chat backend available for active subscription cleanup for {self.bot.username}")
+            return
+
+        # Get subscription manager from the backend
+        sub_manager = getattr(self.chat_backend, '_sub_manager', None)
+        if sub_manager and hasattr(sub_manager, 'cleanup_all_reliably'):
+            try:
+                logging.info(f"🧹 Starting reliable active subscription cleanup for {self.bot.username}")
+                await sub_manager.cleanup_all_reliably()
+                logging.info(f"✅ Reliable active subscription cleanup completed for {self.bot.username}")
+            except Exception as e:
+                logging.error(f"💥 Reliable active subscription cleanup failed for {self.bot.username}: {str(e)}")
+                # Don't re-raise - we want to continue with other cleanup even if this fails
+        elif sub_manager and hasattr(sub_manager, 'unsubscribe_all'):
+            # Fallback to old method if new reliable method not available
+            try:
+                logging.info(f"🧹 Starting fallback active subscription cleanup for {self.bot.username}")
+                await sub_manager.unsubscribe_all()
+                logging.info(f"✅ Fallback active subscription cleanup completed for {self.bot.username}")
+            except Exception as e:
+                logging.warning(f"⚠️ Fallback active subscription cleanup failed for {self.bot.username}: {str(e)}")
+        else:
+            logging.debug(f"🧹 No subscription manager available for active subscription cleanup for {self.bot.username}")
+
+    async def _cleanup_stale_subscriptions(self) -> None:
+        """Clean up stale EventSub subscriptions for this bot.
+
+        This method is called periodically to ensure no stale subscriptions
+        from previous sessions remain active.
+        """
+        if not self.chat_backend:
+            logging.debug(f"🧹 No chat backend available for cleanup for {self.bot.username}")
+            return
+
+        # Get subscription manager from the backend
+        sub_manager = getattr(self.chat_backend, '_sub_manager', None)
+        if sub_manager and hasattr(sub_manager, 'cleanup_stale_subscriptions'):
+            try:
+                logging.info(f"🧹 Starting stale subscription cleanup for {self.bot.username}")
+                await sub_manager.cleanup_stale_subscriptions()
+                logging.info(f"✅ Stale subscription cleanup completed for {self.bot.username}")
+            except Exception as e:
+                logging.warning(f"⚠️ Stale subscription cleanup failed for {self.bot.username}: {str(e)}")
+        else:
+            logging.debug(f"🧹 No subscription manager available for cleanup for {self.bot.username}")
+
+    async def _schedule_delayed_first_cleanup(self) -> None:
+        """Schedule the first cleanup to run 3 minutes after startup."""
+        await asyncio.sleep(180)  # 3 minutes = 180 seconds
+        if self.chat_backend and self.bot.running:
+            logging.info(f"🧹 Running first cleanup 3 minutes after startup for {self.bot.username}")
+            await self._cleanup_stale_subscriptions()
+
+    async def _schedule_post_reconnect_cleanup(self) -> None:
+        """Schedule cleanup to run 3 minutes after reconnection."""
+        await asyncio.sleep(180)  # 3 minutes = 180 seconds
+        if self.chat_backend and self.bot.running:
+            logging.info(f"🧹 Running cleanup 3 minutes after reconnection for {self.bot.username}")
+            await self._cleanup_stale_subscriptions()
 
     async def wait_for_listener_task(self) -> None:
         """Wait for the listener task to complete with timeout.

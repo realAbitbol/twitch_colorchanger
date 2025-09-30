@@ -176,7 +176,7 @@ class SubscriptionCoordinator:
 
                 if sub_id_to_remove:
                     try:
-                        await self.backend._sub_manager._unsubscribe_single(sub_id_to_remove)
+                        await self.backend._sub_manager._unsubscribe_single(sub_id_to_remove, allow_on_open=True, suppress_warnings=True)
                         # Remove from active subscriptions
                         del self.backend._sub_manager._active_subscriptions[sub_id_to_remove]
                     except Exception as e:

@@ -370,7 +370,7 @@ class TestSubscriptionCoordinator:
         mock_channel_resolver.resolve_user_ids.assert_called_once_with(
             ["testchannel"], "token123", "client123"
         )
-        mock_sub_manager._unsubscribe_single.assert_called_once_with("sub123")
+        mock_sub_manager._unsubscribe_single.assert_called_once_with("sub123", allow_on_open=True, suppress_warnings=True)
         assert "sub123" not in mock_sub_manager._active_subscriptions
         mock_logging.info.assert_called_once_with("✅ testuser left #testchannel")
 
@@ -421,7 +421,7 @@ class TestSubscriptionCoordinator:
         # Assert
         assert result is True
         assert "testchannel" not in self.mock_backend._channels
-        mock_sub_manager._unsubscribe_single.assert_called_once_with("sub123")
+        mock_sub_manager._unsubscribe_single.assert_called_once_with("sub123", allow_on_open=True, suppress_warnings=True)
         # Subscription remains in active_subscriptions since unsubscription failed
         assert "sub123" in mock_sub_manager._active_subscriptions
         mock_logging.warning.assert_called_once()

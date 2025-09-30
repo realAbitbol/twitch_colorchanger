@@ -118,7 +118,7 @@ class BotLifecycleManager:  # pylint: disable=too-many-instance-attributes
             return
         logging.warning("🛑 Stopping all bots")
         self._cancel_all_tasks()
-        self._close_all_bots()
+        await self._close_all_bots()  # Now async with proper cleanup
         await self._wait_for_task_completion()
         self.running = False
         logging.info("🛑 All bots stopped")
@@ -133,15 +133,15 @@ class BotLifecycleManager:  # pylint: disable=too-many-instance-attributes
             except (ValueError, TypeError) as e:
                 logging.warning(f"💥 Error cancelling task index={i}: {str(e)}")
 
-    def _close_all_bots(self) -> None:
-        """Close all bot instances."""
+    async def _close_all_bots(self) -> None:
+        """Close all bot instances with proper async cleanup."""
         for i, bot in enumerate(self.bots):
             try:
-                bot.close()
-                logging.info(f"🔻 Closed bot for user {bot.username}")
+                await bot.stop()  # Use stop() instead of close() for proper cleanup
+                logging.info(f"🔻 Stopped bot for user {bot.username}")
             except (OSError, ValueError, RuntimeError) as e:
                 logging.warning(
-                    f"💥 Error closing bot index={i}: {str(e)} user={getattr(bot, 'username', None)}"
+                    f"💥 Error stopping bot index={i}: {str(e)} user={getattr(bot, 'username', None)}"
                 )
 
     async def _wait_for_task_completion(self) -> None:

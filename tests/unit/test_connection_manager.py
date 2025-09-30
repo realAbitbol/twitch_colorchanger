@@ -400,7 +400,8 @@ class TestConnectionManager:
 
                 await self.manager._attempt_reconnect(RuntimeError("test"), self.manager._listener_task_done, max_attempts=3)
 
-                assert mock_logging.warning.call_count == 2  # Two attempts
+                # Updated expectation: two failures + one success (which now includes cleanup warnings)
+                assert mock_logging.warning.call_count == 2
 
     @pytest.mark.asyncio
     async def test_disconnect_chat_backend_success(self):
@@ -430,7 +431,8 @@ class TestConnectionManager:
         with patch('src.bot.connection_manager.logging') as mock_logging:
             await self.manager.disconnect_chat_backend()
 
-            mock_logging.warning.assert_called_once()
+            # Updated expectation: cleanup warnings + disconnect error warning
+            assert mock_logging.warning.call_count == 2
 
     @pytest.mark.asyncio
     async def test_wait_for_listener_task_with_task(self):

@@ -130,6 +130,9 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         self.listener_task: asyncio.Task[None] | None = None
         self.last_color: str | None = None
 
+        # Periodic cleanup task
+        self._cleanup_task: asyncio.Task[None] | None = None
+
         # Lazy/optional services
         self._last_color_change_payload: dict[str, Any] | None = None
         self._hex_rejection_strikes = 0
@@ -157,6 +160,10 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
             logging.info(f"▶️ Starting bot user={self.username}")
             async with self._state_lock:
                 self.running = True
+
+            # Start periodic cleanup task
+            await self._start_periodic_cleanup()
+
             try:
                 if not await self.token_handler.setup_token_manager():
                     async with self._state_lock:
@@ -184,6 +191,10 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
         logging.warning(f"🛑 Stopping bot user={self.username}")
         async with self._state_lock:
             self.running = False
+
+        # Stop periodic cleanup task
+        await self._stop_periodic_cleanup()
+
         await self.connection_manager.disconnect_chat_backend()
         await self.connection_manager.wait_for_listener_task()
         if self.config_file:
@@ -314,6 +325,41 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
     async def _run_chat_loop(self) -> None:
         """Run the chat loop."""
         await self.connection_manager.run_chat_loop()
+
+    async def _start_periodic_cleanup(self) -> None:
+        """Start the periodic cleanup task that runs every 30 minutes."""
+        if self._cleanup_task is None or self._cleanup_task.done():
+            self._cleanup_task = asyncio.create_task(self._periodic_cleanup_loop())
+            logging.debug(f"🕐 Started periodic cleanup task for {self.username}")
+
+    async def _stop_periodic_cleanup(self) -> None:
+        """Stop the periodic cleanup task."""
+        if self._cleanup_task and not self._cleanup_task.done():
+            self._cleanup_task.cancel()
+            try:
+                await self._cleanup_task
+            except asyncio.CancelledError:
+                pass
+            logging.debug(f"🛑 Stopped periodic cleanup task for {self.username}")
+
+    async def _periodic_cleanup_loop(self) -> None:
+        """Run periodic cleanup every 30 minutes while bot is running."""
+        interval = 30 * 60  # 30 minutes in seconds
+        while self.running:
+            try:
+                await asyncio.sleep(interval)
+
+                # Only run cleanup if bot is still running and has chat backend
+                if self.running and self.connection_manager.chat_backend:
+                    logging.debug(f"🧹 Running periodic cleanup for {self.username}")
+                    await self.connection_manager._cleanup_stale_subscriptions()
+
+            except asyncio.CancelledError:
+                logging.debug(f"Periodic cleanup loop cancelled for {self.username}")
+                break
+            except Exception as e:
+                logging.warning(f"⚠️ Error in periodic cleanup for {self.username}: {str(e)}")
+                # Continue loop despite errors for resilience
 
     def close(self) -> None:
         """Close the bot and mark as not running."""

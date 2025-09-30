@@ -11,7 +11,6 @@ import aiohttp
 from ..api.twitch import TwitchAPI
 from ..chat.cache_manager import CacheManager
 from ..chat.channel_resolver import ChannelResolver
-from ..chat.cleanup_coordinator import CleanupCoordinator
 from ..chat.connection_coordinator import ConnectionCoordinator
 from ..chat.message_coordinator import MessageCoordinator
 from ..chat.message_processor import MessageProcessor
@@ -27,72 +26,6 @@ from ..constants import (
 MessageHandler = Callable[[str, str, str], Any]
 
 
-class KeepAliveManager:
-    """Manages keep-alive messages to prevent inactivity closures.
-
-    This class implements a hybrid approach combining periodic keep-alive messages
-    with activity monitoring to ensure 100% reliability for unattended operation.
-    """
-
-    def __init__(self, websocket_connection) -> None:
-        """Initialize the keep-alive manager.
-
-        Args:
-            websocket_connection: WebSocket connection manager instance.
-        """
-        self.websocket = websocket_connection
-        self.interval = 6.0  # seconds between keep-alive messages
-        self.task: asyncio.Task[None] | None = None
-        self.last_activity = time.monotonic()
-
-    async def start(self) -> None:
-        """Start the keep-alive task."""
-        if self.task is None or self.task.done():
-            self.task = asyncio.create_task(self._keep_alive_loop())
-
-    async def stop(self) -> None:
-        """Stop the keep-alive task."""
-        if self.task and not self.task.done():
-            self.task.cancel()
-            try:
-                await self.task
-            except asyncio.CancelledError:
-                pass
-
-    async def _keep_alive_loop(self) -> None:
-        """Main keep-alive loop that sends periodic messages."""
-        while True:
-            try:
-                await asyncio.sleep(self.interval)
-                if not self._has_recent_activity():
-                    await self._send_keep_alive()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logging.warning(f"Keep-alive loop error: {str(e)}")
-                # Continue loop despite errors for resilience
-                continue
-
-    def _has_recent_activity(self) -> bool:
-        """Check if there has been recent message activity.
-
-        Returns:
-            bool: True if activity detected within the interval, False otherwise.
-        """
-        return time.monotonic() - self.last_activity < self.interval
-
-    async def _send_keep_alive(self) -> None:
-        """Send a minimal LISTEN message to keep connection alive."""
-        try:
-            message = {"type": "LISTEN", "data": {"topics": []}}
-            await self.websocket.send_json(message)
-            logging.debug("Sent keep-alive LISTEN message")
-        except Exception as e:
-            logging.warning(f"Failed to send keep-alive message: {str(e)}")
-
-    def update_activity(self) -> None:
-        """Update the last activity timestamp."""
-        self.last_activity = time.monotonic()
 
 
 class EventSubChatBackend:
@@ -136,7 +69,6 @@ class EventSubChatBackend:
         channel_resolver: ChannelResolver | None = None,
         token_manager: TokenManager | None = None,
         cache_manager: CacheManager | None = None,
-        cleanup_coordinator: CleanupCoordinator | None = None,
     ) -> None:
         """Initialize the EventSub chat backend with dependency injection.
 
@@ -148,7 +80,6 @@ class EventSubChatBackend:
             channel_resolver (ChannelResolver | None): Channel resolver instance.
             token_manager (TokenManager | None): Token manager instance.
             cache_manager (CacheManager | None): Cache manager instance.
-            cleanup_coordinator (CleanupCoordinator | None): Cleanup coordinator instance.
         """
         # Configure timeouts for reliability: total 30s, connect 10s, read 20s
         # Balances responsiveness with resilience for unattended operation
@@ -163,7 +94,6 @@ class EventSubChatBackend:
         self._channel_resolver = channel_resolver
         self._token_manager = token_manager
         self._cache_manager = cache_manager
-        self._cleanup_coordinator = cleanup_coordinator
 
         # Handlers
         self._message_handler: MessageHandler | None = None
@@ -198,14 +128,7 @@ class EventSubChatBackend:
         self._message_coordinator: MessageCoordinator | None = None
         self._reconnection_coordinator: ReconnectionCoordinator | None = None
 
-        # Keep-alive manager for preventing inactivity closures
-        self._keep_alive_manager: KeepAliveManager | None = None
 
-    async def _initialize_keep_alive_manager(self) -> None:
-        """Initialize the keep-alive manager with WebSocket connection."""
-        if self._ws_manager and not self._keep_alive_manager:
-            self._keep_alive_manager = KeepAliveManager(self._ws_manager)
-            await self._keep_alive_manager.start()
 
     async def __aenter__(self) -> EventSubChatBackend:
         """Async context manager entry."""
@@ -222,10 +145,6 @@ class EventSubChatBackend:
 
     async def _cleanup_components(self) -> None:
         """Cleanup all components."""
-        # Stop keep-alive manager first
-        if self._keep_alive_manager:
-            await self._keep_alive_manager.stop()
-
         if self._ws_manager:
             await self._ws_manager.disconnect()
         if self._sub_manager:
@@ -287,9 +206,8 @@ class EventSubChatBackend:
                 token=self._token or "",
                 client_id=self._client_id or "",
                 token_manager=self._token_manager,
-                cleanup_coordinator=self._cleanup_coordinator,
             )
-            # Register cleanup task with coordinator
+            # Register cleanup task (no-op for decentralized cleanup)
             await self._sub_manager.register_cleanup_task()
         else:
             await self._sub_manager.update_session_id(self._ws_manager.session_id)
@@ -356,8 +274,6 @@ class EventSubChatBackend:
             await self._connect_websocket()
             await self._setup_subscription_manager()
 
-            # Initialize keep-alive manager after WebSocket connection
-            await self._initialize_keep_alive_manager()
 
             if not await self._subscription_coordinator.subscribe_primary_channel(user_ids):
                 return False

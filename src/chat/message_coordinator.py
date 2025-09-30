@@ -24,9 +24,6 @@ class MessageCoordinator:
         """
         if msg.type == "text":
             self.backend._last_activity = time.monotonic()
-            # Update keep-alive manager activity tracking
-            if self.backend._keep_alive_manager:
-                self.backend._keep_alive_manager.update_activity()
             try:
                 data = json.loads(msg.data)
                 msg_type = data.get("type")
@@ -42,6 +39,26 @@ class MessageCoordinator:
                 logging.warning(f"Failed to parse WebSocket message: {msg.data}")
             if self.backend._msg_processor:
                 await self.backend._msg_processor.process_message(msg.data)
+            # Call the registered message handler for bot processing
+            # The bot handler expects (sender, channel, message) parameters
+            if self.backend._message_handler:
+                try:
+                    # For bot handlers, we need to extract sender/channel from the parsed message
+                    # If parsing failed, we can't call the bot handler
+                    if 'data' in locals() and msg_type == "notification":
+                        # Extract basic info from the parsed message for the bot handler
+                        sender = "unknown"
+                        channel = "unknown"
+                        if isinstance(data, dict):
+                            payload = data.get("payload", {})
+                            if isinstance(payload, dict):
+                                event = payload.get("event", {})
+                                if isinstance(event, dict):
+                                    sender = event.get("chatter_user_name", "unknown")
+                                    channel = event.get("broadcaster_user_name", "unknown")
+                        await self.backend._message_handler(sender, channel, msg.data)
+                except Exception as e:
+                    logging.warning(f"Error in bot message handler: {str(e)}")
             return True
         return True
 
