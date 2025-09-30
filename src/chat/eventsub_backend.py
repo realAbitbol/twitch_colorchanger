@@ -430,9 +430,10 @@ class EventSubChatBackend:
             return
         try:
             if self._sub_manager:
-                active_channels = await self._sub_manager.verify_subscriptions()
-                # Update channels list
-                self._channels = [ch for ch in self._channels if ch in active_channels]
+                # Verify subscriptions are active (for logging/monitoring purposes)
+                await self._sub_manager.verify_subscriptions()
+                # Note: _channels should not be modified here as it represents intended channels,
+                # not active subscriptions. Failed subscriptions don't mean channels should be left.
         except Exception as e:
             logging.info(f"Subscription check error: {str(e)}")
         self._next_sub_check = now + EVENTSUB_SUB_CHECK_INTERVAL_SECONDS
