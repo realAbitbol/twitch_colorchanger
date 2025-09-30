@@ -147,8 +147,9 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         """Clean up stale EventSub subscriptions from previous sessions.
 
         Queries all existing EventSub subscriptions from Twitch API, filters for
-        'channel.chat.message' type subscriptions with mismatched session IDs,
-        and deletes them. This prevents accumulation of stale subscriptions.
+        'channel.chat.message' type subscriptions with session IDs not in the
+        active sessions list, and deletes them. This prevents accumulation of
+        stale subscriptions.
 
         Handles API errors gracefully without failing startup. Logs the number
         of subscriptions found, deleted, and any errors encountered.
@@ -157,6 +158,12 @@ class SubscriptionManager(SubscriptionManagerProtocol):
             None: Errors are logged but do not propagate to prevent startup failure.
         """
         try:
+            # Get active session IDs from coordinator
+            active_session_ids = []
+            if self._cleanup_coordinator:
+                active_session_ids = self._cleanup_coordinator.get_active_session_ids()
+
+            logging.debug(f"🧹 Starting cleanup for active sessions: {active_session_ids}")
             data, status, _ = await self._api.request(
                 "GET",
                 EVENTSUB_SUBSCRIPTIONS,
@@ -174,8 +181,8 @@ class SubscriptionManager(SubscriptionManagerProtocol):
                 logging.warning(f"⚠️ Cannot cleanup stale subscriptions: HTTP {status}")
                 return
 
-            stale_sub_ids = self._extract_stale_subscription_ids(data)
-            logging.info(f"🧹 Found {len(stale_sub_ids)} stale subscriptions to cleanup")
+            stale_sub_ids = self._extract_stale_subscription_ids(data, active_session_ids)
+            logging.info(f"🧹 Found {len(stale_sub_ids)} stale subscriptions to cleanup for active sessions {active_session_ids}")
 
             deleted_count = 0
             error_count = 0
@@ -189,7 +196,7 @@ class SubscriptionManager(SubscriptionManagerProtocol):
                     logging.warning(f"⚠️ Failed to cleanup stale subscription {sub_id}: {str(e)}")
 
             if stale_sub_ids:
-                logging.info(f"🧹 Cleanup completed: {deleted_count} deleted, {error_count} errors")
+                logging.info(f"🧹 Cleanup completed: {deleted_count} deleted, {error_count} errors for active sessions {active_session_ids}")
 
         except Exception as e:
             logging.warning(f"⚠️ Error during stale subscription cleanup: {str(e)}")
@@ -307,14 +314,15 @@ class SubscriptionManager(SubscriptionManagerProtocol):
 
         return sub_ids
 
-    def _extract_stale_subscription_ids(self, data: Any) -> list[str]:
+    def _extract_stale_subscription_ids(self, data: Any, active_session_ids: list[str]) -> list[str]:
         """Extract subscription IDs for stale subscriptions from API response data.
 
         Filters for 'channel.chat.message' type subscriptions where the transport
-        session_id does not match the current session_id.
+        session_id is not in the active session IDs list.
 
         Args:
             data (Any): The API response data.
+            active_session_ids (list[str]): List of active session IDs.
 
         Returns:
             list[str]: List of subscription IDs for stale subscriptions.
@@ -327,6 +335,7 @@ class SubscriptionManager(SubscriptionManagerProtocol):
             return []
 
         stale_sub_ids = []
+        session_ids_found = set()
         for entry in rows:
             if not isinstance(entry, dict):
                 continue
@@ -339,13 +348,16 @@ class SubscriptionManager(SubscriptionManagerProtocol):
             if not isinstance(transport, dict):
                 continue
 
-            # Check if session_id matches current session
+            # Check if session_id is not in active sessions
             session_id = transport.get("session_id")
-            if isinstance(session_id, str) and session_id != self._session_id:
-                sub_id = entry.get("id")
-                if isinstance(sub_id, str):
-                    stale_sub_ids.append(sub_id)
+            if isinstance(session_id, str):
+                session_ids_found.add(session_id)
+                if session_id not in active_session_ids:
+                    sub_id = entry.get("id")
+                    if isinstance(sub_id, str):
+                        stale_sub_ids.append(sub_id)
 
+        logging.debug(f"🧹 Session IDs found in subscriptions: {sorted(session_ids_found)} for active sessions {active_session_ids}")
         return stale_sub_ids
 
     async def update_session_id(self, new_session_id: str) -> None:
@@ -370,6 +382,11 @@ class SubscriptionManager(SubscriptionManagerProtocol):
             logging.info(f"🧹 Starting synchronous cleanup of subscriptions from old session {old_session_id}")
             await self._cleanup_old_session_subscriptions(old_session_id)
             logging.info(f"✅ Completed cleanup of old session {old_session_id}")
+
+            # Update session registry
+            if self._cleanup_coordinator:
+                await self._cleanup_coordinator.unregister_session_id(old_session_id)
+                await self._cleanup_coordinator.register_session_id(new_session_id)
 
         self._session_id = new_session_id
         logging.info(f"🔄 EventSub session ID updated to {new_session_id}")
@@ -402,6 +419,9 @@ class SubscriptionManager(SubscriptionManagerProtocol):
             logging.debug("Cleanup task already registered")
             return False
 
+        # Register session ID with coordinator
+        await self._cleanup_coordinator.register_session_id(self._session_id)
+
         elected = await self._cleanup_coordinator.register_cleanup_task(
             self.cleanup_stale_subscriptions
         )
@@ -425,6 +445,7 @@ class SubscriptionManager(SubscriptionManagerProtocol):
             await self._cleanup_coordinator.unregister_cleanup_task(
                 self.cleanup_stale_subscriptions
             )
+            await self._cleanup_coordinator.unregister_session_id(self._session_id)
             self._cleanup_registered = False
         await self.unsubscribe_all()
 
@@ -701,6 +722,8 @@ class SubscriptionManager(SubscriptionManagerProtocol):
             return []
 
         active_channel_ids = []
+        session_ids_found = set()
+        mismatched_count = 0
         for entry in rows:
             if not isinstance(entry, dict):
                 logging.debug("⚠️ Skipping non-dict entry in subscriptions")
@@ -711,12 +734,17 @@ class SubscriptionManager(SubscriptionManagerProtocol):
                 continue
 
             transport = entry.get("transport", {})
-            if (
-                not isinstance(transport, dict)
-                or transport.get("session_id") != self._session_id
-            ):
-                logging.debug("⚠️ Skipping entry with mismatched session_id")
+            if not isinstance(transport, dict):
+                logging.debug("⚠️ Skipping entry with invalid transport")
                 continue
+
+            session_id = transport.get("session_id")
+            if isinstance(session_id, str):
+                session_ids_found.add(session_id)
+                if session_id != self._session_id:
+                    logging.debug("⚠️ Skipping entry with mismatched session_id")
+                    mismatched_count += 1
+                    continue
 
             cond = entry.get("condition", {})
             if not isinstance(cond, dict):
@@ -730,6 +758,7 @@ class SubscriptionManager(SubscriptionManagerProtocol):
 
             active_channel_ids.append(channel_id)
 
+        logging.debug(f"🔍 Verification session_ids found: {sorted(session_ids_found)}, mismatched: {mismatched_count} for session {self._session_id}")
         return active_channel_ids
 
     async def _refresh_token_and_retry_get(self) -> tuple[Any, int]:

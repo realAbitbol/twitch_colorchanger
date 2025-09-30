@@ -30,6 +30,7 @@ class CleanupCoordinator:
     _instance: "CleanupCoordinator | None" = None
     _active_cleanup_task: asyncio.Task[Any] | None = None
     _registered_tasks: set[Callable[[], Coroutine[Any, Any, None]]] = set()
+    _active_session_ids: set[str] = set()
     _lock: asyncio.Lock = asyncio.Lock()
 
     def __new__(cls) -> "CleanupCoordinator":
@@ -45,6 +46,7 @@ class CleanupCoordinator:
             self._initialized = True
             self._active_cleanup_task = None
             self._registered_tasks = set()
+            self._active_session_ids = set()
             self._lock = asyncio.Lock()
 
     async def register_cleanup_task(
@@ -87,12 +89,11 @@ class CleanupCoordinator:
             cleanup_func: The cleanup function to unregister.
         """
         async with self._lock:
+            was_active = cleanup_func in self._registered_tasks
             self._registered_tasks.discard(cleanup_func)
 
-            # If this was the active task, elect a new one
-            if (self._active_cleanup_task and
-                not self._active_cleanup_task.done() and
-                len(self._registered_tasks) > 0):
+            # If this was the active task, cancel it and elect a new one if available
+            if self._active_cleanup_task and not self._active_cleanup_task.done():
                 # Cancel current task
                 self._active_cleanup_task.cancel()
                 try:
@@ -100,10 +101,43 @@ class CleanupCoordinator:
                 except asyncio.CancelledError:
                     pass
 
-                # Elect new active task
-                new_func = next(iter(self._registered_tasks))
-                self._active_cleanup_task = asyncio.create_task(self._run_cleanup_loop(new_func))
-                logging.info("🧹 CleanupCoordinator elected new active cleanup task after unregistration")
+                if len(self._registered_tasks) > 0:
+                    # Elect new active task
+                    new_func = next(iter(self._registered_tasks))
+                    self._active_cleanup_task = asyncio.create_task(self._run_cleanup_loop(new_func))
+                    logging.info("🧹 CleanupCoordinator elected new active cleanup task after unregistration")
+                else:
+                    # No more tasks, clear active task
+                    self._active_cleanup_task = None
+
+    async def register_session_id(self, session_id: str) -> None:
+        """Register an active session ID.
+
+        Args:
+            session_id: The session ID to register.
+        """
+        async with self._lock:
+            self._active_session_ids.add(session_id)
+            logging.debug(f"🧹 Registered session ID: {session_id}")
+
+    async def unregister_session_id(self, session_id: str) -> None:
+        """Unregister a session ID.
+
+        Args:
+            session_id: The session ID to unregister.
+        """
+        async with self._lock:
+            self._active_session_ids.discard(session_id)
+            logging.debug(f"🧹 Unregistered session ID: {session_id}")
+
+    def get_active_session_ids(self) -> list[str]:
+        """Get list of all active session IDs.
+
+        Returns:
+            list[str]: List of active session IDs.
+        """
+        # No lock needed for reading since set operations are atomic
+        return list(self._active_session_ids)
 
     async def _run_cleanup_loop(
         self,
@@ -139,4 +173,5 @@ class CleanupCoordinator:
                     pass
             self._active_cleanup_task = None
             self._registered_tasks.clear()
+            self._active_session_ids.clear()
             logging.info("🧹 CleanupCoordinator shutdown complete")
