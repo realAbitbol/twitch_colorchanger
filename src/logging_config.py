@@ -1,4 +1,4 @@
-"""
+r"""
 Logging configuration module for Twitch Color Changer Bot.
 
 Provides a clean, configurable logging setup using colorlog library with
@@ -175,7 +175,8 @@ class LoggerConfigurator:
 
         # Create formatter with matching colors and secondary log colors
         formatter = colorlog.ColoredFormatter(
-            "%(log_color)s%(levelname)-8s%(reset)s %(message_log_color)s%(message)s",
+            "%(asctime)s %(log_color)s%(levelname)-8s%(reset)s %(message_log_color)s%(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
             log_colors={
                 "DEBUG": "cyan",
                 "INFO": "green",
@@ -207,6 +208,9 @@ class LoggerConfigurator:
         # Ensure root logger level is set
         root_logger = logging.getLogger()
         root_logger.setLevel(log_level)
+
+        # Suppress websockets library debug messages
+        logging.getLogger('websockets').setLevel(logging.INFO)
 
         # Apply formatter and filter to all existing handlers (in case any were added)
         for h in root_logger.handlers:

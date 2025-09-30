@@ -4,10 +4,10 @@ Unit tests for MessageCoordinator.
 
 from unittest.mock import AsyncMock, Mock, patch
 
-import aiohttp
 import pytest
 
 from src.chat.message_coordinator import MessageCoordinator
+from src.chat.message_transceiver import WSMessage, WSMsgType
 
 
 class TestMessageCoordinator:
@@ -27,7 +27,7 @@ class TestMessageCoordinator:
         """Test handle_message processes TEXT type messages."""
         # Arrange
         mock_msg = Mock()
-        mock_msg.type = aiohttp.WSMsgType.TEXT
+        mock_msg.type = WSMsgType.TEXT
         mock_msg.data = '{"type": "notification", "payload": {}}'
 
         async def mock_process_message(data):
@@ -51,7 +51,7 @@ class TestMessageCoordinator:
         """Test handle_message handles session_reconnect messages."""
         # Arrange
         mock_msg = Mock()
-        mock_msg.type = aiohttp.WSMsgType.TEXT
+        mock_msg.type = WSMsgType.TEXT
         mock_msg.data = '{"type": "session_reconnect", "payload": {}}'
 
         async def mock_handle_session_reconnect(data):
@@ -74,7 +74,7 @@ class TestMessageCoordinator:
         """Test handle_message raises AssertionError when no reconnection coordinator for session_reconnect."""
         # Arrange
         mock_msg = Mock()
-        mock_msg.type = aiohttp.WSMsgType.TEXT
+        mock_msg.type = WSMsgType.TEXT
         mock_msg.data = '{"type": "session_reconnect"}'
 
         self.mock_backend._reconnection_coordinator = None
@@ -88,7 +88,7 @@ class TestMessageCoordinator:
         """Test handle_message handles session_keepalive messages for activity tracking."""
         # Arrange
         mock_msg = Mock()
-        mock_msg.type = aiohttp.WSMsgType.TEXT
+        mock_msg.type = WSMsgType.TEXT
         mock_msg.data = '{"type": "session_keepalive"}'
 
         async def mock_process_message(data):
@@ -112,14 +112,11 @@ class TestMessageCoordinator:
         """Test handle_message logs warning for invalid JSON."""
         # Arrange
         mock_msg = Mock()
-        mock_msg.type = aiohttp.WSMsgType.TEXT
+        mock_msg.type = WSMsgType.TEXT
         mock_msg.data = 'invalid json'
 
-        async def mock_process_message(data):
-            pass
-
         mock_msg_processor = Mock()
-        mock_msg_processor.process_message = Mock(side_effect=mock_process_message)
+        mock_msg_processor.process_message = AsyncMock()
         self.mock_backend._msg_processor = mock_msg_processor
 
         # Act
@@ -132,63 +129,45 @@ class TestMessageCoordinator:
         mock_msg_processor.process_message.assert_called_once_with(mock_msg.data)
 
     @pytest.mark.asyncio
-    async def test_handle_message_closed_type_triggers_reconnect(self):
-        """Test handle_message handles CLOSED message type."""
+    async def test_handle_message_closed_type_returns_true(self):
+        """Test handle_message returns True for closed message type."""
         # Arrange
         mock_msg = Mock()
-        mock_msg.type = aiohttp.WSMsgType.CLOSED
-
-        async def mock_handle_reconnect():
-            return True
-
-        mock_reconnection_coordinator = Mock()
-        mock_reconnection_coordinator.handle_reconnect = Mock(side_effect=mock_handle_reconnect)
-        self.mock_backend._reconnection_coordinator = mock_reconnection_coordinator
+        mock_msg.type = "closed"
 
         # Act
-        with patch('src.chat.message_coordinator.logging') as mock_logging:
-            result = await self.coordinator.handle_message(mock_msg)
+        result = await self.coordinator.handle_message(mock_msg)
 
         # Assert
         assert result is True
-        mock_logging.info.assert_called_once_with("WebSocket abnormal end")
-        mock_reconnection_coordinator.handle_reconnect.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_handle_message_error_type_triggers_reconnect(self):
-        """Test handle_message handles ERROR message type."""
+    async def test_handle_message_error_type_returns_true(self):
+        """Test handle_message returns True for error message type."""
         # Arrange
         mock_msg = Mock()
-        mock_msg.type = aiohttp.WSMsgType.ERROR
-
-        async def mock_handle_reconnect():
-            return False
-
-        mock_reconnection_coordinator = Mock()
-        mock_reconnection_coordinator.handle_reconnect = Mock(side_effect=mock_handle_reconnect)
-        self.mock_backend._reconnection_coordinator = mock_reconnection_coordinator
+        mock_msg.type = "error"
 
         # Act
-        with patch('src.chat.message_coordinator.logging') as mock_logging:
-            result = await self.coordinator.handle_message(mock_msg)
+        result = await self.coordinator.handle_message(mock_msg)
 
         # Assert
-        assert result is False
-        mock_logging.info.assert_called_once_with("WebSocket abnormal end")
-        mock_reconnection_coordinator.handle_reconnect.assert_called_once()
+        assert result is True
 
     @pytest.mark.asyncio
-    async def test_handle_message_closed_raises_when_no_coordinator(self):
-        """Test handle_message raises AssertionError for CLOSED when no reconnection coordinator."""
+    async def test_handle_message_closed_returns_true_when_no_coordinator(self):
+        """Test handle_message returns True for closed message when no reconnection coordinator."""
         # Arrange
         mock_msg = Mock()
-        mock_msg.type = aiohttp.WSMsgType.CLOSED
+        mock_msg.type = "closed"
 
         self.mock_backend._reconnection_coordinator = None
 
-        # Act & Assert
-        with pytest.raises(AssertionError, match="ReconnectionCoordinator not initialized"):
-            await self.coordinator.handle_message(mock_msg)
+        # Act
+        result = await self.coordinator.handle_message(mock_msg)
+
+        # Assert
+        assert result is True
 
     @pytest.mark.asyncio
     async def test_listen_returns_early_when_not_connected(self):
@@ -245,7 +224,7 @@ class TestMessageCoordinator:
         # Arrange
         async def mock_receive_message():
             mock_msg = Mock()
-            mock_msg.type = aiohttp.WSMsgType.TEXT
+            mock_msg.type = WSMsgType.TEXT
             mock_msg.data = '{"type": "notification"}'
             return mock_msg
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable, Coroutine
 from typing import Any, Protocol
 
-import aiohttp
+from .message_transceiver import WSMessage
 
 
 class WebSocketConnectionManagerProtocol(Protocol):
@@ -33,7 +33,7 @@ class WebSocketConnectionManagerProtocol(Protocol):
         """Send JSON data over WebSocket."""
         ...
 
-    async def receive_message(self) -> aiohttp.WSMessage:
+    async def receive_message(self) -> WSMessage:
         """Receive a WebSocket message."""
         ...
 

@@ -6,10 +6,9 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-import aiohttp
-
 if TYPE_CHECKING:
     from .eventsub_backend import EventSubChatBackend
+    from .message_transceiver import WSMessage
 
 
 class MessageCoordinator:
@@ -18,35 +17,29 @@ class MessageCoordinator:
     def __init__(self, backend: EventSubChatBackend) -> None:
         self.backend = backend
 
-    async def handle_message(self, msg: aiohttp.WSMessage) -> bool:
+    async def handle_message(self, msg: WSMessage) -> bool:
         """Handle a single WebSocket message.
 
         Returns True if processing should continue, False to break the loop.
         """
-        if msg.type == aiohttp.WSMsgType.TEXT:
+        if msg.type == "text":
             self.backend._last_activity = time.monotonic()
             try:
                 data = json.loads(msg.data)
                 msg_type = data.get("type")
-                if msg_type is not None and msg_type != "session_keepalive":
-                    logging.debug(f"📨 Received WebSocket message type: {msg_type}, updated _last_activity to {self.backend._last_activity}")
                 if msg_type == "session_reconnect":
                     if self.backend._reconnection_coordinator is None:
                         raise AssertionError("ReconnectionCoordinator not initialized") from None
                     await self.backend._reconnection_coordinator.handle_session_reconnect(data)
                     return True
                 elif msg_type == "session_keepalive":
+                    logging.info("🏓 Received session_keepalive from Twitch")
                     return True
             except json.JSONDecodeError:
                 logging.warning(f"Failed to parse WebSocket message: {msg.data}")
             if self.backend._msg_processor:
                 await self.backend._msg_processor.process_message(msg.data)
             return True
-        elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-            logging.info("WebSocket abnormal end")
-            if self.backend._reconnection_coordinator is None:
-                raise AssertionError("ReconnectionCoordinator not initialized") from None
-            return await self.backend._reconnection_coordinator.handle_reconnect()
         return True
 
     async def listen(self) -> None:

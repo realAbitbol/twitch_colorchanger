@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .eventsub_backend import EventSubChatBackend
 
+from ..errors.internal import BotRestartException
+
 
 class ReconnectionCoordinator:
     """Coordinates reconnection logic including session reconnect handling, resubscription, and connection health validation."""
@@ -18,6 +20,7 @@ class ReconnectionCoordinator:
         self.backoff = 5.0  # Initial backoff: 5 seconds
         self.max_backoff = 60.0  # Maximum backoff: 60 seconds
         self.max_attempts = 3  # Maximum reconnection attempts
+        self.consecutive_failures = 0  # Track consecutive reconnection failures
 
     async def handle_session_reconnect(self, data: dict[str, Any]) -> None:
         """Handle session reconnect message from Twitch.
@@ -141,9 +144,18 @@ class ReconnectionCoordinator:
 
             duration = time.time() - start_time
             logging.info(f"🔄 WebSocket reconnection successful on attempt {attempt}, completed in {duration:.2f}s")
+            self.consecutive_failures = 0  # Reset on success
             return True
 
         logging.error(f"🔄 Reconnection failed after {self.max_attempts} attempts")
+        self.consecutive_failures += 1
+        if self.consecutive_failures >= 6:
+            logging.error("🔄 Multiple reconnection failures, restarting app")
+            import sys
+            sys.exit(1)
+        elif self.consecutive_failures >= 3:
+            logging.warning("🔄 Multiple reconnection failures, restarting bot")
+            raise BotRestartException("Bot restart required due to persistent reconnection failures")
         return False
 
     def _jitter(self, a: float, b: float) -> float:

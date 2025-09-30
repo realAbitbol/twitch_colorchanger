@@ -16,6 +16,7 @@ from ..constants import (
     MAX_BACKOFF_SECONDS,
     RECONNECT_MAX_ATTEMPTS,
 )
+from ..errors.internal import BotRestartException
 
 if TYPE_CHECKING:
     from .core import TwitchColorBot
@@ -214,6 +215,8 @@ class ConnectionManager:
             task = self.listener_task
             if task is not None:
                 await task
+        except BotRestartException:
+            raise
         except KeyboardInterrupt:
             logging.warning(f"🔻 Shutting down bot user={self.bot.username}")
         except Exception as e:  # noqa: BLE001

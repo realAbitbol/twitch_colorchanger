@@ -14,8 +14,6 @@ import logging
 import time
 from typing import Any
 
-import aiohttp
-
 from ..errors.eventsub import EventSubConnectionError
 from ..utils.circuit_breaker import (
     CircuitBreakerConfig,
@@ -58,7 +56,7 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
 
     def __init__(
         self,
-        session: aiohttp.ClientSession,
+        session,
         token: str,
         client_id: str,
         ws_url: str = EVENTSUB_WS_URL,
@@ -76,7 +74,7 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         self.client_id = client_id
 
         # Compose specialized components
-        self.connector = WebSocketConnector(session, token, client_id, ws_url)
+        self.connector = WebSocketConnector(token, client_id, ws_url)
         self._stop_event = asyncio.Event()
         self.reconnection_manager = ReconnectionManager(self.connector, self._stop_event)
         self.state_manager = ConnectionStateManager(self.connector)
@@ -166,7 +164,7 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
             try:
                 # Establish connection
                 await self.connector.connect()
-                logging.info(f"🔌 WebSocket connected to {self.connector.ws_url}")
+                logging.info(f"🔌 WebSocket connected to {self.connector.url}")
 
                 # Handle challenge if needed
                 if self.state_manager.pending_challenge:
@@ -245,7 +243,7 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         self._last_cleanup_time = time.monotonic()
 
         # Force cleanup if connection is stale
-        if self.connector.ws and not self.connector.ws.closed:
+        if self.connector.ws and not (hasattr(self.connector.ws, 'closed') and self.connector.ws.closed):
             current_time = time.monotonic()
             if current_time - self.state_manager.last_activity[0] > 300.0:  # 5 minutes
                 logging.info("🧹 Cleaning up stale WebSocket connection")
@@ -292,11 +290,11 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
         """
         await self.transceiver.send_json(data)
 
-    async def receive_message(self) -> aiohttp.WSMessage:
+    async def receive_message(self) -> Any:
         """Receive a WebSocket message.
 
         Returns:
-            aiohttp.WSMessage: Received message.
+            WSMessage: Received message.
 
         Raises:
             EventSubConnectionError: If not connected or receive fails.
@@ -335,7 +333,7 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
             # For simplicity, always wait for welcome
             msg = await self.transceiver.receive_message()
 
-            if msg.type != aiohttp.WSMsgType.TEXT:
+            if msg.type != "text":
                 raise EventSubConnectionError(
                     "Invalid welcome message type", operation_type="welcome"
                 )
@@ -354,3 +352,4 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
             raise EventSubConnectionError(
                 f"Welcome processing failed: {str(e)}", operation_type="welcome"
             ) from e
+

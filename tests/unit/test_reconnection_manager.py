@@ -90,10 +90,7 @@ class TestReconnectionManager:
         with patch('json.loads', return_value={"challenge": "test_challenge"}):
             await self.manager.handle_challenge("test_challenge")
 
-        mock_ws.send_json.assert_called_once_with({
-            "type": "challenge_response",
-            "challenge": "test_challenge"
-        })
+        mock_ws.send.assert_called_once_with('{"type": "challenge_response", "challenge": "test_challenge"}')
 
     @pytest.mark.asyncio
     async def test_handle_challenge_no_websocket(self):

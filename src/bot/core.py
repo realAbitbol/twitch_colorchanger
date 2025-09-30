@@ -23,6 +23,7 @@ from ..config.async_persistence import (
 from ..constants import (
     BOT_STOP_DELAY_SECONDS,
 )
+from ..errors.internal import BotRestartException
 from .color_changer import ColorChanger
 from .connection_manager import ConnectionManager
 from .message_processor import MessageProcessor
@@ -147,24 +148,32 @@ class TwitchColorBot:  # pylint: disable=too-many-instance-attributes
 
         Initializes token management, establishes chat connection, and begins
         listening for messages. Handles setup failures gracefully by stopping
-        early if critical components cannot be initialized.
+        early if critical components cannot be initialized. Restarts on BotRestartException.
 
         Raises:
             Exception: If token setup or connection initialization fails.
         """
-        logging.info(f"▶️ Starting bot user={self.username}")
-        async with self._state_lock:
-            self.running = True
-        if not await self.token_handler.setup_token_manager():
+        while True:
+            logging.info(f"▶️ Starting bot user={self.username}")
             async with self._state_lock:
-                self.running = False
-            return
-        await self.token_handler.handle_initial_token_refresh()
-        if not await self.connection_manager.initialize_connection():
-            async with self._state_lock:
-                self.running = False
-            return
-        await self.connection_manager.run_chat_loop()
+                self.running = True
+            try:
+                if not await self.token_handler.setup_token_manager():
+                    async with self._state_lock:
+                        self.running = False
+                    return
+                await self.token_handler.handle_initial_token_refresh()
+                if not await self.connection_manager.initialize_connection():
+                    async with self._state_lock:
+                        self.running = False
+                    return
+                await self.connection_manager.run_chat_loop()
+                # Normal exit
+                break
+            except BotRestartException:
+                logging.warning(f"🔄 Bot restart requested, restarting user={self.username}")
+                await self.stop()
+                # Continue the loop to restart
 
     async def stop(self) -> None:
         """Stop the bot and clean up resources.

@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from typing import TYPE_CHECKING, Any
-
-import aiohttp
 
 from ..constants import WEBSOCKET_MESSAGE_TIMEOUT_SECONDS
 from ..errors.eventsub import EventSubConnectionError
@@ -16,6 +15,16 @@ if TYPE_CHECKING:
 
 
 WEBSOCKET_NOT_CONNECTED_ERROR = "WebSocket not connected"
+
+
+class WSMessage:
+    """Simple WebSocket message class to mimic aiohttp.WSMessage."""
+    def __init__(self, type_: str, data: Any):
+        self.type = type_
+        self.data = data
+
+
+WSMsgType = type('WSMsgType', (), {'TEXT': 'text'})()
 
 
 class MessageTransceiver:
@@ -45,40 +54,46 @@ class MessageTransceiver:
         Raises:
             EventSubConnectionError: If not connected or send fails.
         """
-        if not self.connector.ws or self.connector.ws.closed:
+        if not self.connector.ws or (hasattr(self.connector.ws, 'closed') and self.connector.ws.closed):
             raise EventSubConnectionError(
                 WEBSOCKET_NOT_CONNECTED_ERROR, operation_type="send"
             )
 
         try:
-            await self.connector.ws.send_json(data)
+            await self.connector.ws.send(json.dumps(data))
             self.last_activity[0] = time.monotonic()
         except Exception as e:
             raise EventSubConnectionError(
                 f"WebSocket send failed: {str(e)}", operation_type="send"
             ) from e
 
-    async def receive_message(self) -> aiohttp.WSMessage:
+    async def receive_message(self) -> WSMessage:
         """Receive a WebSocket message.
 
         Returns:
-            aiohttp.WSMessage: Received message.
+            WSMessage: Received message.
 
         Raises:
             EventSubConnectionError: If not connected or receive fails.
         """
-        if not self.connector.ws or self.connector.ws.closed:
+        if not self.connector.ws or (hasattr(self.connector.ws, 'closed') and self.connector.ws.closed):
             raise EventSubConnectionError(
                 WEBSOCKET_NOT_CONNECTED_ERROR, operation_type="receive"
             )
 
         try:
-            msg = await asyncio.wait_for(
-                self.connector.ws.receive(), timeout=WEBSOCKET_MESSAGE_TIMEOUT_SECONDS
+            message = await asyncio.wait_for(
+                self.connector.ws.recv(), timeout=WEBSOCKET_MESSAGE_TIMEOUT_SECONDS
             )
             self.last_activity[0] = time.monotonic()
 
+            # For websockets library, message is just the data string
+            msg = WSMessage("text", message)
             return msg
+        except StopAsyncIteration:
+            raise EventSubConnectionError(
+                "WebSocket closed", operation_type="receive"
+            ) from None
         except TimeoutError:
             raise EventSubConnectionError(
                 "WebSocket receive timeout", operation_type="receive"

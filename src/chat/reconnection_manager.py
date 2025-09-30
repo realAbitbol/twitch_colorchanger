@@ -8,8 +8,6 @@ import logging
 import secrets
 from typing import TYPE_CHECKING
 
-import aiohttp
-
 from ..constants import (
     EVENTSUB_MAX_BACKOFF_SECONDS,
     WEBSOCKET_MESSAGE_TIMEOUT_SECONDS,
@@ -68,7 +66,7 @@ class ReconnectionManager:
             # Cleanup previous connection
             await self.connector.disconnect()
 
-            logging.info(f"🔄 Reconnect attempt to {self.connector.ws_url}")
+            logging.info(f"🔄 Reconnect attempt to {self.connector.url}")
 
             # Attempt connection
             await self.connector.connect()
@@ -96,16 +94,12 @@ class ReconnectionManager:
 
         try:
             # Wait for challenge message
-            msg = await asyncio.wait_for(
-                self.connector.ws.receive(), timeout=WEBSOCKET_MESSAGE_TIMEOUT_SECONDS
+            message_data = await asyncio.wait_for(
+                self.connector.ws.recv(), timeout=WEBSOCKET_MESSAGE_TIMEOUT_SECONDS
             )
 
-            if msg.type != aiohttp.WSMsgType.TEXT:
-                raise EventSubConnectionError(
-                    "Invalid challenge message type", operation_type="challenge"
-                )
-
-            data = json.loads(msg.data)
+            # Assume it's a text message (JSON string)
+            data = json.loads(message_data)
             received_challenge = data.get("challenge")
 
             if received_challenge != pending_challenge:
@@ -115,7 +109,7 @@ class ReconnectionManager:
 
             # Send response
             response = {"type": "challenge_response", "challenge": received_challenge}
-            await self.connector.ws.send_json(response)
+            await self.connector.ws.send(json.dumps(response))
 
             logging.info("✅ Challenge response sent")
 

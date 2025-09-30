@@ -2,11 +2,12 @@
 Unit tests for WebSocketConnector.
 """
 
+import websockets
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src.chat.websocket_connector import WebSocketConnector
+from src.chat.websocket_connector import TwitchEventSubProtocol, WebSocketConnector
 from src.errors.eventsub import EventSubConnectionError
 
 
@@ -15,9 +16,7 @@ class TestWebSocketConnector:
 
     def setup_method(self):
         """Setup method called before each test."""
-        self.session = Mock()
         self.connector = WebSocketConnector(
-            session=self.session,
             token="test_token",
             client_id="test_client_id"
         )
@@ -28,7 +27,6 @@ class TestWebSocketConnector:
 
     def test_init_sets_attributes(self):
         """Test WebSocketConnector initialization sets all attributes."""
-        assert self.connector.session == self.session
         assert self.connector.token == "test_token"
         assert self.connector.client_id == "test_client_id"
         assert self.connector.ws is None
@@ -37,7 +35,6 @@ class TestWebSocketConnector:
         """Test WebSocketConnector initialization with custom URL."""
         custom_url = "wss://custom.url.com"
         connector = WebSocketConnector(
-            session=self.session,
             token="test_token",
             client_id="test_client_id",
             ws_url=custom_url
@@ -48,26 +45,34 @@ class TestWebSocketConnector:
     async def test_connect_success(self):
         """Test connect establishes WebSocket connection successfully."""
         mock_ws = AsyncMock()
-        self.session.ws_connect = AsyncMock(return_value=mock_ws)
 
-        with patch('src.chat.websocket_connector.logging') as mock_logging:
+        with patch('websockets.connect', new_callable=AsyncMock) as mock_connect, \
+             patch('src.chat.websocket_connector.logging') as mock_logging:
+            mock_connect.return_value = mock_ws
             await self.connector.connect()
 
         assert self.connector.ws == mock_ws
-        self.session.ws_connect.assert_called_once()
+        mock_connect.assert_called_once_with(
+            self.connector.ws_url,
+            extra_headers={"Client-Id": self.connector.client_id, "Authorization": f"Bearer {self.connector.token}"},
+            subprotocols=("twitch-eventsub-ws",),
+            ping_interval=None,
+            create_protocol=TwitchEventSubProtocol,
+        )
         assert mock_logging.info.call_count == 2
 
     @pytest.mark.asyncio
     async def test_connect_calls_cleanup_first(self):
         """Test connect calls cleanup before establishing new connection."""
         mock_ws = AsyncMock()
-        self.session.ws_connect = AsyncMock(return_value=mock_ws)
 
         # Set existing connection
         self.connector.ws = Mock()
         self.connector.ws.closed = False
 
-        with patch.object(self.connector, '_cleanup_connection', new_callable=AsyncMock) as mock_cleanup:
+        with patch('websockets.connect', new_callable=AsyncMock) as mock_connect, \
+             patch.object(self.connector, '_cleanup_connection', new_callable=AsyncMock) as mock_cleanup:
+            mock_connect.return_value = mock_ws
             await self.connector.connect()
 
         mock_cleanup.assert_called_once()
@@ -75,10 +80,11 @@ class TestWebSocketConnector:
     @pytest.mark.asyncio
     async def test_connect_raises_event_sub_error_on_failure(self):
         """Test connect raises EventSubConnectionError on connection failure."""
-        self.session.ws_connect.side_effect = Exception("Connection failed")
+        with patch('websockets.connect', new_callable=AsyncMock) as mock_connect:
+            mock_connect.side_effect = Exception("Connection failed")
 
-        with pytest.raises(EventSubConnectionError) as exc_info:
-            await self.connector.connect()
+            with pytest.raises(EventSubConnectionError) as exc_info:
+                await self.connector.connect()
 
         assert "WebSocket connection failed" in str(exc_info.value)
         assert exc_info.value.operation_type == "connect"
@@ -110,7 +116,10 @@ class TestWebSocketConnector:
             await self.connector._cleanup_connection()
 
         mock_ws.close.assert_called_once_with(code=1000)
-        mock_logging.info.assert_called_once_with("🔌 WebSocket disconnected")
+        # The logging includes code and reason, so we check that it starts with the expected message
+        mock_logging.info.assert_called_once()
+        log_call = mock_logging.info.call_args[0][0]
+        assert log_call.startswith("🔌 WebSocket disconnected")
         assert self.connector.ws is None
 
     @pytest.mark.asyncio

@@ -134,6 +134,14 @@ class RateLimitError(InternalError):
         super().__init__(message, data={"rate_limit": context})
 
 
+class BotRestartException(InternalError):
+    """Exception raised to signal that the bot should be restarted.
+
+    This exception is used by the reconnection coordinator to indicate
+    that the bot needs to be restarted due to persistent connection issues.
+    """
+
+
 __all__ = [
     "InternalError",
     "NetworkError",
@@ -141,4 +149,5 @@ __all__ = [
     "ParsingError",
     "RateLimitError",
     "RateLimitContext",
+    "BotRestartException",
 ]
