@@ -66,7 +66,7 @@ class ReconnectionManager:
             # Cleanup previous connection
             await self.connector.disconnect()
 
-            logging.info(f"🔄 Reconnect attempt to {self.connector.url}")
+            logging.info(f"🔄 Reconnect attempt to {self.connector.ws_url}")
 
             # Attempt connection
             await self.connector.connect()

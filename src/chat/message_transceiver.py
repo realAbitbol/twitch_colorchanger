@@ -88,7 +88,16 @@ class MessageTransceiver:
             self.last_activity[0] = time.monotonic()
 
             # For websockets library, message is just the data string
-            msg = WSMessage("text", message)
+            # Handle mock objects that have .data attribute
+            data = message.data if hasattr(message, 'data') else message
+
+            # Determine message type based on data
+            if isinstance(data, bytes) and data == b'ping':
+                msg_type = "ping"
+            else:
+                msg_type = "text"
+
+            msg = WSMessage(msg_type, data)
             return msg
         except StopAsyncIteration:
             raise EventSubConnectionError(

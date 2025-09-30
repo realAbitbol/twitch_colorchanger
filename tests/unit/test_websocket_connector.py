@@ -158,3 +158,75 @@ class TestWebSocketConnector:
 
         # Should not raise any errors
         assert self.connector.ws is None
+
+    def test_get_headers_returns_correct_headers(self):
+        """Test _get_headers returns correct headers."""
+        headers = self.connector._get_headers()
+        assert headers == {
+            "Client-Id": self.connector.client_id,
+            "Authorization": f"Bearer {self.connector.token}"
+        }
+
+    @pytest.mark.asyncio
+    async def test_cleanup_connection_already_closed_with_bytes_reason(self):
+        """Test _cleanup_connection logs already closed with bytes reason decoded."""
+        mock_ws = Mock()
+        mock_ws.closed = True
+        mock_ws.close_code = 1001
+        mock_ws.close_reason = b'bytes_reason'
+        self.connector.ws = mock_ws
+
+        with patch('src.chat.websocket_connector.logging') as mock_logging:
+            await self.connector._cleanup_connection()
+
+        mock_logging.info.assert_called_once_with("🔌 WebSocket already closed: code=1001, reason=bytes_reason")
+        assert self.connector.ws is None
+
+    @pytest.mark.asyncio
+    async def test_cleanup_connection_close_error_with_closed_ws(self):
+        """Test _cleanup_connection handles close error and logs if ws becomes closed."""
+        mock_ws = AsyncMock()
+        mock_ws.closed = False
+
+        def close_side_effect(*args, **kwargs):
+            mock_ws.closed = True
+            raise Exception("Close failed")
+
+        mock_ws.close.side_effect = close_side_effect
+        mock_ws.close_code = 1002
+        mock_ws.close_reason = b'error_reason'
+        self.connector.ws = mock_ws
+
+        with patch('src.chat.websocket_connector.logging') as mock_logging:
+            await self.connector._cleanup_connection()
+
+        assert mock_logging.warning.call_count == 2
+        mock_logging.warning.assert_any_call("⚠️ WebSocket close error: Close failed")
+        mock_logging.warning.assert_any_call("⚠️ WebSocket closed with error: code=1002, reason=error_reason")
+        assert self.connector.ws is None
+
+
+class TestTwitchEventSubProtocol:
+    """Test class for TwitchEventSubProtocol functionality."""
+
+    @pytest.mark.asyncio
+    async def test_pong_logs_with_data(self):
+        """Test pong logs message with hex data."""
+        protocol = TwitchEventSubProtocol()
+
+        with patch('src.chat.websocket_connector.logging') as mock_logging, \
+             patch('websockets.WebSocketClientProtocol.pong', new_callable=AsyncMock):
+            await protocol.pong(b'test_data')
+
+        mock_logging.info.assert_called_once_with("🏓 Pong sent to Twitch: 746573745f64617461")
+
+    @pytest.mark.asyncio
+    async def test_pong_logs_no_data(self):
+        """Test pong logs message with no data."""
+        protocol = TwitchEventSubProtocol()
+
+        with patch('src.chat.websocket_connector.logging') as mock_logging, \
+             patch('websockets.WebSocketClientProtocol.pong', new_callable=AsyncMock):
+            await protocol.pong()
+
+        mock_logging.info.assert_called_once_with("🏓 Pong sent to Twitch: no data")

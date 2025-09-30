@@ -89,6 +89,6 @@ class ConnectionStateManager:
         Args:
             new_url (str): The new WebSocket URL to use.
         """
-        if new_url and new_url != self.connector.url:
+        if new_url and new_url != self.connector.ws_url:
             # Note: logging would be done in the main class
-            self.connector.url = new_url
+            self.connector.ws_url = new_url

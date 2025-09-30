@@ -25,7 +25,7 @@ class WebSocketConnector:
         session: HTTP session (kept for compatibility but not used for WebSocket).
         token (str): OAuth access token for authentication.
         client_id (str): Twitch client ID for authentication.
-        url (str): Current WebSocket URL.
+        ws_url (str): Current WebSocket URL.
         ws (websockets.WebSocketClientProtocol | None): Active WebSocket connection.
     """
 
@@ -33,30 +33,41 @@ class WebSocketConnector:
         self,
         token: str,
         client_id: str,
-        url: str = EVENTSUB_WS_URL,
+        ws_url: str = EVENTSUB_WS_URL,
     ) -> None:
         """Initialize the WebSocket Connector.
 
         Args:
             token (str): OAuth access token.
             client_id (str): Twitch client ID.
-            url (str): Initial WebSocket URL.
+            ws_url (str): Initial WebSocket URL.
         """
         self.token = token
         self.client_id = client_id
-        self.url = url
+        self.ws_url = ws_url
         self.ws: websockets.WebSocketClientProtocol | None = None
 
     def _get_headers(self):
         return {"Client-Id": self.client_id, "Authorization": f"Bearer {self.token}"}
 
     async def connect(self):
-        self.ws = await websockets.connect(
-            self.url,
-            extra_headers=self._get_headers(),
-            create_protocol=TwitchEventSubProtocol
-        )
-        return self.ws
+        logging.info(f"🔌 Connecting to WebSocket at {self.ws_url}")
+        await self._cleanup_connection()
+        try:
+            self.ws = await websockets.connect(
+                self.ws_url,
+                extra_headers=self._get_headers(),
+                subprotocols=("twitch-eventsub-ws",),
+                ping_interval=None,
+                create_protocol=TwitchEventSubProtocol
+            )
+            logging.info("🔌 WebSocket connected successfully")
+            return self.ws
+        except Exception as e:
+            from ..errors.eventsub import EventSubConnectionError
+            raise EventSubConnectionError(
+                f"WebSocket connection failed: {str(e)}", operation_type="connect"
+            ) from e
 
     async def disconnect(self) -> None:
         """Disconnect from WebSocket and cleanup resources.

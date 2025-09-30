@@ -164,7 +164,7 @@ class WebSocketConnectionManager(WebSocketConnectionManagerProtocol):
             try:
                 # Establish connection
                 await self.connector.connect()
-                logging.info(f"🔌 WebSocket connected to {self.connector.url}")
+                logging.info(f"🔌 WebSocket connected to {self.connector.ws_url}")
 
                 # Handle challenge if needed
                 if self.state_manager.pending_challenge:

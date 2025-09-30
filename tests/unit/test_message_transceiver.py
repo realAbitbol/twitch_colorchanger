@@ -70,7 +70,7 @@ class TestMessageTransceiver:
         mock_message = Mock()
         mock_message.type = 'text'
         mock_message.data = '{"type": "welcome", "data": {}}'
-        mock_ws.__anext__ = AsyncMock(return_value=mock_message)
+        mock_ws.recv = AsyncMock(return_value=mock_message)
         self.connector.ws = mock_ws
 
         result = await self.transceiver.receive_message()
@@ -96,7 +96,7 @@ class TestMessageTransceiver:
         """Test receive_message raises on timeout."""
         mock_ws = Mock()
         mock_ws.closed = False
-        mock_ws.__anext__ = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_ws.recv = AsyncMock(side_effect=asyncio.TimeoutError())
         self.connector.ws = mock_ws
 
         with pytest.raises(EventSubConnectionError) as exc_info:
@@ -110,7 +110,7 @@ class TestMessageTransceiver:
         """Test receive_message raises on general errors."""
         mock_ws = Mock()
         mock_ws.closed = False
-        mock_ws.__anext__ = AsyncMock(side_effect=Exception("Receive failed"))
+        mock_ws.recv = AsyncMock(side_effect=Exception("Receive failed"))
         self.connector.ws = mock_ws
 
         with pytest.raises(EventSubConnectionError) as exc_info:
