@@ -4,6 +4,7 @@ import asyncio
 import logging
 import secrets
 import time
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -57,6 +58,21 @@ class ReconnectionCoordinator:
         """
         if not self.backend._ws_manager:
             return False
+
+        # Check token expiry and refresh proactively if <5 minutes remaining
+        await self._ensure_token_validity()
+
+        # Log token expiry at start of reconnection
+        if self.backend._token_manager:
+            try:
+                info = await self.backend._token_manager.token_manager.get_info(self.backend._username or "")
+                if info and info.expiry:
+                    remaining = int((info.expiry - datetime.now(UTC)).total_seconds())
+                    logging.info(f"🔄 Reconnection starting with token expiry in {remaining}s user={self.backend._username}")
+                else:
+                    logging.info(f"🔄 Reconnection starting with unknown token expiry user={self.backend._username}")
+            except Exception as e:
+                logging.debug(f"⚠️ Could not log token expiry at reconnection start: {str(e)}")
 
         attempt = 0
         while attempt < self.max_attempts:
@@ -134,13 +150,45 @@ class ReconnectionCoordinator:
                 resub_success = await self.backend._subscription_coordinator.resubscribe_all_channels()
             except Exception as e:
                 duration = time.time() - start_time
-                logging.error(f"🔄 Failed to resubscribe all channels after {duration:.2f}s: {e}")
-                return False
+                # Check if this is an authentication error (401)
+                from ..errors.eventsub import AuthenticationError
+                if isinstance(e, AuthenticationError):
+                    logging.error(f"🔄 Critical 401 error during resubscription after {duration:.2f}s: {e}")
+                    # Trigger token refresh and immediate reconnection retry
+                    if self.backend._token_manager:
+                        logging.info("🔄 Attempting emergency token refresh due to 401 during reconnection")
+                        refreshed = await self.backend._token_manager.refresh_token(force_refresh=True)
+                        if refreshed:
+                            logging.info("✅ Emergency token refresh successful, retrying reconnection")
+                            # Reset attempt counter for retry
+                            attempt = 0
+                            continue
+                        else:
+                            logging.error("❌ Emergency token refresh failed, cannot retry reconnection")
+                            return False
+                    else:
+                        logging.error("❌ No token manager available for 401 recovery")
+                        return False
+                else:
+                    logging.error(f"🔄 Failed to resubscribe all channels after {duration:.2f}s: {e}")
+                    return False
 
             if not resub_success:
                 duration = time.time() - start_time
                 logging.error(f"🔄 Resubscription failed after {duration:.2f}s")
                 return False
+
+            # Log token expiry at end of successful reconnection
+            if self.backend._token_manager:
+                try:
+                    info = await self.backend._token_manager.token_manager.get_info(self.backend._username or "")
+                    if info and info.expiry:
+                        remaining = int((info.expiry - datetime.now(UTC)).total_seconds())
+                        logging.info(f"🔄 Reconnection completed with token expiry in {remaining}s user={self.backend._username}")
+                    else:
+                        logging.info(f"🔄 Reconnection completed with unknown token expiry user={self.backend._username}")
+                except Exception as e:
+                    logging.debug(f"⚠️ Could not log token expiry at reconnection end: {str(e)}")
 
             duration = time.time() - start_time
             logging.info(f"🔄 WebSocket reconnection successful on attempt {attempt}, completed in {duration:.2f}s")
@@ -190,3 +238,22 @@ class ReconnectionCoordinator:
             return False
 
         return True
+
+    async def _ensure_token_validity(self) -> None:
+        """Ensure token is valid before reconnection, refreshing if expiry <5 minutes."""
+        if not self.backend._token_manager:
+            return
+
+        try:
+            info = await self.backend._token_manager.token_manager.get_info(self.backend._username or "")
+            if info and info.expiry:
+                remaining = (info.expiry - datetime.now(UTC)).total_seconds()
+                if remaining < 300:  # 5 minutes
+                    logging.info(f"🔄 Token expiry in {int(remaining)}s (<5min), refreshing proactively user={self.backend._username}")
+                    refreshed = await self.backend._token_manager.refresh_token()
+                    if refreshed:
+                        logging.info(f"✅ Token refreshed successfully before reconnection user={self.backend._username}")
+                    else:
+                        logging.warning(f"⚠️ Token refresh failed before reconnection user={self.backend._username}")
+        except Exception as e:
+            logging.debug(f"⚠️ Could not check token validity before reconnection: {str(e)}")
