@@ -203,6 +203,9 @@ async def run_bots(
             success = await manager._start_all_bots()
         if not success:
             return
+        # Signal that all bots are launched and ready
+        if context.cleanup_coordinator:
+            await context.cleanup_coordinator.signal_bots_ready()
         logging.info("🏃 Bots running - press Ctrl+C to stop")
         await _run_main_loop(manager)
     except asyncio.CancelledError:

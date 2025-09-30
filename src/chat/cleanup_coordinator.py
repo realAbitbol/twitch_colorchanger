@@ -32,6 +32,7 @@ class CleanupCoordinator:
     _registered_tasks: set[Callable[[], Coroutine[Any, Any, None]]] = set()
     _active_session_ids: set[str] = set()
     _lock: asyncio.Lock = asyncio.Lock()
+    _bots_ready_event: asyncio.Event = asyncio.Event()
 
     def __new__(cls) -> "CleanupCoordinator":
         """Create or return the singleton instance."""
@@ -48,6 +49,7 @@ class CleanupCoordinator:
             self._registered_tasks = set()
             self._active_session_ids = set()
             self._lock = asyncio.Lock()
+            self._bots_ready_event = asyncio.Event()
 
     async def register_cleanup_task(
         self,
@@ -138,6 +140,33 @@ class CleanupCoordinator:
         # No lock needed for reading since set operations are atomic
         return list(self._active_session_ids)
 
+    async def signal_bots_ready(self) -> None:
+        """Signal that all bots have been launched and are ready.
+
+        This allows the cleanup loop to start running.
+        """
+        self._bots_ready_event.set()
+        logging.info("🧹 CleanupCoordinator received bots ready signal")
+
+    async def _run_cleanup_once(
+        self,
+        cleanup_func: Callable[[], Coroutine[Any, Any, None]]
+    ) -> None:
+        """Run a single cleanup cycle if all managers have sessions.
+
+        Args:
+            cleanup_func: The cleanup function to run.
+        """
+        if len(self._registered_tasks) == len(self._active_session_ids):
+            logging.info("🧹 Starting coordinated stale subscription cleanup")
+            await cleanup_func()
+            logging.info("✅ Coordinated stale subscription cleanup completed")
+        else:
+            logging.info(
+                f"🧹 Skipping cleanup: {len(self._registered_tasks)} registered managers, "
+                f"{len(self._active_session_ids)} active sessions"
+            )
+
     async def _run_cleanup_loop(
         self,
         cleanup_func: Callable[[], Coroutine[Any, Any, None]]
@@ -147,12 +176,14 @@ class CleanupCoordinator:
         Args:
             cleanup_func: The cleanup function to run periodically.
         """
+        await self._bots_ready_event.wait()
+        logging.info("🧹 CleanupCoordinator bots ready signal received, starting cleanup loop")
+        await asyncio.sleep(0.1)  # Allow all managers to complete registration
         interval = 6 * 3600  # 6 hours in seconds
         while True:
             try:
-                logging.info("🧹 Starting coordinated stale subscription cleanup")
-                await cleanup_func()
-                logging.info("✅ Coordinated stale subscription cleanup completed")
+                async with self._lock:
+                    await self._run_cleanup_once(cleanup_func)
             except Exception as e:
                 logging.warning(f"⚠️ Error during coordinated cleanup: {str(e)}")
             try:
