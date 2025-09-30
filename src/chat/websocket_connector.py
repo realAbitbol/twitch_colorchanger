@@ -58,10 +58,11 @@ class WebSocketConnector:
                 self.ws_url,
                 extra_headers=self._get_headers(),
                 subprotocols=("twitch-eventsub-ws",),
-                ping_interval=None,
+                ping_interval=30,
                 create_protocol=TwitchEventSubProtocol
             )
             logging.info("🔌 WebSocket connected successfully")
+            logging.info("🔌 Connection health: ping_interval=30s, keepalive enabled")
             return self.ws
         except Exception as e:
             from ..errors.eventsub import EventSubConnectionError

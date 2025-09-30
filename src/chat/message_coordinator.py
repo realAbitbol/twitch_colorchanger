@@ -93,6 +93,7 @@ class MessageCoordinator:
                     # If connection is stale, trigger reconnect
                     if time_since_activity > self.backend._stale_threshold:
                         logging.warning(f"🔄 Connection stale ({time_since_activity:.1f}s > {self.backend._stale_threshold}s), last_activity={self.backend._last_activity}, current_time={now}, triggering reconnect")
+                        logging.info(f"🔍 Connection health: age={time_since_activity:.1f}s, stale_threshold={self.backend._stale_threshold}s, idle_threshold={idle_threshold}s")
                         if self.backend._reconnection_coordinator is None:
                             raise AssertionError("ReconnectionCoordinator not initialized") from None
                         if not await self.backend._reconnection_coordinator.handle_reconnect():

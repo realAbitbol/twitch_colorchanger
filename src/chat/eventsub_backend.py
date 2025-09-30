@@ -118,7 +118,7 @@ class EventSubChatBackend:
         # Activity tracking
         self._last_activity = time.monotonic()
         self._next_sub_check = self._last_activity + EVENTSUB_SUB_CHECK_INTERVAL_SECONDS
-        self._stale_threshold = 60.0  # 1 minute default
+        self._stale_threshold = 45.0  # 45 seconds for faster detection
 
         # Backward compatibility attributes
         self._scopes: set[str] = set()
