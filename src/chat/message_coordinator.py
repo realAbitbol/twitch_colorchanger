@@ -24,6 +24,9 @@ class MessageCoordinator:
         """
         if msg.type == "text":
             self.backend._last_activity = time.monotonic()
+            # Update keep-alive manager activity tracking
+            if self.backend._keep_alive_manager:
+                self.backend._keep_alive_manager.update_activity()
             try:
                 data = json.loads(msg.data)
                 msg_type = data.get("type")

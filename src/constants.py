@@ -135,8 +135,8 @@ WEBSOCKET_HEARTBEAT_SECONDS = _get_env_int(
     "WEBSOCKET_HEARTBEAT_SECONDS", 30
 )  # WebSocket heartbeat interval
 EVENTSUB_SUB_CHECK_INTERVAL_SECONDS = _get_env_int(
-    "EVENTSUB_SUB_CHECK_INTERVAL_SECONDS", 600
-)  # Subscription check interval (10 min)
+    "EVENTSUB_SUB_CHECK_INTERVAL_SECONDS", 45
+)  # Subscription check interval (45 seconds for hybrid approach)
 EVENTSUB_STALE_THRESHOLD_SECONDS = _get_env_int(
     "EVENTSUB_STALE_THRESHOLD_SECONDS", 70
 )  # Stale connection threshold
