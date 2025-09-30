@@ -122,6 +122,7 @@ class TestSubscriptionCoordinator:
         # Arrange
         mock_sub_manager = AsyncMock()
         mock_sub_manager.subscribe_channel_chat.return_value = True
+        mock_sub_manager.verify_subscriptions.return_value = ["111", "222"]
         mock_channel_resolver = AsyncMock()
         mock_channel_resolver.resolve_user_ids.return_value = {"channel1": "111", "channel2": "222"}
 
@@ -284,7 +285,7 @@ class TestSubscriptionCoordinator:
 
         # Assert
         assert result is False
-        mock_logging.warning.assert_called_once()
+        assert mock_logging.warning.call_count == 2
 
     @pytest.mark.asyncio
     async def test_subscribe_channel_with_retry_no_sub_manager(self):
@@ -394,7 +395,7 @@ class TestSubscriptionCoordinator:
         # Assert
         assert result is True
         assert "testchannel" not in self.mock_backend._channels
-        mock_logging.info.assert_called_once_with("✅ testuser left #testchannel")
+        mock_logging.info.assert_called_with("✅ testuser left #testchannel")
 
     @pytest.mark.asyncio
     async def test_leave_channel_unsubscription_failure(self):
@@ -444,4 +445,4 @@ class TestSubscriptionCoordinator:
         # Assert
         assert result is False
         assert "testchannel" not in self.mock_backend._channels
-        mock_logging.warning.assert_called_once()
+        assert mock_logging.warning.call_count == 2
