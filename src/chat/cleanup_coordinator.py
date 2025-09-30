@@ -152,20 +152,16 @@ class CleanupCoordinator:
         self,
         cleanup_func: Callable[[], Coroutine[Any, Any, None]]
     ) -> None:
-        """Run a single cleanup cycle if all managers have sessions.
+        """Run a single cleanup cycle for all registered managers.
 
         Args:
             cleanup_func: The cleanup function to run.
         """
-        if len(self._registered_tasks) == len(self._active_session_ids):
-            logging.info("🧹 Starting coordinated stale subscription cleanup")
-            await cleanup_func()
-            logging.info("✅ Coordinated stale subscription cleanup completed")
-        else:
-            logging.info(
-                f"🧹 Skipping cleanup: {len(self._registered_tasks)} registered managers, "
-                f"{len(self._active_session_ids)} active sessions"
-            )
+        # Run cleanup for all registered managers to catch stale subscriptions
+        # from previous runs that may not be in active_session_ids
+        logging.info("🧹 Starting coordinated stale subscription cleanup")
+        await cleanup_func()
+        logging.info("✅ Coordinated stale subscription cleanup completed")
 
     async def _run_cleanup_loop(
         self,
@@ -179,7 +175,7 @@ class CleanupCoordinator:
         await self._bots_ready_event.wait()
         logging.info("🧹 CleanupCoordinator bots ready signal received, starting cleanup loop")
         await asyncio.sleep(0.1)  # Allow all managers to complete registration
-        interval = 6 * 3600  # 6 hours in seconds
+        interval = 30 * 60  # 30 minutes in seconds (reduced from 6 hours)
         while True:
             try:
                 async with self._lock:

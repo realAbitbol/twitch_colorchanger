@@ -318,7 +318,8 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         """Extract subscription IDs for stale subscriptions from API response data.
 
         Filters for 'channel.chat.message' type subscriptions where the transport
-        session_id is not in the active session IDs list.
+        session_id is not in the active session IDs list. Also identifies any
+        session IDs that appear in API but aren't tracked in coordinator.
 
         Args:
             data (Any): The API response data.
@@ -336,6 +337,8 @@ class SubscriptionManager(SubscriptionManagerProtocol):
 
         stale_sub_ids = []
         session_ids_found = set()
+        unregistered_sessions = set()
+
         for entry in rows:
             if not isinstance(entry, dict):
                 continue
@@ -352,10 +355,17 @@ class SubscriptionManager(SubscriptionManagerProtocol):
             session_id = transport.get("session_id")
             if isinstance(session_id, str):
                 session_ids_found.add(session_id)
-                if session_id not in active_session_ids:
+                if (session_id not in active_session_ids and
+                    session_id != self._session_id):
+                    # Check if this is a session from previous run (not current session)
                     sub_id = entry.get("id")
                     if isinstance(sub_id, str):
                         stale_sub_ids.append(sub_id)
+                        unregistered_sessions.add(session_id)
+
+        # Log unregistered sessions found in API but not in coordinator
+        if unregistered_sessions:
+            logging.warning(f"🧹 Found unregistered session IDs in API: {sorted(unregistered_sessions)}")
 
         logging.debug(f"🧹 Session IDs found in subscriptions: {sorted(session_ids_found)} for active sessions {active_session_ids}")
         return stale_sub_ids
@@ -363,9 +373,9 @@ class SubscriptionManager(SubscriptionManagerProtocol):
     async def update_session_id(self, new_session_id: str) -> None:
         """Update the session ID for new subscriptions.
 
-        Performs synchronous cleanup of subscriptions from the old session
-        before updating to the new session ID. This ensures stale subscriptions
-        are removed before new ones can be created.
+        Performs atomic cleanup of subscriptions from the old session
+        before updating to the new session ID. Uses proper locking to
+        prevent race conditions.
 
         Args:
             new_session_id (str): The new EventSub session ID.
@@ -379,14 +389,16 @@ class SubscriptionManager(SubscriptionManagerProtocol):
         # Clean up subscriptions from the old session before updating
         old_session_id = self._session_id
         if old_session_id != new_session_id:
-            logging.info(f"🧹 Starting synchronous cleanup of subscriptions from old session {old_session_id}")
-            await self._cleanup_old_session_subscriptions(old_session_id)
-            logging.info(f"✅ Completed cleanup of old session {old_session_id}")
+            logging.info(f"🧹 Starting atomic cleanup of subscriptions from old session {old_session_id}")
 
-            # Update session registry
+            # Use atomic operation: cleanup old session and register new session together
             if self._cleanup_coordinator:
-                await self._cleanup_coordinator.unregister_session_id(old_session_id)
-                await self._cleanup_coordinator.register_session_id(new_session_id)
+                async with self._token_lock:  # Use existing token lock for atomicity
+                    await self._cleanup_old_session_subscriptions(old_session_id)
+                    await self._cleanup_coordinator.unregister_session_id(old_session_id)
+                    await self._cleanup_coordinator.register_session_id(new_session_id)
+
+            logging.info(f"✅ Completed atomic cleanup of old session {old_session_id}")
 
         self._session_id = new_session_id
         logging.info(f"🔄 EventSub session ID updated to {new_session_id}")
