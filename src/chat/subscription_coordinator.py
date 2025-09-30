@@ -33,37 +33,71 @@ class SubscriptionCoordinator:
 
     async def resubscribe_all_channels(self) -> bool:
         """Resubscribe to all channels after reconnection with retry logic."""
+        logging.info(f"🔄 Starting resubscription for {len(self.backend._channels)} channels: {self.backend._channels}")
         if not self.backend._sub_manager or not self.backend._channel_resolver:
+            logging.warning("🔄 Resubscription skipped: sub_manager or channel_resolver not available")
             return True
         all_success = True
         for channel in self.backend._channels:
             try:
-                user_ids = await self.backend._channel_resolver.resolve_user_ids(
-                    [channel], self.backend._token or "", self.backend._client_id or ""
-                )
+                logging.info(f"🔄 Resolving user ID for channel {channel}")
+                user_ids = await self._resolve_channel_with_token_refresh([channel])
                 channel_id = user_ids.get(channel)
                 if channel_id:
+                    logging.info(f"🔄 Attempting to resubscribe to {channel} (ID: {channel_id})")
                     # Retry subscription with exponential backoff
                     result = await self._subscribe_channel_with_retry(
                         channel_id, channel
                     )
                     if result is None:
-                        logging.error(
+                        raise Exception(
                             f"Failed to resubscribe to {channel} after all retry attempts"
                         )
-                        all_success = False
                     elif not result:
-                        logging.warning(
+                        raise Exception(
                             f"Subscription failed for {channel} even after retries"
                         )
-                        all_success = False
+                    else:
+                        logging.info(f"✅ Successfully resubscribed to {channel}")
+                        # Validate subscriptions are active after resubscription
+                        if self.backend._sub_manager:
+                            active_channels = await self.backend._sub_manager.verify_subscriptions()
+                            if channel_id not in active_channels:
+                                raise Exception(f"Subscription validation failed for {channel}")
                 else:
-                    logging.warning(f"Could not resolve channel_id for {channel}")
-                    all_success = False
+                    raise Exception(f"Could not resolve channel_id for {channel}")
             except Exception as e:
-                logging.warning(f"Failed to resolve or resubscribe to {channel}: {e}")
+                logging.error(f"Failed to resolve or resubscribe to {channel}: {e}")
                 all_success = False
+        logging.info(f"🔄 Resubscription completed: {'success' if all_success else 'partial failure'}")
         return all_success
+
+    async def _resolve_channel_with_token_refresh(self, channels: list[str]) -> dict[str, str]:
+        """Resolve channels with token refresh on 401 errors."""
+        if not self.backend._channel_resolver:
+            return {}
+
+        try:
+            user_ids = await self.backend._channel_resolver.resolve_user_ids(
+                channels, self.backend._token or "", self.backend._client_id or ""
+            )
+            # Check if all channels were resolved
+            if all(ch in user_ids for ch in channels):
+                return user_ids
+            # If not all resolved, might be 401, try refresh
+            if self.backend._token_manager:
+                logging.info("🔄 Attempting token refresh due to channel resolution failure")
+                refreshed = await self.backend._token_manager.refresh_token()
+                if refreshed:
+                    # Retry with new token
+                    user_ids = await self.backend._channel_resolver.resolve_user_ids(
+                        channels, self.backend._token or "", self.backend._client_id or ""
+                    )
+                    return user_ids
+        except Exception as e:
+            logging.warning(f"Channel resolution failed: {e}")
+
+        return user_ids
 
     async def _subscribe_channel_with_retry(
         self, channel_id: str, channel: str
@@ -97,24 +131,21 @@ class SubscriptionCoordinator:
             return True
 
         try:
-            # Resolve channel ID
-            if self.backend._channel_resolver:
-                user_ids = await self.backend._channel_resolver.resolve_user_ids(
-                    [channel_l], self.backend._token or "", self.backend._client_id or ""
-                )
-                channel_id = user_ids.get(channel_l)
-                if not channel_id:
-                    return False
+            # Resolve channel ID with token refresh
+            user_ids = await self._resolve_channel_with_token_refresh([channel_l])
+            channel_id = user_ids.get(channel_l)
+            if not channel_id:
+                return False
 
-                # Subscribe
-                if self.backend._sub_manager:
-                    success = await self.backend._sub_manager.subscribe_channel_chat(
-                        channel_id, self.backend._user_id or ""
-                    )
-                    if success:
-                        self.backend._channels.append(channel_l)
-                        logging.info(f"✅ {self.backend._username} joined #{channel_l}")
-                        return True
+            # Subscribe
+            if self.backend._sub_manager:
+                success = await self.backend._sub_manager.subscribe_channel_chat(
+                    channel_id, self.backend._user_id or ""
+                )
+                if success:
+                    self.backend._channels.append(channel_l)
+                    logging.info(f"✅ {self.backend._username} joined #{channel_l}")
+                    return True
 
             return False
 
@@ -131,11 +162,8 @@ class SubscriptionCoordinator:
         try:
             # Resolve channel ID to find subscription
             channel_id = None
-            if self.backend._channel_resolver:
-                user_ids = await self.backend._channel_resolver.resolve_user_ids(
-                    [channel_l], self.backend._token or "", self.backend._client_id or ""
-                )
-                channel_id = user_ids.get(channel_l)
+            user_ids = await self._resolve_channel_with_token_refresh([channel_l])
+            channel_id = user_ids.get(channel_l)
 
             # Find and unsubscribe from subscription
             if self.backend._sub_manager and channel_id:
